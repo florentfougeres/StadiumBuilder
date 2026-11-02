@@ -1,0 +1,645 @@
+import { create } from 'zustand';
+import {
+  calculateStadiumMetrics,
+  computeKopWallStandPatch,
+} from '../stadium/capacity';
+import {
+  FACADE_MATERIAL_CATALOG,
+  ROOF_MATERIAL_CATALOG,
+  TRACK_MATERIAL_CATALOG,
+  TURF_MATERIAL_CATALOG,
+} from '../stadium/materials';
+import { createPresetDocument } from '../stadium/presets';
+import {
+  CameraPresetMode,
+  DEFAULT_STADIUM_MATERIALS,
+  LightingMode,
+  PitchConfig,
+  PlacedObject,
+  PlacedObjectType,
+  RoofConfig,
+  StadiumColors,
+  StadiumDocument,
+  StadiumMaterialsConfig,
+  StadiumShape,
+  StandConfig,
+  StandSide,
+  TransformMode,
+} from '../stadium/schema';
+import {
+  deleteProjectFromDb,
+  listProjectsFromDb,
+  SavedStadiumRecord,
+  saveProjectToDb,
+} from './db';
+import { cloneDocument, HistoryState, pushHistorySnapshot } from './history';
+
+const OBJECT_TYPE_LABELS: Record<PlacedObjectType, string> = {
+  screen: 'Écran Géant LED',
+  floodlight: 'Pylône d’Éclairage',
+  dugout: 'Bancs de Touche',
+  locker_room: 'Vestiaires & Médias',
+  shop: 'Boutique Officielle',
+  parking: 'Parking Spectateurs',
+  esplanade: 'Esplanade & Parvis',
+  fence: 'Clôture Périmétrique',
+  custom_roof: 'Auvent Modulaire',
+};
+
+const OBJECT_DEFAULT_SPAWN: Record<PlacedObjectType, [number, number, number]> = {
+  screen: [58, 16, -38],
+  floodlight: [68, 0, -48],
+  dugout: [0, 0, 37.5],
+  locker_room: [-52, 0, 88],
+  shop: [46, 0, 88],
+  parking: [118, 0, 42],
+  esplanade: [0, 0, 96],
+  fence: [0, 0, 74],
+  custom_roof: [0, 0, -76],
+};
+
+export interface StadiumStoreState {
+  doc: StadiumDocument;
+  history: HistoryState;
+  selectedObjectId: string | null;
+  activeStandTab: StandSide;
+  cameraMode: CameraPresetMode;
+  cameraTriggerNonce: number;
+  transformMode: TransformMode;
+  dockCollapsed: boolean;
+  savedProjects: SavedStadiumRecord[];
+  lastSavedAt: number | null;
+
+  // Actions
+  initFromDb: () => Promise<void>;
+  loadPreset: (presetId: string) => void;
+  loadDocument: (doc: StadiumDocument) => void;
+  deleteSavedProject: (id: string) => Promise<void>;
+  saveCurrentNow: () => Promise<void>;
+
+  setProjectName: (name: string) => void;
+  setShape: (shape: StadiumShape) => void;
+  setSunkenDepth: (depth: number) => void;
+  setCornerFill: (fill: boolean) => void;
+  setLighting: (lighting: LightingMode) => void;
+  updatePitch: (patch: Partial<PitchConfig>) => void;
+  updateStand: (side: StandSide, patch: Partial<StandConfig>) => void;
+  convertStandToKopWall: (side: StandSide) => void;
+  updateAllStands: (patch: Partial<StandConfig>) => void;
+  applyTargetCapacity: (targetCapacity: number) => void;
+  updateRoof: (patch: Partial<RoofConfig>) => void;
+  updateColors: (patch: Partial<StadiumColors>) => void;
+  updateMaterials: (patch: Partial<StadiumMaterialsConfig>) => void;
+
+  // Objects & Gizmos
+  addObject: (type: PlacedObjectType) => void;
+  selectObject: (id: string | null) => void;
+  updateObjectTransform: (
+    id: string,
+    patch: Partial<Pick<PlacedObject, 'position' | 'rotation' | 'scale' | 'name' | 'color'>>,
+    recordHistory?: boolean
+  ) => void;
+  recordSnapshotBeforeGizmoDrag: () => void;
+  duplicateSelectedObject: () => void;
+  removeObject: (id: string) => void;
+
+  // View & UI
+  setActiveStandTab: (side: StandSide) => void;
+  setCameraMode: (mode: CameraPresetMode) => void;
+  setTransformMode: (mode: TransformMode) => void;
+  toggleDockCollapsed: () => void;
+
+  // History
+  undo: () => void;
+  redo: () => void;
+}
+
+let autosaveTimer: number | null = null;
+function scheduleAutosave(doc: StadiumDocument, onSaved: (ts: number) => void) {
+  if (autosaveTimer !== null) {
+    window.clearTimeout(autosaveTimer);
+  }
+  autosaveTimer = window.setTimeout(async () => {
+    const metrics = calculateStadiumMetrics(doc);
+    await saveProjectToDb(doc, metrics.totalCapacity);
+    onSaved(Date.now());
+  }, 550);
+}
+
+const LEGACY_NAME_RE =
+  /emirates|stade de france|at&t|marvingt|roazhon|bernab|allianz|olimpico|rome|beşiktaş|besiktas|villa park|tottenham|havre|wembley|dortmund|südtribüne|sudtribune|bordeaux|matmut|munich|maracan|francfort|amsterdam|cardiff|gelsenkirchen|mauroy/i;
+
+function sanitizeLegacyNames(doc: StadiumDocument): void {
+  if (LEGACY_NAME_RE.test(doc.name)) {
+    doc.name = 'Projet Stade Paramétrique';
+  }
+  const genericStandNames: Record<StandSide, string> = {
+    north: 'Tribune Nord',
+    south: 'Tribune Principale Sud',
+    east: 'Virage Est',
+    west: 'Virage Ouest',
+  };
+  (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
+    if (LEGACY_NAME_RE.test(doc.stands[s].name)) {
+      doc.stands[s].name = genericStandNames[s];
+    }
+  });
+}
+
+export const useStadiumStore = create<StadiumStoreState>((set, get) => {
+  const initialDoc = createPresetDocument('bowl_bowstring_60k');
+
+  const commitChange = (mutator: (draft: StadiumDocument) => void) => {
+    const { doc, history } = get();
+    const nextHistory = pushHistorySnapshot(history, doc);
+    const nextDoc = cloneDocument(doc);
+    mutator(nextDoc);
+    nextDoc.updatedAt = Date.now();
+
+    set({ doc: nextDoc, history: nextHistory });
+    scheduleAutosave(nextDoc, async (ts) => {
+      const list = await listProjectsFromDb();
+      set({ lastSavedAt: ts, savedProjects: list });
+    });
+  };
+
+  return {
+    doc: initialDoc,
+    history: { past: [], future: [] },
+    selectedObjectId: null,
+    activeStandTab: 'south',
+    cameraMode: 'drone',
+    cameraTriggerNonce: 1,
+    transformMode: 'translate',
+    dockCollapsed: false,
+    savedProjects: [],
+    lastSavedAt: null,
+
+    initFromDb: async () => {
+      const projects = await listProjectsFromDb();
+      if (projects.length > 0) {
+        const restored = cloneDocument(projects[0].document);
+        if ((restored.roof.style as string) === 'bowl_canopy') {
+          restored.roof.style = 'bicycle_wheel';
+        }
+        restored.materials = {
+          ...DEFAULT_STADIUM_MATERIALS,
+          ...(restored.materials ?? {}),
+        };
+        sanitizeLegacyNames(restored);
+        set({
+          doc: restored,
+          savedProjects: projects,
+          lastSavedAt: projects[0].updatedAt,
+          history: { past: [], future: [] },
+        });
+      } else {
+        const current = get().doc;
+        const metrics = calculateStadiumMetrics(current);
+        await saveProjectToDb(current, metrics.totalCapacity);
+        const updatedList = await listProjectsFromDb();
+        set({ savedProjects: updatedList, lastSavedAt: Date.now() });
+      }
+    },
+
+    loadPreset: (presetId) => {
+      const { doc, history } = get();
+      const nextHistory = pushHistorySnapshot(history, doc);
+      const nextDoc = createPresetDocument(presetId);
+      set({
+        doc: nextDoc,
+        history: nextHistory,
+        selectedObjectId: null,
+        cameraMode: 'drone',
+        cameraTriggerNonce: get().cameraTriggerNonce + 1,
+      });
+      scheduleAutosave(nextDoc, async (ts) => {
+        const list = await listProjectsFromDb();
+        set({ lastSavedAt: ts, savedProjects: list });
+      });
+    },
+
+    loadDocument: (incoming) => {
+      const { doc, history } = get();
+      const nextHistory = pushHistorySnapshot(history, doc);
+      const clean = cloneDocument(incoming);
+      if ((clean.roof.style as string) === 'bowl_canopy') {
+        clean.roof.style = 'bicycle_wheel';
+      }
+      clean.materials = {
+        ...DEFAULT_STADIUM_MATERIALS,
+        ...(clean.materials ?? {}),
+      };
+      sanitizeLegacyNames(clean);
+      clean.updatedAt = Date.now();
+      set({
+        doc: clean,
+        history: nextHistory,
+        selectedObjectId: null,
+        cameraTriggerNonce: get().cameraTriggerNonce + 1,
+      });
+      scheduleAutosave(clean, async (ts) => {
+        const list = await listProjectsFromDb();
+        set({ lastSavedAt: ts, savedProjects: list });
+      });
+    },
+
+    deleteSavedProject: async (id) => {
+      await deleteProjectFromDb(id);
+      const list = await listProjectsFromDb();
+      set({ savedProjects: list });
+    },
+
+    saveCurrentNow: async () => {
+      const { doc } = get();
+      const metrics = calculateStadiumMetrics(doc);
+      await saveProjectToDb(doc, metrics.totalCapacity);
+      const list = await listProjectsFromDb();
+      set({ savedProjects: list, lastSavedAt: Date.now() });
+    },
+
+    setProjectName: (name) =>
+      commitChange((d) => {
+        d.name = name;
+      }),
+
+    setShape: (shape) =>
+      commitChange((d) => {
+        const prevShape = d.shape;
+        d.shape = shape;
+
+        if (prevShape === 'horseshoe' && shape !== 'horseshoe') {
+          d.stands.east.enabled = true;
+        }
+        if (prevShape === 'sunken_bowl' && shape !== 'sunken_bowl' && d.sunkenDepth === 9) {
+          d.sunkenDepth = 0;
+        }
+
+        if (shape === 'sunken_bowl') {
+          d.cornerFill = true;
+          d.sunkenDepth = d.sunkenDepth && d.sunkenDepth >= 2 ? d.sunkenDepth : 9.0;
+          if (d.roof.style === 'truss') d.roof.style = 'cantilever';
+        } else if (shape === 'horseshoe') {
+          d.cornerFill = true;
+          d.stands.north.enabled = true;
+          d.stands.south.enabled = true;
+          d.stands.west.enabled = true;
+          d.stands.east.enabled = false;
+          if (d.roof.style === 'truss' || d.roof.style === 'retractable_arch') {
+            d.roof.style = 'cantilever';
+          }
+        } else if (shape === 'modern_bowl') {
+          d.cornerFill = true;
+          if (d.roof.style === 'truss') d.roof.style = 'bicycle_wheel';
+        } else if (shape === 'steep_cauldron') {
+          d.cornerFill = true;
+          if (d.roof.style === 'truss') d.roof.style = 'bicycle_wheel';
+          (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
+            d.stands[s].distanceToPitch = Math.min(d.stands[s].distanceToPitch, 6.2);
+            if ((d.stands[s].slopeAngleDeg ?? 28) < 33.5) {
+              d.stands[s].slopeAngleDeg = 34.5;
+              d.stands[s].riserHeight = Number(
+                (Math.tan((34.5 * Math.PI) / 180) * d.stands[s].rowDepth).toFixed(3)
+              );
+            }
+          });
+        } else if (shape === 'olympic_oval') {
+          d.cornerFill = true;
+          d.pitch.hasTrack = true;
+          if (d.roof.style === 'truss') d.roof.style = 'suspended_masts';
+          (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
+            if ((d.stands[s].slopeAngleDeg ?? 28) > 28.5) {
+              d.stands[s].slopeAngleDeg = 26;
+              d.stands[s].riserHeight = Number(
+                (Math.tan((26 * Math.PI) / 180) * d.stands[s].rowDepth).toFixed(3)
+              );
+            }
+          });
+        } else if (shape === 'octagonal_arena') {
+          d.cornerFill = true;
+          if (d.roof.style === 'truss') d.roof.style = 'cantilever';
+        } else if (shape === 'compact_urban') {
+          d.cornerFill = true;
+          if (d.roof.style === 'bicycle_wheel') d.roof.style = 'cantilever';
+          (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
+            d.stands[s].distanceToPitch = Math.min(d.stands[s].distanceToPitch, 5.8);
+            if ((d.stands[s].slopeAngleDeg ?? 28) < 32) {
+              d.stands[s].slopeAngleDeg = 34;
+              d.stands[s].riserHeight = Number(
+                (Math.tan((34 * Math.PI) / 180) * d.stands[s].rowDepth).toFixed(3)
+              );
+            }
+            if (
+              d.stands[s].tiers < 2 &&
+              d.stands[s].rows >= 20 &&
+              d.stands[s].seatingType !== 'safe_standing'
+            ) {
+              d.stands[s].tiers = 3;
+            }
+          });
+        } else if (shape === 'four_stands') {
+          d.cornerFill = false;
+          if (d.roof.style === 'bicycle_wheel') d.roof.style = 'truss';
+        }
+      }),
+
+    setSunkenDepth: (depth) =>
+      commitChange((d) => {
+        d.sunkenDepth = Math.max(0, Math.min(16, Number(depth.toFixed(1))));
+      }),
+
+    setCornerFill: (fill) =>
+      commitChange((d) => {
+        d.cornerFill = fill;
+      }),
+
+    setLighting: (lighting) =>
+      commitChange((d) => {
+        d.lighting = lighting;
+      }),
+
+    updatePitch: (patch) =>
+      commitChange((d) => {
+        d.pitch = { ...d.pitch, ...patch };
+      }),
+
+    updateStand: (side, patch) =>
+      commitChange((d) => {
+        const prev = d.stands[side];
+        const next = { ...prev, ...patch };
+        if (patch.tiers !== undefined && patch.rows === undefined && patch.tiers !== prev.tiers) {
+          if (patch.tiers === 1 && prev.tiers > 1) {
+            // Keep wall/Kop height generous when switching to a single continuous ring
+            const kopPatch = computeKopWallStandPatch(
+              d,
+              side,
+              next.seatingType ?? 'seated'
+            );
+            next.rows = kopPatch.rows ?? prev.rows;
+          } else {
+            const deltaRows = (patch.tiers - prev.tiers) * 14;
+            next.rows = Math.max(patch.tiers * 8, Math.min(108, prev.rows + deltaRows));
+          }
+        }
+        if (patch.slopeAngleDeg !== undefined) {
+          next.riserHeight = Number(
+            (Math.tan((patch.slopeAngleDeg * Math.PI) / 180) * next.rowDepth).toFixed(3)
+          );
+        } else if (patch.riserHeight !== undefined || patch.rowDepth !== undefined) {
+          next.slopeAngleDeg = Number(
+            ((Math.atan2(next.riserHeight, next.rowDepth) * 180) / Math.PI).toFixed(1)
+          );
+        }
+        d.stands[side] = next;
+      }),
+
+    convertStandToKopWall: (side) =>
+      commitChange((d) => {
+        const kopPatch = computeKopWallStandPatch(d, side, 'safe_standing');
+        d.stands[side] = {
+          ...d.stands[side],
+          ...kopPatch,
+        };
+      }),
+
+    updateAllStands: (patch) =>
+      commitChange((d) => {
+        (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
+          const prev = d.stands[s];
+          const next = { ...prev, ...patch };
+          if (
+            patch.tiers !== undefined &&
+            patch.rows === undefined &&
+            patch.tiers !== prev.tiers
+          ) {
+            const deltaRows = (patch.tiers - prev.tiers) * 14;
+            next.rows = Math.max(patch.tiers * 8, Math.min(108, prev.rows + deltaRows));
+          }
+          if (patch.slopeAngleDeg !== undefined) {
+            next.riserHeight = Number(
+              (Math.tan((patch.slopeAngleDeg * Math.PI) / 180) * next.rowDepth).toFixed(3)
+            );
+          } else if (patch.riserHeight !== undefined || patch.rowDepth !== undefined) {
+            next.slopeAngleDeg = Number(
+              ((Math.atan2(next.riserHeight, next.rowDepth) * 180) / Math.PI).toFixed(1)
+            );
+          }
+          d.stands[s] = next;
+        });
+      }),
+
+    applyTargetCapacity: (targetCapacity) =>
+      commitChange((d) => {
+        const sides: StandSide[] = ['north', 'south', 'east', 'west'];
+        const active = sides.filter((s) => d.stands[s].enabled);
+        if (active.length === 0) return;
+
+        const tiersForRows = (r: number): 1 | 2 | 3 | 4 | 5 =>
+          r >= 70 ? 5 : r >= 54 ? 4 : r >= 38 ? 3 : r >= 24 ? 2 : 1;
+
+        let bestRows = 24;
+        let smallestError = Infinity;
+        for (let candidateRows = 6; candidateRows <= 104; candidateRows++) {
+          const testDoc = cloneDocument(d);
+          for (const s of active) {
+            const isEnd = s === 'east' || s === 'west';
+            const rCount = isEnd
+              ? Math.max(6, Math.round(candidateRows * 0.92))
+              : candidateRows;
+            testDoc.stands[s].rows = rCount;
+            if (testDoc.stands[s].seatingType !== 'safe_standing' || testDoc.stands[s].tiers > 1) {
+              testDoc.stands[s].tiers = tiersForRows(rCount);
+            }
+          }
+          const cap = calculateStadiumMetrics(testDoc).totalCapacity;
+          const err = Math.abs(cap - targetCapacity);
+          if (err < smallestError) {
+            smallestError = err;
+            bestRows = candidateRows;
+          }
+        }
+
+        for (const s of active) {
+          const isEnd = s === 'east' || s === 'west';
+          const rCount = isEnd ? Math.max(6, Math.round(bestRows * 0.92)) : bestRows;
+          d.stands[s].rows = rCount;
+          if (d.stands[s].seatingType !== 'safe_standing' || d.stands[s].tiers > 1) {
+            d.stands[s].tiers = tiersForRows(rCount);
+          }
+        }
+      }),
+
+    updateRoof: (patch) =>
+      commitChange((d) => {
+        d.roof = { ...d.roof, ...patch };
+      }),
+
+    updateColors: (patch) =>
+      commitChange((d) => {
+        d.colors = { ...d.colors, ...patch };
+      }),
+
+    updateMaterials: (patch) =>
+      commitChange((d) => {
+        const nextMats: StadiumMaterialsConfig = {
+          ...DEFAULT_STADIUM_MATERIALS,
+          ...(d.materials ?? {}),
+          ...patch,
+        };
+        d.materials = nextMats;
+
+        // Keep 2D plan / PDF export fallback colors synchronized with chosen PBR materials
+        if (patch.facade) {
+          const found = FACADE_MATERIAL_CATALOG.find((m) => m.id === patch.facade);
+          if (found) d.colors.facade = found.fallbackHex;
+        }
+        if (patch.roof) {
+          const found = ROOF_MATERIAL_CATALOG.find((m) => m.id === patch.roof);
+          if (found) d.colors.roof = found.fallbackHex;
+        }
+        if (patch.pitchTurf) {
+          const found = TURF_MATERIAL_CATALOG.find((m) => m.id === patch.pitchTurf);
+          if (found) d.colors.pitchPrimary = found.fallbackHex;
+        }
+        if (patch.trackSurface) {
+          const found = TRACK_MATERIAL_CATALOG.find((m) => m.id === patch.trackSurface);
+          if (found) d.colors.track = found.fallbackHex;
+        }
+      }),
+
+    addObject: (type) => {
+      const { doc, history } = get();
+      const nextHistory = pushHistorySnapshot(history, doc);
+      const nextDoc = cloneDocument(doc);
+
+      const basePos = OBJECT_DEFAULT_SPAWN[type];
+      const countOfType = nextDoc.objects.filter((o) => o.type === type).length;
+      const jitterOffset = countOfType * 8;
+      const newId = `obj-${type}-${Date.now().toString(36)}`;
+
+      const created: PlacedObject = {
+        id: newId,
+        type,
+        name: `${OBJECT_TYPE_LABELS[type]} ${countOfType + 1}`,
+        position: [basePos[0] + jitterOffset, basePos[1], basePos[2]],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      };
+
+      nextDoc.objects.push(created);
+      nextDoc.updatedAt = Date.now();
+      set({
+        doc: nextDoc,
+        history: nextHistory,
+        selectedObjectId: newId,
+      });
+      scheduleAutosave(nextDoc, async (ts) => {
+        const list = await listProjectsFromDb();
+        set({ lastSavedAt: ts, savedProjects: list });
+      });
+    },
+
+    selectObject: (id) => set({ selectedObjectId: id }),
+
+    recordSnapshotBeforeGizmoDrag: () => {
+      const { doc, history } = get();
+      set({ history: pushHistorySnapshot(history, doc) });
+    },
+
+    updateObjectTransform: (id, patch, recordHistory = true) => {
+      const { doc, history } = get();
+      const nextHistory = recordHistory ? pushHistorySnapshot(history, doc) : history;
+      const nextDoc = cloneDocument(doc);
+      const target = nextDoc.objects.find((o) => o.id === id);
+      if (!target) return;
+
+      if (patch.position) target.position = patch.position;
+      if (patch.rotation) target.rotation = patch.rotation;
+      if (patch.scale) target.scale = patch.scale;
+      if (patch.name !== undefined) target.name = patch.name;
+      if (patch.color !== undefined) target.color = patch.color;
+
+      nextDoc.updatedAt = Date.now();
+      set({ doc: nextDoc, history: nextHistory });
+      scheduleAutosave(nextDoc, async (ts) => {
+        const list = await listProjectsFromDb();
+        set({ lastSavedAt: ts, savedProjects: list });
+      });
+    },
+
+    duplicateSelectedObject: () => {
+      const { selectedObjectId, doc, history } = get();
+      if (!selectedObjectId) return;
+      const source = doc.objects.find((o) => o.id === selectedObjectId);
+      if (!source) return;
+
+      const nextHistory = pushHistorySnapshot(history, doc);
+      const nextDoc = cloneDocument(doc);
+      const copyId = `obj-${source.type}-${Date.now().toString(36)}`;
+      nextDoc.objects.push({
+        ...cloneDocument(source as unknown as StadiumDocument) as unknown as PlacedObject,
+        id: copyId,
+        name: `${source.name} (Copie)`,
+        position: [source.position[0] + 10, source.position[1], source.position[2] + 6],
+      });
+      nextDoc.updatedAt = Date.now();
+      set({ doc: nextDoc, history: nextHistory, selectedObjectId: copyId });
+    },
+
+    removeObject: (id) => {
+      const { doc, history, selectedObjectId } = get();
+      const nextHistory = pushHistorySnapshot(history, doc);
+      const nextDoc = cloneDocument(doc);
+      nextDoc.objects = nextDoc.objects.filter((o) => o.id !== id);
+      nextDoc.updatedAt = Date.now();
+      set({
+        doc: nextDoc,
+        history: nextHistory,
+        selectedObjectId: selectedObjectId === id ? null : selectedObjectId,
+      });
+      scheduleAutosave(nextDoc, async (ts) => {
+        const list = await listProjectsFromDb();
+        set({ lastSavedAt: ts, savedProjects: list });
+      });
+    },
+
+    setActiveStandTab: (side) => set({ activeStandTab: side }),
+
+    setCameraMode: (mode) =>
+      set((state) => ({
+        cameraMode: mode,
+        cameraTriggerNonce: state.cameraTriggerNonce + 1,
+      })),
+
+    setTransformMode: (mode) => set({ transformMode: mode }),
+
+    toggleDockCollapsed: () =>
+      set((state) => ({ dockCollapsed: !state.dockCollapsed })),
+
+    undo: () => {
+      const { history, doc } = get();
+      if (history.past.length === 0) return;
+      const previous = history.past[history.past.length - 1];
+      const nextPast = history.past.slice(0, -1);
+      const nextFuture = [cloneDocument(doc), ...history.future];
+      set({
+        doc: cloneDocument(previous),
+        history: { past: nextPast, future: nextFuture },
+        selectedObjectId: null,
+      });
+    },
+
+    redo: () => {
+      const { history, doc } = get();
+      if (history.future.length === 0) return;
+      const next = history.future[0];
+      const nextFuture = history.future.slice(1);
+      const nextPast = [...history.past, cloneDocument(doc)];
+      set({
+        doc: cloneDocument(next),
+        history: { past: nextPast, future: nextFuture },
+        selectedObjectId: null,
+      });
+    },
+  };
+});

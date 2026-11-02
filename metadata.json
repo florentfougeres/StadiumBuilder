@@ -1,0 +1,6 @@
+{
+  "name": "StadiumForge",
+  "description": "Éditeur paramétrique 3D de stades de football avec calcul de capacité en temps réel, lignes de vue C-value, objets interactifs et exports PNG, PDF, JSON et GLB.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

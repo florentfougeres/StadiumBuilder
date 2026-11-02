@@ -1,0 +1,1060 @@
+import * as THREE from 'three';
+import {
+  createGrassBladeNormalMap,
+  createPlazaDetailNormalAndRoughness,
+  createTrackPbrMaterial,
+  getTurfPresetColors,
+} from './materials';
+import {
+  DEFAULT_STADIUM_MATERIALS,
+  LightingMode,
+  PitchConfig,
+  PitchTurfMaterialId,
+  PlazaMaterialId,
+  StadiumColors,
+  StadiumMaterialsConfig,
+} from './schema';
+
+/**
+ * Generates high-resolution broadcast-grade FIFA football pitch diffuse + directional mowing roughness map:
+ * - Natural UEFA mowing stripes / checker with directional blade roughness sheen contrast
+ * - Authentic goal-mouth & center-circle turf wear calibrated to turf material preset
+ * - Crisp FIFA markings, penalty arcs, corner arcs, and technical coaching areas
+ */
+function createPitchTextures(
+  pitch: PitchConfig,
+  turfId: PitchTurfMaterialId,
+  maxAnisotropy: number
+): { colorMap: THREE.CanvasTexture; roughnessMap: THREE.DataTexture } {
+  const totalW = pitch.length + pitch.marginEnd * 2;
+  const totalH = pitch.width + pitch.marginSide * 2;
+  const turfColors = getTurfPresetColors(turfId);
+
+  const pxPerMeter = 18;
+  const cw = Math.min(2048, Math.max(1024, Math.round(totalW * pxPerMeter)));
+  const ch = Math.min(2048, Math.max(1024, Math.round(totalH * pxPerMeter)));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext('2d')!;
+
+  const scaleX = cw / totalW;
+  const scaleY = ch / totalH;
+
+  // 1. Technical moat mineral/asphalt perimeter apron around hybrid grass
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(0, 0, cw, ch);
+
+  const px0 = pitch.marginEnd * scaleX;
+  const py0 = pitch.marginSide * scaleY;
+  const pw = pitch.length * scaleX;
+  const ph = pitch.width * scaleY;
+
+  // Hybrid synthetic green surround border (3.2m around touchlines/goallines)
+  ctx.fillStyle = turfColors.surround;
+  ctx.fillRect(
+    px0 - 3.6 * scaleX,
+    py0 - 3.2 * scaleY,
+    pw + 7.2 * scaleX,
+    ph + 6.4 * scaleY
+  );
+
+  // Inner natural grass run-off
+  ctx.fillStyle = turfColors.primary;
+  ctx.fillRect(
+    px0 - 2.1 * scaleX,
+    py0 - 1.9 * scaleY,
+    pw + 4.2 * scaleX,
+    ph + 3.8 * scaleY
+  );
+
+  // 2. UEFA Mowing pattern inside field
+  if (pitch.grassPattern === 'stripes') {
+    const stripeCount = 18;
+    const stripeW = pw / stripeCount;
+    for (let i = 0; i < stripeCount; i++) {
+      ctx.fillStyle = i % 2 === 0 ? turfColors.primary : turfColors.secondary;
+      ctx.fillRect(
+        px0 + i * stripeW,
+        py0 - 1.2 * scaleY,
+        stripeW + 0.6,
+        ph + 2.4 * scaleY
+      );
+    }
+  } else if (pitch.grassPattern === 'checker') {
+    const cols = 18;
+    const rows = 12;
+    const cellW = pw / cols;
+    const cellH = ph / rows;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        ctx.fillStyle =
+          (r + c) % 2 === 0 ? turfColors.primary : turfColors.secondary;
+        ctx.fillRect(px0 + c * cellW, py0 + r * cellH, cellW + 0.6, cellH + 0.6);
+      }
+    }
+  } else {
+    ctx.fillStyle = turfColors.secondary;
+    ctx.fillRect(px0, py0, pw, ph);
+  }
+
+  // Goal-mouth & center-circle organic turf wear
+  const midX = px0 + pw / 2;
+  const midY = py0 + ph / 2;
+  if (turfColors.wearOpacity > 0.04) {
+    for (const gx of [px0 + 2.4 * scaleX, px0 + pw - 2.4 * scaleX]) {
+      const wearGrad = ctx.createRadialGradient(
+        gx,
+        midY,
+        2,
+        gx,
+        midY,
+        6.5 * scaleX
+      );
+      wearGrad.addColorStop(0, `rgba(116, 86, 48, ${turfColors.wearOpacity})`);
+      wearGrad.addColorStop(1, 'rgba(116, 86, 48, 0)');
+      ctx.fillStyle = wearGrad;
+      ctx.beginPath();
+      ctx.arc(gx, midY, 6.5 * scaleX, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (turfId === 'winter_worn') {
+      const centerWear = ctx.createRadialGradient(
+        midX,
+        midY,
+        3,
+        midX,
+        midY,
+        9.5 * scaleX
+      );
+      centerWear.addColorStop(0, 'rgba(112, 84, 46, 0.22)');
+      centerWear.addColorStop(1, 'rgba(112, 84, 46, 0)');
+      ctx.fillStyle = centerWear;
+      ctx.beginPath();
+      ctx.arc(midX, midY, 9.5 * scaleX, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Organic grass micro-grain
+  for (let i = 0; i < 7500; i++) {
+    const rx = Math.abs((Math.sin(i * 12.9898) * 43758.5453) % 1);
+    const ry = Math.abs((Math.cos(i * 78.233) * 29432.1234) % 1);
+    ctx.fillStyle =
+      i % 2 === 0 ? 'rgba(255,255,255,0.036)' : 'rgba(0,0,0,0.045)';
+    ctx.fillRect(rx * cw, ry * ch, 2.0, 2.0);
+  }
+
+  // 3. Crisp white FIFA pitch markings (12 cm line width)
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+  ctx.lineWidth = Math.max(2.4, 0.13 * scaleX);
+
+  ctx.strokeRect(px0, py0, pw, ph);
+
+  ctx.beginPath();
+  ctx.moveTo(midX, py0);
+  ctx.lineTo(midX, py0 + ph);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(midX, midY, 9.15 * scaleX, 9.15 * scaleY, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(midX, midY, 0.26 * scaleX, 0.26 * scaleY, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const penDepth = 16.5 * scaleX;
+  const penWidth = Math.min(pitch.width * 0.85, 40.32) * scaleY;
+  const goalAreaDepth = 5.5 * scaleX;
+  const goalAreaWidth = Math.min(pitch.width * 0.5, 18.32) * scaleY;
+
+  ctx.strokeRect(px0, midY - penWidth / 2, penDepth, penWidth);
+  ctx.strokeRect(px0, midY - goalAreaWidth / 2, goalAreaDepth, goalAreaWidth);
+
+  ctx.strokeRect(px0 + pw - penDepth, midY - penWidth / 2, penDepth, penWidth);
+  ctx.strokeRect(
+    px0 + pw - goalAreaDepth,
+    midY - goalAreaWidth / 2,
+    goalAreaDepth,
+    goalAreaWidth
+  );
+
+  const penSpotOffset = 11.0 * scaleX;
+  const arcAngle = Math.acos(5.5 / 9.15);
+
+  ctx.beginPath();
+  ctx.ellipse(
+    px0 + penSpotOffset,
+    midY,
+    0.24 * scaleX,
+    0.24 * scaleY,
+    0,
+    0,
+    Math.PI * 2
+  );
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(
+    px0 + penSpotOffset,
+    midY,
+    9.15 * scaleX,
+    9.15 * scaleY,
+    0,
+    -arcAngle,
+    arcAngle
+  );
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(
+    px0 + pw - penSpotOffset,
+    midY,
+    0.24 * scaleX,
+    0.24 * scaleY,
+    0,
+    0,
+    Math.PI * 2
+  );
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(
+    px0 + pw - penSpotOffset,
+    midY,
+    9.15 * scaleX,
+    9.15 * scaleY,
+    0,
+    Math.PI - arcAngle,
+    Math.PI + arcAngle
+  );
+  ctx.stroke();
+
+  const cornerR = 1.0;
+  const corners: [number, number, number, number][] = [
+    [px0, py0, 0, Math.PI / 2],
+    [px0 + pw, py0, Math.PI / 2, Math.PI],
+    [px0 + pw, py0 + ph, Math.PI, Math.PI * 1.5],
+    [px0, py0 + ph, Math.PI * 1.5, Math.PI * 2],
+  ];
+  for (const [cx, cy, a0, a1] of corners) {
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, cornerR * scaleX, cornerR * scaleY, 0, a0, a1);
+    ctx.stroke();
+  }
+
+  // Technical Coaching Areas
+  ctx.save();
+  ctx.setLineDash([6, 5]);
+  ctx.lineWidth = Math.max(1.5, 0.1 * scaleX);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+  const techW = 14 * scaleX;
+  const techD = Math.min(pitch.marginSide - 0.8, 3.6) * scaleY;
+  if (techD > 0.5) {
+    ctx.strokeRect(midX - 18 * scaleX, py0 + ph + 0.7 * scaleY, techW, techD);
+    ctx.strokeRect(midX + 4 * scaleX, py0 + ph + 0.7 * scaleY, techW, techD);
+  }
+  ctx.restore();
+
+  const colorMap = new THREE.CanvasTexture(canvas);
+  colorMap.colorSpace = THREE.SRGBColorSpace;
+  colorMap.anisotropy = maxAnisotropy;
+  colorMap.needsUpdate = true;
+
+  // Directional mowing-stripe PBR roughness map (bent grass blades reflect specular light differently!)
+  const rw = 256;
+  const rh = 128;
+  const roughBytes = new Uint8Array(rw * rh * 4);
+  const uStart = pitch.marginEnd / totalW;
+  const uEnd = 1 - uStart;
+  const vStart = pitch.marginSide / totalH;
+  const vEnd = 1 - vStart;
+
+  for (let y = 0; y < rh; y++) {
+    const v = y / rh;
+    for (let x = 0; x < rw; x++) {
+      const u = x / rw;
+      let rVal = 0.86; // outer technical apron
+
+      if (u >= uStart && u <= uEnd && v >= vStart && v <= vEnd) {
+        const fu = (u - uStart) / Math.max(0.01, uEnd - uStart);
+        const fv = (v - vStart) / Math.max(0.01, vEnd - vStart);
+        if (pitch.grassPattern === 'stripes') {
+          const sIdx = Math.floor(fu * 18);
+          rVal = sIdx % 2 === 0 ? 0.58 : 0.79;
+        } else if (pitch.grassPattern === 'checker') {
+          const sIdx = Math.floor(fu * 18) + Math.floor(fv * 12);
+          rVal = sIdx % 2 === 0 ? 0.58 : 0.79;
+        } else {
+          rVal = 0.68;
+        }
+        if (turfId === 'hybrid_emerald') rVal -= 0.05;
+      }
+
+      const b = Math.round(Math.max(0.2, Math.min(0.98, rVal)) * 255);
+      const idx = (y * rw + x) * 4;
+      roughBytes[idx] = b;
+      roughBytes[idx + 1] = b;
+      roughBytes[idx + 2] = b;
+      roughBytes[idx + 3] = 255;
+    }
+  }
+
+  const roughnessMap = new THREE.DataTexture(roughBytes, rw, rh, THREE.RGBAFormat);
+  roughnessMap.generateMipmaps = true;
+  roughnessMap.minFilter = THREE.LinearMipmapLinearFilter;
+  roughnessMap.magFilter = THREE.LinearFilter;
+  roughnessMap.needsUpdate = true;
+
+  return { colorMap, roughnessMap };
+}
+
+/**
+ * Generates woven hexagonal FIFA goal-net texture (clean white cords on transparent alpha).
+ */
+function createGoalNetTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, 256, 256);
+
+  ctx.strokeStyle = 'rgba(248, 250, 252, 0.85)';
+  ctx.lineWidth = 2.1;
+  const step = 16;
+  for (let i = -256; i <= 512; i += step) {
+    ctx.beginPath();
+    ctx.moveTo(i, 0);
+    ctx.lineTo(i + 256, 256);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(i, 256);
+    ctx.lineTo(i + 256, 0);
+    ctx.stroke();
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(6, 2.5);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Generates vibrant stadium LED perimeter advertising ribbon texture.
+ */
+function createLedSponsorRibbonTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+
+  const panels = [
+    { bg: '#0284c7', accent: '#f8fafc' },
+    { bg: '#0f172a', accent: '#38bdf8' },
+    { bg: '#dc2626', accent: '#ffffff' },
+    { bg: '#059669', accent: '#ecfdf5' },
+    { bg: '#1e1b4b', accent: '#facc15' },
+  ];
+
+  const segW = 1024 / 8;
+  for (let i = 0; i < 8; i++) {
+    const p = panels[i % panels.length];
+    ctx.fillStyle = p.bg;
+    ctx.fillRect(i * segW, 0, segW - 2, 64);
+
+    ctx.fillStyle = p.accent;
+    ctx.fillRect(i * segW + 18, 20, segW - 52, 10);
+    ctx.fillRect(i * segW + 18, 36, (segW - 52) * 0.65, 7);
+
+    ctx.beginPath();
+    ctx.arc(i * segW + segW - 22, 32, 11, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.repeat.set(3, 1);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Generates realistic urban site ground texture calibrated to `plazaId`
+ * (`granite_pavers`, `sandstone_esplanade`, `urban_asphalt`).
+ */
+function createUrbanSiteGroundTexture(
+  plazaId: PlazaMaterialId,
+  maxAnisotropy: number
+): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 1024;
+  const ctx = canvas.getContext('2d')!;
+
+  // Landscaped outer green-slate urban parklands
+  ctx.fillStyle = '#182821';
+  ctx.fillRect(0, 0, 1024, 1024);
+
+  for (let i = 0; i < 3200; i++) {
+    const x = Math.abs((Math.sin(i * 23.1) * 41231.9) % 1) * 1024;
+    const y = Math.abs((Math.cos(i * 67.4) * 17392.3) % 1) * 1024;
+    ctx.fillStyle =
+      i % 2 === 0 ? 'rgba(34, 197, 94, 0.045)' : 'rgba(15, 23, 42, 0.08)';
+    ctx.fillRect(x, y, 4, 4);
+  }
+
+  // Perimeter asphalt ring avenues
+  ctx.strokeStyle = '#111827';
+  ctx.lineWidth = 24;
+  for (const pos of [96, 928]) {
+    ctx.beginPath();
+    ctx.moveTo(pos, 0);
+    ctx.lineTo(pos, 1024);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(0, pos);
+    ctx.lineTo(1024, pos);
+    ctx.stroke();
+  }
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(226, 232, 240, 0.45)';
+  ctx.lineWidth = 1.6;
+  ctx.setLineDash([12, 10]);
+  for (const pos of [96, 928]) {
+    ctx.beginPath();
+    ctx.moveTo(pos, 0);
+    ctx.lineTo(pos, 1024);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, pos);
+    ctx.lineTo(1024, pos);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Grand pedestrian stadium podium / parvis around stadium footprint
+  const grad = ctx.createRadialGradient(512, 512, 130, 512, 512, 405);
+  if (plazaId === 'sandstone_esplanade') {
+    grad.addColorStop(0, '#c7bfb3');
+    grad.addColorStop(0.68, '#a89f91');
+    grad.addColorStop(0.94, '#57534e');
+    grad.addColorStop(1, '#182821');
+  } else if (plazaId === 'urban_asphalt') {
+    grad.addColorStop(0, '#334155');
+    grad.addColorStop(0.68, '#1e293b');
+    grad.addColorStop(0.94, '#0f172a');
+    grad.addColorStop(1, '#182821');
+  } else {
+    grad.addColorStop(0, '#64748b');
+    grad.addColorStop(0.68, '#475569');
+    grad.addColorStop(0.94, '#1e293b');
+    grad.addColorStop(1, '#182821');
+  }
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.ellipse(512, 512, 412, 372, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Architectural concentric & radial paving joints on plaza
+  ctx.strokeStyle =
+    plazaId === 'sandstone_esplanade'
+      ? 'rgba(68, 64, 60, 0.16)'
+      : 'rgba(255, 255, 255, 0.09)';
+  ctx.lineWidth = 1.3;
+  for (const r of [245, 298, 352, 398]) {
+    ctx.beginPath();
+    ctx.ellipse(512, 512, r, r * 0.9, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  for (let a = 0; a < 28; a++) {
+    const phi = (a / 28) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(512 + Math.cos(phi) * 205, 512 + Math.sin(phi) * 185);
+    ctx.lineTo(512 + Math.cos(phi) * 408, 512 + Math.sin(phi) * 368);
+    ctx.stroke();
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Sloped broadcast FIFA Goal with hexagonal woven net, curved top D-brackets & rear ground frame.
+ */
+function createGoalGroup(sideSign: -1 | 1, netTex: THREE.CanvasTexture): THREE.Group {
+  const goal = new THREE.Group();
+  const goalWidth = 7.32;
+  const goalHeight = 2.44;
+  const topDepth = 0.95;
+  const bottomDepth = 2.15;
+
+  const postMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.18,
+    metalness: 0.35,
+  });
+
+  const postGeo = new THREE.CylinderGeometry(0.06, 0.06, goalHeight, 12);
+  const leftPost = new THREE.Mesh(postGeo, postMat);
+  leftPost.position.set(0, goalHeight / 2, -goalWidth / 2);
+  leftPost.castShadow = true;
+
+  const rightPost = new THREE.Mesh(postGeo, postMat);
+  rightPost.position.set(0, goalHeight / 2, goalWidth / 2);
+  rightPost.castShadow = true;
+
+  const crossbarGeo = new THREE.CylinderGeometry(0.06, 0.06, goalWidth + 0.12, 12);
+  crossbarGeo.rotateX(Math.PI / 2);
+  const crossbar = new THREE.Mesh(crossbarGeo, postMat);
+  crossbar.position.set(0, goalHeight, 0);
+  crossbar.castShadow = true;
+
+  const rearSupportMat = new THREE.MeshStandardMaterial({
+    color: 0x94a3b8,
+    roughness: 0.35,
+    metalness: 0.75,
+  });
+  const backFrameGeo = new THREE.CylinderGeometry(0.04, 0.04, goalWidth + 0.2, 8);
+  backFrameGeo.rotateX(Math.PI / 2);
+  const backBottomBar = new THREE.Mesh(backFrameGeo, rearSupportMat);
+  backBottomBar.position.set(sideSign * bottomDepth, 0.05, 0);
+
+  for (const zSign of [-1, 1] as const) {
+    const topArm = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.03, 0.03, topDepth, 8),
+      rearSupportMat
+    );
+    topArm.rotation.z = Math.PI / 2;
+    topArm.position.set(
+      (sideSign * topDepth) / 2,
+      goalHeight - 0.04,
+      zSign * (goalWidth / 2)
+    );
+    goal.add(topArm);
+  }
+
+  const netMat = new THREE.MeshStandardMaterial({
+    map: netTex,
+    roughness: 0.85,
+    metalness: 0.05,
+    transparent: true,
+    opacity: 0.72,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+
+  const roofNet = new THREE.Mesh(new THREE.PlaneGeometry(topDepth, goalWidth), netMat);
+  roofNet.rotation.x = -Math.PI / 2;
+  roofNet.position.set((sideSign * topDepth) / 2, goalHeight, 0);
+
+  const slopeLen = Math.hypot(bottomDepth - topDepth, goalHeight);
+  const slopeAngle = Math.atan2(bottomDepth - topDepth, goalHeight);
+  const backNet = new THREE.Mesh(new THREE.PlaneGeometry(goalWidth, slopeLen), netMat);
+  backNet.rotation.y = sideSign === 1 ? Math.PI / 2 : -Math.PI / 2;
+  backNet.rotation.x = sideSign === 1 ? -slopeAngle : slopeAngle;
+  backNet.position.set(
+    sideSign * ((topDepth + bottomDepth) / 2),
+    goalHeight / 2,
+    0
+  );
+
+  for (const zSign of [-1, 1] as const) {
+    const sShape = new THREE.Shape();
+    sShape.moveTo(0, 0);
+    sShape.lineTo(sideSign * bottomDepth, 0);
+    sShape.lineTo(sideSign * topDepth, goalHeight);
+    sShape.lineTo(0, goalHeight);
+    sShape.closePath();
+    const sGeo = new THREE.ShapeGeometry(sShape);
+    const sideNet = new THREE.Mesh(sGeo, netMat);
+    sideNet.position.set(0, 0, zSign * (goalWidth / 2));
+    goal.add(sideNet);
+  }
+
+  goal.add(leftPost, rightPost, crossbar, backBottomBar, roofNet, backNet);
+  return goal;
+}
+
+function createRunningTrackGroup(
+  pitch: PitchConfig,
+  mats: StadiumMaterialsConfig,
+  maxAnisotropy: number
+): THREE.Group {
+  const group = new THREE.Group();
+  const laneWidth = 1.22;
+  const trackTotalWidth = pitch.trackLanes * laneWidth + 1.5;
+
+  const straightHalfLen = pitch.length / 2;
+  const innerRadius = pitch.width / 2 + pitch.marginSide;
+  const outerRadius = innerRadius + trackTotalWidth;
+
+  const outerShape = new THREE.Shape();
+  outerShape.absarc(straightHalfLen, 0, outerRadius, -Math.PI / 2, Math.PI / 2, false);
+  outerShape.absarc(-straightHalfLen, 0, outerRadius, Math.PI / 2, Math.PI * 1.5, false);
+  outerShape.closePath();
+
+  const innerHole = new THREE.Path();
+  innerHole.absarc(straightHalfLen, 0, innerRadius, -Math.PI / 2, Math.PI / 2, false);
+  innerHole.absarc(-straightHalfLen, 0, innerRadius, Math.PI / 2, Math.PI * 1.5, false);
+  innerHole.closePath();
+  outerShape.holes.push(innerHole);
+
+  const trackGeo = new THREE.ShapeGeometry(outerShape, 56);
+  trackGeo.rotateX(-Math.PI / 2);
+
+  // Normalize ShapeGeometry UVs so the granular EPDM rubber texture tiles at 1:1 physical scale
+  const uvAttr = trackGeo.attributes.uv;
+  if (uvAttr) {
+    for (let i = 0; i < uvAttr.count; i++) {
+      uvAttr.setXY(i, uvAttr.getX(i) * 0.04, uvAttr.getY(i) * 0.04);
+    }
+    uvAttr.needsUpdate = true;
+  }
+
+  const trackMat = createTrackPbrMaterial(mats.trackSurface, maxAnisotropy);
+  const trackMesh = new THREE.Mesh(trackGeo, trackMat);
+  trackMesh.position.y = 0.025;
+  trackMesh.receiveShadow = true;
+  group.add(trackMesh);
+
+  const dZoneMat = new THREE.MeshStandardMaterial({
+    color: 0x206030,
+    roughness: 0.84,
+    metalness: 0.02,
+  });
+  for (const sign of [-1, 1] as const) {
+    const dShape = new THREE.Shape();
+    const startAngle = sign === 1 ? -Math.PI / 2 : Math.PI / 2;
+    const endAngle = sign === 1 ? Math.PI / 2 : Math.PI * 1.5;
+    dShape.absarc(sign * straightHalfLen, 0, innerRadius, startAngle, endAngle, false);
+    dShape.closePath();
+    const dGeo = new THREE.ShapeGeometry(dShape, 32);
+    dGeo.rotateX(-Math.PI / 2);
+    const dMesh = new THREE.Mesh(dGeo, dZoneMat);
+    dMesh.position.y = 0.018;
+    dMesh.receiveShadow = true;
+    group.add(dMesh);
+  }
+
+  const lineMat = new THREE.LineBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.72,
+  });
+
+  for (let l = 1; l <= pitch.trackLanes; l++) {
+    const r = innerRadius + l * laneWidth;
+    const lanePath = new THREE.Path();
+    lanePath.absarc(straightHalfLen, 0, r, -Math.PI / 2, Math.PI / 2, false);
+    lanePath.absarc(-straightHalfLen, 0, r, Math.PI / 2, Math.PI * 1.5, false);
+    lanePath.closePath();
+
+    const pts2d = lanePath.getPoints(72);
+    const pts3d = pts2d.map((p) => new THREE.Vector3(p.x, 0.04, -p.y));
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(pts3d);
+    group.add(new THREE.LineLoop(lineGeo, lineMat));
+  }
+
+  return group;
+}
+
+/**
+ * Adds multi-species landscaped perimeter boulevard trees (varied tint & organic multi-lobe crowns)
+ * and illuminated architectural promenade light columns around the plaza.
+ */
+function createUrbanLandscapingContext(lighting: LightingMode): THREE.Group {
+  const group = new THREE.Group();
+  const treeCount = 52;
+
+  const trunkGeo = new THREE.CylinderGeometry(0.28, 0.46, 3.8, 7);
+  const trunkMat = new THREE.MeshStandardMaterial({
+    color: 0x4a3222,
+    roughness: 0.94,
+  });
+
+  const canopyGeo = new THREE.IcosahedronGeometry(3.5, 1);
+  const canopyMat = new THREE.MeshStandardMaterial({
+    color: lighting === 'night' ? 0x1a3f28 : 0x2f683b,
+    roughness: 0.88,
+    metalness: 0.01,
+  });
+
+  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCount);
+  const canopies = new THREE.InstancedMesh(canopyGeo, canopyMat, treeCount);
+  trunks.castShadow = true;
+  canopies.castShadow = true;
+  canopies.receiveShadow = true;
+
+  const dummy = new THREE.Object3D();
+  const tint = new THREE.Color();
+  for (let i = 0; i < treeCount; i++) {
+    const angle = (i / treeCount) * Math.PI * 2 + 0.05;
+    const rx = 178 + (i % 3) * 6;
+    const rz = 156 + ((i + 1) % 3) * 6;
+    const tx = Math.cos(angle) * rx;
+    const tz = Math.sin(angle) * rz;
+    const scaleJitter = 0.82 + ((i * 19) % 11) * 0.036;
+
+    dummy.position.set(tx, 1.9 * scaleJitter, tz);
+    dummy.scale.set(scaleJitter, scaleJitter, scaleJitter);
+    dummy.rotation.set(0, angle, 0);
+    dummy.updateMatrix();
+    trunks.setMatrixAt(i, dummy.matrix);
+
+    dummy.position.set(tx, 5.3 * scaleJitter, tz);
+    dummy.scale.set(scaleJitter * 1.18, scaleJitter * 0.92, scaleJitter * 1.12);
+    dummy.rotation.set(0.18 * (i % 3), angle * 1.7, 0);
+    dummy.updateMatrix();
+    canopies.setMatrixAt(i, dummy.matrix);
+
+    // Subtle botanical foliage hue variation per tree
+    const hueShift = ((i * 7) % 10) * 0.008 - 0.04;
+    tint.setHSL(0.35 + hueShift, 0.42, lighting === 'night' ? 0.22 : 0.34);
+    canopies.setColorAt(i, tint);
+  }
+  trunks.instanceMatrix.needsUpdate = true;
+  canopies.instanceMatrix.needsUpdate = true;
+  if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
+  trunks.computeBoundingSphere();
+  canopies.computeBoundingSphere();
+  group.add(trunks, canopies);
+
+  // Warm pedestrian promenade light columns around outer plaza
+  const poleCount = 32;
+  const poleGeo = new THREE.CylinderGeometry(0.11, 0.16, 5.2, 8);
+  const poleMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    roughness: 0.36,
+    metalness: 0.8,
+  });
+  const lanternGeo = new THREE.CylinderGeometry(0.28, 0.18, 0.55, 10);
+  const isLit = lighting !== 'day';
+  const lanternMat = new THREE.MeshStandardMaterial({
+    color: 0xfef3c7,
+    emissive: new THREE.Color(isLit ? 0xfbbf24 : 0x000000),
+    emissiveIntensity: isLit ? 2.2 : 0,
+    roughness: 0.18,
+  });
+
+  const poles = new THREE.InstancedMesh(poleGeo, poleMat, poleCount);
+  const lanterns = new THREE.InstancedMesh(lanternGeo, lanternMat, poleCount);
+  for (let i = 0; i < poleCount; i++) {
+    const angle = (i / poleCount) * Math.PI * 2;
+    const px = Math.cos(angle) * 149;
+    const pz = Math.sin(angle) * 129;
+
+    dummy.position.set(px, 2.6, pz);
+    dummy.scale.set(1, 1, 1);
+    dummy.rotation.set(0, 0, 0);
+    dummy.updateMatrix();
+    poles.setMatrixAt(i, dummy.matrix);
+
+    dummy.position.set(px, 5.35, pz);
+    dummy.updateMatrix();
+    lanterns.setMatrixAt(i, dummy.matrix);
+  }
+  poles.instanceMatrix.needsUpdate = true;
+  lanterns.instanceMatrix.needsUpdate = true;
+  poles.computeBoundingSphere();
+  lanterns.computeBoundingSphere();
+  group.add(poles, lanterns);
+
+  return group;
+}
+
+export function generatePitchGroup(
+  pitch: PitchConfig,
+  _colors: StadiumColors,
+  maxAnisotropy: number = 4,
+  lighting: LightingMode = 'day',
+  materials?: StadiumMaterialsConfig
+): THREE.Group {
+  const mats: StadiumMaterialsConfig = {
+    ...DEFAULT_STADIUM_MATERIALS,
+    ...(materials ?? {}),
+  };
+
+  const root = new THREE.Group();
+  root.name = 'PitchAssembly';
+
+  // 1. Mineral Esplanade / Granite Pavers / Urban Asphalt Site Ground with PBR Normal & Roughness Maps
+  const surroundGeo = new THREE.PlaneGeometry(620, 560);
+  surroundGeo.rotateX(-Math.PI / 2);
+  const siteTex = createUrbanSiteGroundTexture(mats.plazaSurface, maxAnisotropy);
+  const plazaDetail = createPlazaDetailNormalAndRoughness(
+    mats.plazaSurface,
+    maxAnisotropy
+  );
+  const surroundMat = new THREE.MeshStandardMaterial({
+    map: siteTex,
+    normalMap: plazaDetail.normalMap,
+    normalScale: new THREE.Vector2(0.55, 0.55),
+    roughnessMap: plazaDetail.roughnessMap,
+    roughness: lighting === 'night' ? 0.72 : 0.88,
+    metalness: 0.05,
+  });
+  const surroundMesh = new THREE.Mesh(surroundGeo, surroundMat);
+  surroundMesh.position.y = -0.02;
+  surroundMesh.receiveShadow = true;
+  root.add(surroundMesh);
+
+  // Landscaped boulevard trees & warm plaza lighting columns
+  root.add(createUrbanLandscapingContext(lighting));
+
+  // Soft Ground Contact-Shadow / Ambient Occlusion Apron anchoring the stadium footprint on the esplanade
+  const aoCanvas = document.createElement('canvas');
+  aoCanvas.width = 256;
+  aoCanvas.height = 256;
+  const aoCtx = aoCanvas.getContext('2d')!;
+  aoCtx.clearRect(0, 0, 256, 256);
+  const aoGrad = aoCtx.createRadialGradient(128, 128, 42, 128, 128, 126);
+  aoGrad.addColorStop(0.0, 'rgba(2, 6, 23, 0.55)');
+  aoGrad.addColorStop(0.68, 'rgba(2, 6, 23, 0.42)');
+  aoGrad.addColorStop(0.86, 'rgba(2, 6, 23, 0.16)');
+  aoGrad.addColorStop(1.0, 'rgba(2, 6, 23, 0)');
+  aoCtx.fillStyle = aoGrad;
+  aoCtx.fillRect(0, 0, 256, 256);
+  const aoTex = new THREE.CanvasTexture(aoCanvas);
+  const aoGeo = new THREE.PlaneGeometry(295, 235);
+  aoGeo.rotateX(-Math.PI / 2);
+  const aoMesh = new THREE.Mesh(
+    aoGeo,
+    new THREE.MeshBasicMaterial({
+      map: aoTex,
+      transparent: true,
+      depthWrite: false,
+      opacity: lighting === 'night' ? 0.65 : 0.48,
+    })
+  );
+  aoMesh.position.y = -0.005;
+  root.add(aoMesh);
+
+  // Dark Rubberized Interior Technical Pit Apron (prevents bright sidewalk pavers showing inside the bowl!)
+  if (!pitch.hasTrack) {
+    const pitApronGeo = new THREE.PlaneGeometry(pitch.length + 52, pitch.width + 52);
+    pitApronGeo.rotateX(-Math.PI / 2);
+    const pitApronMat = createTrackPbrMaterial('anthracite_apron', maxAnisotropy);
+    const pitApron = new THREE.Mesh(pitApronGeo, pitApronMat);
+    pitApron.position.y = 0.012;
+    pitApron.receiveShadow = true;
+    root.add(pitApron);
+  }
+
+  // 2. Main Turf Plane with PBR grass-blade normal map + directional mowing roughness sheen
+  const totalLength = pitch.length + pitch.marginEnd * 2;
+  const totalWidth = pitch.width + pitch.marginSide * 2;
+  const turfGeo = new THREE.PlaneGeometry(totalLength, totalWidth);
+  turfGeo.rotateX(-Math.PI / 2);
+
+  const { colorMap, roughnessMap } = createPitchTextures(
+    pitch,
+    mats.pitchTurf,
+    maxAnisotropy
+  );
+  const grassNormalMap = createGrassBladeNormalMap(maxAnisotropy);
+
+  const turfMat = new THREE.MeshPhysicalMaterial({
+    map: colorMap,
+    normalMap: grassNormalMap,
+    normalScale: new THREE.Vector2(0.45, 0.45),
+    roughnessMap,
+    roughness: 1.0,
+    metalness: 0.01,
+    clearcoat: lighting !== 'day' && mats.pitchTurf === 'hybrid_emerald' ? 0.14 : 0.04,
+    clearcoatRoughness: 0.42,
+  });
+
+  const turfMesh = new THREE.Mesh(turfGeo, turfMat);
+  turfMesh.position.y = 0.03;
+  turfMesh.receiveShadow = true;
+  root.add(turfMesh);
+
+  // 3. Concrete Perimeter Drainage Curb framing the pitch apron
+  const curbMat = new THREE.MeshStandardMaterial({
+    color: 0x94a3b8,
+    roughness: 0.82,
+    metalness: 0.05,
+  });
+  for (const zSign of [-1, 1] as const) {
+    const curb = new THREE.Mesh(
+      new THREE.BoxGeometry(totalLength + 0.5, 0.14, 0.28),
+      curbMat
+    );
+    curb.position.set(0, 0.06, zSign * (totalWidth / 2 + 0.14));
+    curb.receiveShadow = true;
+    root.add(curb);
+  }
+  for (const xSign of [-1, 1] as const) {
+    const curb = new THREE.Mesh(
+      new THREE.BoxGeometry(0.28, 0.14, totalWidth + 0.5),
+      curbMat
+    );
+    curb.position.set(xSign * (totalLength / 2 + 0.14), 0.06, 0);
+    curb.receiveShadow = true;
+    root.add(curb);
+  }
+
+  if (pitch.hasTrack) {
+    root.add(createRunningTrackGroup(pitch, mats, maxAnisotropy));
+  }
+
+  // Two FIFA Goals with woven hexagonal nets
+  const netTex = createGoalNetTexture();
+  const westGoal = createGoalGroup(-1, netTex);
+  westGoal.position.set(-pitch.length / 2, 0.03, 0);
+  const eastGoal = createGoalGroup(1, netTex);
+  eastGoal.position.set(pitch.length / 2, 0.03, 0);
+  root.add(westGoal, eastGoal);
+
+  // Corner Flags with 3D Pennants
+  const flagPoleGeo = new THREE.CylinderGeometry(0.025, 0.025, 1.55, 6);
+  const flagPoleMat = new THREE.MeshStandardMaterial({
+    color: 0xfef08a,
+    roughness: 0.35,
+  });
+  const pennantGeo = new THREE.PlaneGeometry(0.42, 0.28);
+  const pennantMat = new THREE.MeshStandardMaterial({
+    color: 0xef4444,
+    roughness: 0.6,
+    side: THREE.DoubleSide,
+  });
+
+  const cornerCoords: [number, number][] = [
+    [-pitch.length / 2, -pitch.width / 2],
+    [pitch.length / 2, -pitch.width / 2],
+    [pitch.length / 2, pitch.width / 2],
+    [-pitch.length / 2, pitch.width / 2],
+  ];
+  for (const [cx, cz] of cornerCoords) {
+    const pole = new THREE.Mesh(flagPoleGeo, flagPoleMat);
+    pole.position.set(cx, 0.8, cz);
+    const pennant = new THREE.Mesh(pennantGeo, pennantMat);
+    pennant.position.set(cx + 0.21, 1.4, cz);
+    root.add(pole, pennant);
+  }
+
+  // Multi-brand 360° Broadcast LED Perimeter Advertising Boards + Curved Corner Arcs + TV Camera Decks
+  if (pitch.adBoards) {
+    const boardHeight = 0.96;
+    const boardThickness = 0.22;
+    const sponsorTex = createLedSponsorRibbonTexture();
+    const ledMat = new THREE.MeshStandardMaterial({
+      map: sponsorTex,
+      emissive: new THREE.Color(0xffffff),
+      emissiveMap: sponsorTex,
+      emissiveIntensity: lighting === 'day' ? 0.38 : 1.05,
+      roughness: 0.2,
+      metalness: 0.35,
+      side: THREE.DoubleSide,
+    });
+    const backBoardMat = new THREE.MeshStandardMaterial({
+      color: 0x0f172a,
+      roughness: 0.65,
+      metalness: 0.58,
+    });
+
+    const adCornerR = 2.6;
+    const northZ = -(pitch.width / 2 + 2.8);
+    const southZ = pitch.width / 2 + 2.8;
+    const endX = pitch.length / 2 + 3.2;
+
+    const straightNorthLen = Math.max(20, (endX - adCornerR) * 2);
+    const northBoard = new THREE.Mesh(
+      new THREE.BoxGeometry(straightNorthLen, boardHeight, boardThickness),
+      [backBoardMat, backBoardMat, backBoardMat, backBoardMat, ledMat, backBoardMat]
+    );
+    northBoard.position.set(0, boardHeight / 2 + 0.03, northZ);
+    northBoard.castShadow = true;
+    root.add(northBoard);
+
+    // South touchline flanking LED boards (leaving central technical/dugout zone `[-23..+23]` clear)
+    const southWingLen = Math.max(8, endX - adCornerR - 23);
+    for (const xSign of [-1, 1] as const) {
+      const southWing = new THREE.Mesh(
+        new THREE.BoxGeometry(southWingLen, boardHeight * 0.86, boardThickness),
+        [backBoardMat, backBoardMat, backBoardMat, backBoardMat, backBoardMat, ledMat]
+      );
+      southWing.position.set(
+        xSign * (23 + southWingLen * 0.5),
+        (boardHeight * 0.86) / 2 + 0.03,
+        southZ
+      );
+      southWing.castShadow = true;
+      root.add(southWing);
+    }
+
+    // East & West goal-line LED boards flanking the goals + photographer turf benches behind
+    const sideSegmentLen = Math.max(6, Math.abs(northZ) - adCornerR - 5.2);
+    for (const xSign of [-1, 1] as const) {
+      const xPos = xSign * endX;
+      for (const zSign of [-1, 1] as const) {
+        const segMats =
+          xSign === 1
+            ? [backBoardMat, ledMat, backBoardMat, backBoardMat, backBoardMat, backBoardMat]
+            : [ledMat, backBoardMat, backBoardMat, backBoardMat, backBoardMat, backBoardMat];
+        const seg = new THREE.Mesh(
+          new THREE.BoxGeometry(boardThickness, boardHeight, sideSegmentLen),
+          segMats
+        );
+        seg.position.set(
+          xPos,
+          boardHeight / 2 + 0.03,
+          zSign * (5.2 + sideSegmentLen / 2)
+        );
+        seg.castShadow = true;
+        root.add(seg);
+
+        // Photographer / broadcast camera position behind goal-line LED boards
+        const camRig = new THREE.Mesh(
+          new THREE.BoxGeometry(0.55, 0.72, 2.4),
+          backBoardMat
+        );
+        camRig.position.set(
+          xPos + xSign * 1.15,
+          0.39,
+          zSign * (7.5 + sideSegmentLen * 0.35)
+        );
+        camRig.castShadow = true;
+        root.add(camRig);
+      }
+    }
+
+    // 4 Curved Quarter-Circle Corner LED Sponsor Arcs seamlessly connecting North/South & East/West!
+    const arcConfigs: { cx: number; cz: number; thetaStart: number }[] = [
+      { cx: endX - adCornerR, cz: southZ - adCornerR, thetaStart: 0 },
+      { cx: -(endX - adCornerR), cz: southZ - adCornerR, thetaStart: Math.PI * 1.5 },
+      { cx: -(endX - adCornerR), cz: northZ + adCornerR, thetaStart: Math.PI },
+      { cx: endX - adCornerR, cz: northZ + adCornerR, thetaStart: Math.PI * 0.5 },
+    ];
+    for (const ac of arcConfigs) {
+      const cylArc = new THREE.CylinderGeometry(
+        adCornerR,
+        adCornerR,
+        boardHeight,
+        12,
+        1,
+        true,
+        ac.thetaStart,
+        Math.PI * 0.5
+      );
+      const arcMesh = new THREE.Mesh(cylArc, ledMat);
+      arcMesh.position.set(ac.cx, boardHeight / 2 + 0.03, ac.cz);
+      arcMesh.castShadow = true;
+      root.add(arcMesh);
+    }
+  }
+
+  return root;
+}
