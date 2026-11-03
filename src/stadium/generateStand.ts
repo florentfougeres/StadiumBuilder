@@ -41,7 +41,10 @@ import {
   StandSide,
 } from './schema';
 import {
+  computeStandSection,
+  StandSection,
   getTierStartRows,
+  OVERHANG_HEADROOM_M,
   resolveStandTiers,
   UPPER_TIER_STEEPENING,
 } from './sightlines';
@@ -63,6 +66,8 @@ interface BalconySample {
   recessD: number;
   soffitY: number;
   overhangSpan: number;
+  /** Lowest level structure under the soffit may reach without entering the sheltered rows' headroom. */
+  clearY: number;
   hasVipGlass: boolean;
 }
 
@@ -123,8 +128,7 @@ function buildStandProfilePoints(
   const balconies: BalconySample[] = [];
   const tierBands: TierBandSample[] = [];
 
-  const tierSpecs = resolveStandTiers(stand);
-  const hasVipLoges = tierSpecs.length >= 2 && stand.vipLoges !== false;
+  const section = computeStandSection(stand);
 
   const pushStart = (x: number, y: number) => {
     shape.moveTo(x, y);
@@ -147,83 +151,64 @@ function buildStandProfilePoints(
   pushSeg(0.34, parapetTop, false);
   pushSeg(0.34, stand.elevationStart, false);
 
-  let curD = 0.34;
-  let curY = stand.elevationStart;
-  let maxOutwardD = curD;
+  let rowIdx = 0;
+  for (const tier of section.tiers) {
+    const brk = section.breaks.find((b) => b.tierIdx === tier.tierIndex);
+    if (brk) {
+      // Loggia back wall, soffit over the sheltered rows, then the balcony fascia.
+      pushSeg(brk.recessD, brk.fromY, false);
+      pushSeg(brk.recessD, brk.soffitY, false);
+      pushSeg(brk.frontD, brk.soffitY, false);
+      pushSeg(brk.frontD, brk.topY, false);
 
-  for (let tierIdx = 0; tierIdx < tierSpecs.length; tierIdx++) {
-    const spec = tierSpecs[tierIdx];
-
-    if (tierIdx > 0) {
-      const recessStep = hasVipLoges ? 1.45 : 0.75;
-      const recessD = curD + recessStep;
-      const loggiaH = hasVipLoges ? 1.95 : 0.95;
-      const balconyOverhangD = Math.max(1.8, recessD - spec.overhang);
-      const balconyFasciaH = hasVipLoges ? 0.9 : 0.65;
-
-      pushSeg(recessD, curY, false);
-      pushSeg(recessD, curY + loggiaH, false);
-      pushSeg(balconyOverhangD, curY + loggiaH, false);
-
+      const sheltered = section.rows.filter((r) => r.d + stand.rowDepth > brk.frontD);
+      const highestShelteredTread = sheltered.reduce((m, r) => Math.max(m, r.y), -Infinity);
       balconies.push({
-        d: balconyOverhangD,
-        y: curY + loggiaH + balconyFasciaH * 0.5,
-        tierIdx,
-        loggiaD: recessD - 0.15,
-        loggiaY: curY + loggiaH * 0.5,
-        recessD,
-        soffitY: curY + loggiaH,
-        overhangSpan: Math.max(0, recessD - balconyOverhangD),
-        hasVipGlass: hasVipLoges,
+        d: brk.frontD,
+        y: (brk.soffitY + brk.topY) * 0.5,
+        tierIdx: brk.tierIdx,
+        loggiaD: brk.recessD - 0.15,
+        loggiaY: (brk.fromY + brk.soffitY) * 0.5,
+        recessD: brk.recessD,
+        soffitY: brk.soffitY,
+        overhangSpan: Math.max(0, brk.recessD - brk.frontD),
+        clearY: Number.isFinite(highestShelteredTread)
+          ? highestShelteredTread + OVERHANG_HEADROOM_M - 0.2
+          : brk.fromY,
+        hasVipGlass: brk.hasVip,
       });
-
-      pushSeg(balconyOverhangD, curY + loggiaH + balconyFasciaH, false);
-
-      maxOutwardD = Math.max(maxOutwardD, recessD);
-      curD = balconyOverhangD;
-      curY += loggiaH + balconyFasciaH;
     }
 
-    const bandStartD = curD;
-    const bandStartY = curY;
+    const tierRows = section.rows.slice(rowIdx, rowIdx + tier.rows);
+    rowIdx += tier.rows;
+    if (tierRows.length === 0) continue;
     const treadSegIndices: number[] = [];
-
-    for (let tr = 0; tr < spec.rows; tr++) {
-      const riser = spec.riserHeight;
-      const rowMidD = curD + stand.rowDepth * 0.52;
-      const rowY = curY;
-
-      curD += stand.rowDepth;
-      maxOutwardD = Math.max(maxOutwardD, curD);
-      const treadIdx = pushSeg(curD, curY, true);
+    for (const row of tierRows) {
+      const treadIdx = pushSeg(row.d + stand.rowDepth, row.y, true);
       treadSegIndices.push(treadIdx);
-
       rowPositions.push({
-        d: rowMidD,
-        y: rowY,
-        tierIdx,
-        riser,
+        d: row.d + stand.rowDepth * 0.52,
+        y: row.y,
+        tierIdx: row.tierIdx,
+        riser: row.riser,
         treadSegIdx: treadIdx,
       });
-
-      curY += riser;
-      pushSeg(curD, curY, false);
+      pushSeg(row.d + stand.rowDepth, row.y + row.riser, false);
     }
-
-    if (spec.rows > 0) {
-      tierBands.push({
-        tierIdx,
-        dStart: bandStartD,
-        yStart: bandStartY,
-        dEnd: curD,
-        yEnd: curY,
-        treadSegIndices,
-      });
-    }
+    const last = tierRows[tierRows.length - 1];
+    tierBands.push({
+      tierIdx: tier.tierIndex,
+      dStart: tierRows[0].d,
+      yStart: tierRows[0].y,
+      dEnd: last.d + stand.rowDepth,
+      yEnd: last.y + last.riser,
+      treadSegIndices,
+    });
   }
 
-  const outerWallD = Math.max(curD, maxOutwardD) + 2.8;
-  const topHeight = curY + 1.85;
+  const curD = section.endD;
+  const outerWallD = section.totalDepth;
+  const topHeight = section.topHeight;
   pushSeg(curD, topHeight, false);
   pushSeg(outerWallD, topHeight, false);
 
@@ -1099,7 +1084,12 @@ function buildStraightStandMesh(
           const bx = -spanLength * 0.47 + (b / bracketCount) * (spanLength * 0.94);
           group.add(
             createStrut(
-              new THREE.Vector3(bx, bal.soffitY - Math.min(1.35, bal.overhangSpan * 0.22), bal.recessD - 0.15),
+              new THREE.Vector3(
+                bx,
+                bal.soffitY -
+                  Math.max(0.15, Math.min(1.35, bal.overhangSpan * 0.22, bal.soffitY - bal.clearY)),
+                bal.recessD - 0.15
+              ),
               new THREE.Vector3(bx, bal.soffitY - 0.06, bal.d + 0.22),
               0.11,
               0.24,
@@ -1616,6 +1606,8 @@ function buildCornerVirageQuadrant(
 
   const profA = buildStandProfilePoints(standA, isHollow);
   const profB = buildStandProfilePoints(standB, isHollow);
+  const tiersA = resolveStandTiers(standA);
+  const tiersB = resolveStandTiers(standB);
 
   const sunkenDepth = getEffectiveSunkenDepth(doc);
   const isNight = doc.lighting !== 'day';
@@ -1624,7 +1616,25 @@ function buildCornerVirageQuadrant(
   const segs = corner.facetedThreeBay ? 15 : 18;
   const nSteps = Math.max(16, Math.min(76, Math.max(standA.rows, standB.rows)));
   const maxTiers = Math.max(standA.tiers, standB.tiers) as 1 | 2 | 3 | 4 | 5;
-  const breakRows = maxTiers >= 2 ? getTierStartRows(nSteps, maxTiers).slice(1) : [];
+  // Tier changes follow the neighbouring stands' row split (averaged, as the corner morphs from
+  // one to the other); the automatic split fills in for a stand with fewer tiers.
+  const cumulativeShare = (tiers: ReturnType<typeof resolveStandTiers>, b: number) => {
+    if (tiers.length <= b) return undefined;
+    const total = tiers.reduce((acc, t) => acc + t.rows, 0) || 1;
+    return tiers.slice(0, b).reduce((acc, t) => acc + t.rows, 0) / total;
+  };
+  const autoBreaks = maxTiers >= 2 ? getTierStartRows(nSteps, maxTiers).slice(1) : [];
+  const breakRows = autoBreaks.map((auto, i) => {
+    const shares = [cumulativeShare(tiersA, i + 1), cumulativeShare(tiersB, i + 1)].filter(
+      (v): v is number => v !== undefined
+    );
+    if (shares.length === 0) return auto;
+    const k = Math.round((nSteps * shares.reduce((a, b) => a + b, 0)) / shares.length);
+    return Math.max(2 + i * 2, Math.min(nSteps - 2 * (autoBreaks.length - i), k));
+  });
+  for (let i = 1; i < breakRows.length; i++) {
+    breakRows[i] = Math.max(breakRows[i], breakRows[i - 1] + 2);
+  }
   const breakRowSet = new Set(breakRows);
 
   // Build exact canonical `isSeatSegmentMask` shared by all `segs + 1` slices
@@ -1674,19 +1684,35 @@ function buildCornerVirageQuadrant(
       const vipB = activeB && standB.vipLoges !== false;
       const hasVip = vipA || vipB;
       const recessAdd = weight * (hasVip ? 1.45 : 0.75);
-      const loggiaH = weight * (hasVip ? 1.95 : 0.95);
-      const overhangDelta = -weight * 1.15;
+      const baseLoggiaH = weight * (hasVip ? 1.95 : 0.95);
+      // Same projection as each neighbouring stand, blended across the corner.
+      const overhang =
+        (activeA ? (1 - w) * (tiersA[bIdx + 1]?.overhang ?? 0) : 0) +
+        (activeB ? w * (tiersB[bIdx + 1]?.overhang ?? 0) : 0);
+      const overhangDelta = -overhang;
       const fasciaH = weight * (hasVip ? 0.9 : 0.65);
       return {
         rowK,
         weight,
         hasVip,
         recessAdd,
-        loggiaH,
+        loggiaH: baseLoggiaH,
         overhangDelta,
         fasciaH,
       };
     });
+
+    // Raise each soffit that shelters rows so they keep standing headroom; the riser estimate
+    // uses the base budget, which is close enough for a clearance check.
+    {
+      const baseVertical = slotConfigs.reduce((acc, sc) => acc + sc.loggiaH + sc.fasciaH, 0);
+      const estRiser = Math.max(0.2, (targetTopH - 1.85 - elev - baseVertical) / nSteps);
+      for (const sc of slotConfigs) {
+        if (sc.overhangDelta < 0 && sc.weight > 0.001) {
+          sc.loggiaH = Math.max(sc.loggiaH, sc.weight * OVERHANG_HEADROOM_M - estRiser);
+        }
+      }
+    }
 
     const netBalconyHorizontal = slotConfigs.reduce((acc, sc) => acc + sc.overhangDelta, 0);
     const netBalconyVertical = slotConfigs.reduce(
@@ -3321,6 +3347,54 @@ function buildModernBowlSweep(
     };
   };
 
+  const sideSections: Record<StandSide, StandSection> = {
+    east: computeStandSection(doc.stands.east),
+    south: computeStandSection(doc.stands.south),
+    west: computeStandSection(doc.stands.west),
+    north: computeStandSection(doc.stands.north),
+  };
+
+  /**
+   * Tier layout at a point of the ring. The tier count follows the dominant stand; rows share,
+   * rake and overhang are blended across the stands that have that many tiers, so the profile
+   * morphs smoothly from one stand to the next instead of jumping at the sector boundary.
+   */
+  const blendTierParamsAt = (nx: number, nz: number) => {
+    const domStand = doc.stands[dominantSideAt(nx, nz)];
+    const tiers = domStand.enabled ? sideSections[domStand.id].tiers.length : 1;
+    const w = sectorWeightsAt(nx, nz);
+    const weights: Record<StandSide, number> = { east: w.e, south: w.s, west: w.w, north: w.n };
+    const contributors = (Object.keys(weights) as StandSide[]).filter(
+      (side) =>
+        weights[side] > 0 &&
+        doc.stands[side].enabled &&
+        sideSections[side].tiers.length === tiers
+    );
+    const sides = contributors.length > 0 ? contributors : [domStand.id];
+    const total = sides.reduce((acc, side) => acc + (contributors.length > 0 ? weights[side] : 1), 0) || 1;
+    const share = Array<number>(tiers).fill(0);
+    const slopeTan = Array<number>(tiers).fill(0);
+    const overhang = Array<number>(tiers).fill(0);
+    for (const side of sides) {
+      const wt = (contributors.length > 0 ? weights[side] : 1) / total;
+      const sec = sideSections[side];
+      const rowsTotal = Math.max(1, sec.rows.length);
+      sec.tiers.slice(0, tiers).forEach((tier, t) => {
+        share[t] += (wt * tier.rows) / rowsTotal;
+        slopeTan[t] += wt * (tier.riserHeight / Math.max(0.4, doc.stands[side].rowDepth));
+        overhang[t] += wt * tier.overhang;
+      });
+    }
+    const shareSum = share.reduce((a, b) => a + b, 0) || 1;
+    return {
+      tiers,
+      hasVip: tiers >= 2 && domStand.vipLoges !== false,
+      share: share.map((v) => v / shareSum),
+      slopeTan,
+      overhang,
+    };
+  };
+
   const N_TERRACE_STEPS = 30;
   const isSeatSegmentMask: boolean[] = [];
   isSeatSegmentMask.push(false, false, false);
@@ -3355,19 +3429,12 @@ function buildModernBowlSweep(
     sliceCornerId.push(cQuad);
 
     const env = evalStandEnvelopeAt(baseSample.nx, baseSample.nz);
-    const domSide = dominantSideAt(baseSample.nx, baseSample.nz);
-    const domStand = doc.stands[domSide];
-    const domTiers = domStand.enabled ? domStand.tiers : 1;
-    const domVip = domTiers >= 2 && domStand.vipLoges !== false;
-    const breakUnitH = domVip ? 2.4 : 1.45;
-    const recOffset = domVip ? 1.35 : 0.75;
-    const standOverhang =
-      domStand.tierOverhang !== undefined
-        ? domStand.tierOverhang
-        : doc.shape === 'steep_cauldron'
-        ? 2.7
-        : 2.25;
-    const balconyOverhangDist = recOffset - standOverhang;
+    const tierBlend = blendTierParamsAt(baseSample.nx, baseSample.nz);
+    const domTiers = tierBlend.tiers;
+    const domVip = tierBlend.hasVip;
+    const recOffset = domVip ? 1.45 : 0.75;
+    const baseLoggiaH = domVip ? 1.95 : 0.95;
+    const fasciaH = domVip ? 0.9 : 0.65;
 
     const activeBreakSlots =
       domTiers === 2
@@ -3380,20 +3447,39 @@ function buildModernBowlSweep(
         ? [6, 12, 18, 24]
         : [];
 
-    const activeBreaksCount = activeBreakSlots.length;
-    const balconyVerticalTotal = activeBreaksCount * breakUnitH;
-    const balconyNetHorizontal = activeBreaksCount * balconyOverhangDist;
-
-    const netStepsDepth = Math.max(4, env.depth - 3.15 - balconyNetHorizontal);
-    const netStepsRise = Math.max(
-      2,
-      env.height * (doc.shape === 'steep_cauldron' ? 1.06 : 1.0) -
-        2.75 -
-        balconyVerticalTotal
+    // Terrace steps per tier: tier boundaries stay on fixed slots (shared mesh topology), while
+    // each tier's depth follows its share of rows and its risers follow its own rake.
+    const tierOfStep = (k: number) => activeBreakSlots.filter((slot) => k >= slot).length;
+    const stepsPerTier = Array.from({ length: domTiers }, (_, t) =>
+      Array.from({ length: N_TERRACE_STEPS }, (_, k) => k).filter((k) => tierOfStep(k) === t).length
     );
-
-    const stepD = netStepsDepth / N_TERRACE_STEPS;
-    const baseStepRise = netStepsRise / N_TERRACE_STEPS;
+    const overhangTotal = activeBreakSlots.reduce((acc, _, b) => acc + tierBlend.overhang[b + 1], 0);
+    const netStepsDepth = Math.max(4, env.depth - 3.16 + overhangTotal);
+    const stepDOfTier = stepsPerTier.map((n, t) =>
+      n > 0 ? (netStepsDepth * tierBlend.share[t]) / n : 0
+    );
+    const rawRise = (k: number) => {
+      const t = tierOfStep(k);
+      return stepDOfTier[t] * tierBlend.slopeTan[t];
+    };
+    const rawRiseTotal = Array.from({ length: N_TERRACE_STEPS }, (_, k) => rawRise(k)).reduce(
+      (a, b) => a + b,
+      0
+    );
+    const targetRise = env.height * (doc.shape === 'steep_cauldron' ? 1.06 : 1.0) - 2.72;
+    // Break heights grow when the soffit must clear the sheltered rows; solve the riser scale
+    // with them (two passes are enough since the correction is small).
+    const breakRise = (scale: number) =>
+      activeBreakSlots.reduce((acc, slot) => {
+        const lastRise = rawRise(slot - 1) * scale;
+        const sheltered = tierBlend.overhang[tierOfStep(slot)] > 0;
+        const loggia = sheltered
+          ? Math.max(baseLoggiaH, OVERHANG_HEADROOM_M - lastRise)
+          : baseLoggiaH;
+        return acc + loggia + fasciaH;
+      }, 0);
+    let riseScale = Math.max(2, targetRise - breakRise(1)) / Math.max(0.1, rawRiseTotal);
+    riseScale = Math.max(2, targetRise - breakRise(riseScale)) / Math.max(0.1, rawRiseTotal);
 
     const pts: [number, number][] = [];
     pts.push([0, 0]);
@@ -3404,20 +3490,26 @@ function buildModernBowlSweep(
     let curD = 0.36;
     let curY = 0.92;
     let maxD = curD;
+    let lastRise = 0;
 
     for (let k = 0; k < N_TERRACE_STEPS; k++) {
       if (k === 6 || k === 12 || k === 18 || k === 24) {
         if (activeBreakSlots.includes(k)) {
+          const overhang = tierBlend.overhang[tierOfStep(k)];
           const recD = curD + recOffset;
-          const overD = Math.max(2.0, curD + balconyOverhangDist);
-          const logH = domVip ? 1.65 : 0.9;
+          const overD = Math.max(2.0, curD - overhang);
+          // The last tread sits one riser below `curY`; keep standing headroom above it.
+          const soffitY =
+            overhang > 0
+              ? Math.max(curY + baseLoggiaH, curY - lastRise + OVERHANG_HEADROOM_M)
+              : curY + baseLoggiaH;
           pts.push([recD, curY]);
-          pts.push([recD, curY + logH]);
-          pts.push([overD, curY + logH]);
-          pts.push([overD, curY + breakUnitH]);
+          pts.push([recD, soffitY]);
+          pts.push([overD, soffitY]);
+          pts.push([overD, soffitY + fasciaH]);
           maxD = Math.max(maxD, recD);
           curD = overD;
-          curY += breakUnitH;
+          curY = soffitY + fasciaH;
         } else {
           pts.push([curD, curY]);
           pts.push([curD, curY]);
@@ -3426,15 +3518,10 @@ function buildModernBowlSweep(
         }
       }
 
-      const stepFactor =
-        doc.shape === 'steep_cauldron'
-          ? 0.82 + (k / N_TERRACE_STEPS) * 0.38
-          : doc.shape === 'olympic_oval'
-          ? 0.92 + (k / N_TERRACE_STEPS) * 0.16
-          : 0.86 + (k / N_TERRACE_STEPS) * 0.28;
-      const thisRise = baseStepRise * stepFactor;
+      const thisRise = rawRise(k) * riseScale;
+      lastRise = thisRise;
 
-      curD += stepD;
+      curD += stepDOfTier[tierOfStep(k)];
       maxD = Math.max(maxD, curD);
       pts.push([curD, curY + thisRise * 0.72]);
 

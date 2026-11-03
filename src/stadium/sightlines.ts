@@ -20,11 +20,14 @@ export interface ResolvedTierSpec {
   rows: number;
   slopeAngleDeg: number;
   riserHeight: number;
-  /** Forward cantilever projection (m) from the inter-tier concourse/loggia wall (`0..8.5`). */
+  /** How far (m) the tier's front projects over the rear rows of the tier below (`0..8.5`). */
   overhang: number;
 }
 
-export const DEFAULT_TIER_OVERHANG_M = 2.5;
+/** Projection of an upper tier over the rows below, as stands were drawn before it became a setting. */
+export const DEFAULT_TIER_OVERHANG_M = 1.15;
+/** Clear height kept between an upper tier's soffit and the treads of the rows it shelters (m). */
+export const OVERHANG_HEADROOM_M = 2.4;
 
 /**
  * Riser height of a row in tier `tierIdx` (0 = lowest). Upper tiers sit higher and further from
@@ -139,6 +142,107 @@ export function resolveStandTiers(stand: StandConfig): ResolvedTierSpec[] {
   });
 }
 
+export interface StandSectionRow {
+  /** Front edge of the tread, measured from the pitch side of the front wall (m). */
+  d: number;
+  /** Tread level (m). */
+  y: number;
+  tierIdx: number;
+  riser: number;
+}
+
+export interface StandSectionBreak {
+  /** Upper tier that starts at this break. */
+  tierIdx: number;
+  /** Rear edge and top of the last row of the tier below. */
+  fromD: number;
+  fromY: number;
+  /** Back wall of the loggia between the two tiers. */
+  recessD: number;
+  /** Underside of the upper tier balcony; raised to keep headroom over the rows it shelters. */
+  soffitY: number;
+  /** Pitch-side face of the upper tier balcony. */
+  frontD: number;
+  /** First tread of the upper tier. */
+  topY: number;
+  /** Rows of the tier below that sit, even partly, under the balcony. */
+  shelteredRows: number;
+  hasVip: boolean;
+}
+
+export interface StandSection {
+  tiers: ResolvedTierSpec[];
+  rows: StandSectionRow[];
+  breaks: StandSectionBreak[];
+  /** Rear edge and top of the last row. */
+  endD: number;
+  endY: number;
+  /** Rear face of the stand. */
+  totalDepth: number;
+  topHeight: number;
+}
+
+/**
+ * Cross-section of a stand, the single source for the 3D profile, the capacity metrics and the
+ * sightlines. Rows climb from the front wall; at each tier change the upper tier steps up over a
+ * loggia and its balcony projects `overhang` metres over the last rows of the tier below. The
+ * balcony soffit is raised as needed so the sheltered rows keep OVERHANG_HEADROOM_M of clearance.
+ */
+export function computeStandSection(stand: StandConfig): StandSection {
+  const tiers = resolveStandTiers(stand);
+  const hasVip = tiers.length >= 2 && stand.vipLoges !== false;
+  const recess = hasVip ? 1.45 : 0.75;
+  const baseLoggiaH = hasVip ? 1.95 : 0.95;
+  const fasciaH = hasVip ? 0.9 : 0.65;
+  const frontWallD = 0.34;
+
+  const rows: StandSectionRow[] = [];
+  const breaks: StandSectionBreak[] = [];
+  let curD = frontWallD;
+  let curY = stand.elevationStart;
+  let maxD = curD;
+
+  for (const tier of tiers) {
+    if (tier.tierIndex > 0 && rows.length > 0) {
+      const frontD = Math.max(frontWallD + 1.5, curD - tier.overhang);
+      const sheltered = rows.filter((r) => r.d + stand.rowDepth > frontD);
+      const highestShelteredTread = sheltered.reduce((m, r) => Math.max(m, r.y), -Infinity);
+      const soffitY = Math.max(curY + baseLoggiaH, highestShelteredTread + OVERHANG_HEADROOM_M);
+      const recessD = curD + recess;
+      breaks.push({
+        tierIdx: tier.tierIndex,
+        fromD: curD,
+        fromY: curY,
+        recessD,
+        soffitY,
+        frontD,
+        topY: soffitY + fasciaH,
+        shelteredRows: sheltered.length,
+        hasVip,
+      });
+      maxD = Math.max(maxD, recessD);
+      curD = frontD;
+      curY = soffitY + fasciaH;
+    }
+    for (let r = 0; r < tier.rows; r++) {
+      rows.push({ d: curD, y: curY, tierIdx: tier.tierIndex, riser: tier.riserHeight });
+      curD += stand.rowDepth;
+      curY += tier.riserHeight;
+      maxD = Math.max(maxD, curD);
+    }
+  }
+
+  return {
+    tiers,
+    rows,
+    breaks,
+    endD: curD,
+    endY: curY,
+    totalDepth: Math.max(curD, maxD) + 2.8,
+    topHeight: curY + 1.85,
+  };
+}
+
 /**
  * Green Guide / FIFA standard C-value formula:
  * C = D * (N + R) / (D + T) - R
@@ -197,65 +301,45 @@ export function computeStandSightlines(
   }
 
   const isStandingKop = stand.seatingType === 'safe_standing';
-  const hasVipLoges = tierSpecs.length >= 2 && stand.vipLoges !== false;
   const hasColumnObstruction = effectiveRoofStyle === 'column_supported';
 
   const eyeOffsetBase = isStandingKop && tierSpecs.length === 1 ? 1.52 : 1.15;
   const points: SightlinePoint[] = [];
   const baseDist = Math.max(2, stand.distanceToPitch + trackOffsetM);
-  const recessStep = hasVipLoges ? 1.45 : 0.85;
-
-  let curD = baseDist;
-  let curY = stand.elevationStart;
-  let globalRow = 0;
+  const section = computeStandSection(stand);
   const tierFirstRowSet = new Set<number>();
 
-  for (let tierIdx = 0; tierIdx < tierSpecs.length; tierIdx++) {
-    const spec = tierSpecs[tierIdx];
-    tierFirstRowSet.add(globalRow);
+  section.rows.forEach((row, globalRow) => {
+    const isTierFirstRow = globalRow === 0 || section.rows[globalRow - 1].tierIdx !== row.tierIdx;
+    if (isTierFirstRow) tierFirstRowSet.add(globalRow);
+    // Horizontal distance from the touchline to the spectator's eye (front of the tread).
+    const curD = baseDist + row.d - 0.34;
+    const tierEyeOffset = isStandingKop && row.tierIdx === 0 ? 1.52 : eyeOffsetBase;
+    const eyeHeight = row.y + tierEyeOffset;
 
-    if (tierIdx > 0) {
-      // Upper tier advances forward from the rear concourse/loggia line by `spec.overhang`
-      curD = Math.max(baseDist + 1.2, curD + recessStep - spec.overhang);
-      curY += hasVipLoges ? 2.75 : 1.6;
-    }
+    const rawCVal = isTierFirstRow
+      ? 145
+      : computeRowCValueMm(curD, eyeHeight, row.riser, stand.rowDepth);
 
-    const tierEyeOffset =
-      isStandingKop && tierIdx === 0 ? 1.52 : eyeOffsetBase;
+    // Roof columns planted in upper third of stands obstruct rear rows
+    const colPenalty =
+      hasColumnObstruction && globalRow >= Math.floor(totalRows * 0.66) ? 18 : 0;
+    // Kept as computed (even negative) so a stand that cannot see the touchline reads as such.
+    const cVal = rawCVal - colPenalty;
 
-    for (let tr = 0; tr < spec.rows; tr++) {
-      const isTierFirstRow = tr === 0;
-      const eyeHeight = curY + tierEyeOffset;
+    const viewingAngleDeg = Number(
+      ((Math.atan2(eyeHeight, curD) * 180) / Math.PI).toFixed(1)
+    );
 
-      const rawCVal = isTierFirstRow
-        ? 145
-        : computeRowCValueMm(curD, eyeHeight, spec.riserHeight, stand.rowDepth);
-
-      // Roof columns planted in upper third of stands obstruct rear rows
-      const colPenalty =
-        hasColumnObstruction && globalRow >= Math.floor(totalRows * 0.66) ? 18 : 0;
-      const cVal = hasColumnObstruction
-        ? Math.max(6, rawCVal - colPenalty)
-        : Math.max(20, rawCVal);
-
-      const viewingAngleDeg = Number(
-        ((Math.atan2(eyeHeight, curD) * 180) / Math.PI).toFixed(1)
-      );
-
-      points.push({
-        row: globalRow + 1,
-        tier: tierIdx + 1,
-        distanceX: Number(curD.toFixed(2)),
-        eyeHeightY: Number(eyeHeight.toFixed(2)),
-        cValueMm: cVal,
-        viewingAngleDeg,
-      });
-
-      curD += stand.rowDepth;
-      curY += spec.riserHeight;
-      globalRow++;
-    }
-  }
+    points.push({
+      row: globalRow + 1,
+      tier: row.tierIdx + 1,
+      distanceX: Number(curD.toFixed(2)),
+      eyeHeightY: Number(eyeHeight.toFixed(2)),
+      cValueMm: cVal,
+      viewingAngleDeg,
+    });
+  });
 
   const nonBalconyRows = points.filter((p) => !tierFirstRowSet.has(p.row - 1));
   const evaluated = nonBalconyRows.length > 0 ? nonBalconyRows : points;

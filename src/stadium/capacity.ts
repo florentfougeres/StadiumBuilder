@@ -17,7 +17,7 @@ import {
   StandMetrics,
   StandSide,
 } from './schema';
-import { computeStandSightlines, resolveStandTiers } from './sightlines';
+import { computeStandSection, computeStandSightlines, resolveStandTiers } from './sightlines';
 
 const STAND_SIDES: StandSide[] = ['north', 'south', 'east', 'west'];
 
@@ -259,37 +259,19 @@ export function calculateStandMetrics(
     (straightFrontSpan + cornerQuadrants * innerCornerArcPerQuadrant).toFixed(1)
   );
 
-  const stepBase = doc.shape === 'steep_cauldron' ? 1.1 : 1.35;
-  const walkwayUnitH = hasVipLoges ? 2.85 : 1.6;
-  const tierWalkwayHeight = upperTierCount * walkwayUnitH;
-
-  let cumulativeRiserHeight = 0;
-  let simD = 0;
-  let maxSimD = 0;
-  for (let t = 0; t < tierSpecs.length; t++) {
-    const spec = tierSpecs[t];
-    if (t > 0) {
-      simD = Math.max(1.6, simD + stepBase - spec.overhang);
-    }
-    const cauldronBoost = doc.shape === 'steep_cauldron' ? 1.05 : 1.0;
-    cumulativeRiserHeight += spec.rows * spec.riserHeight * cauldronBoost;
-    simD += spec.rows * stand.rowDepth;
-    maxSimD = Math.max(maxSimD, simD);
-  }
+  const section = computeStandSection(stand);
+  // Cauldrons are drawn ~5% steeper than their nominal risers (see the bowl sweep).
+  const cauldronRise =
+    doc.shape === 'steep_cauldron'
+      ? 0.05 * section.rows.reduce((acc, r) => acc + r.riser, 0)
+      : 0;
 
   const totalDepth = effectiveEnabled
-    ? Number(Math.max(8, maxSimD + 2.8).toFixed(2))
+    ? Number(Math.max(8, section.totalDepth).toFixed(2))
     : 0;
 
   const maxHeight = effectiveEnabled
-    ? Number(
-        (
-          stand.elevationStart +
-          cumulativeRiserHeight +
-          tierWalkwayHeight +
-          1.85
-        ).toFixed(2)
-      )
+    ? Number((section.topHeight + cauldronRise).toFixed(2))
     : 0;
 
   const weightedSlopeSum = tierSpecs.reduce(
@@ -321,6 +303,7 @@ export function calculateStandMetrics(
       minCValueMm: 0,
       avgCValueMm: 0,
       sightlineGrade: 'Optimal',
+      evacuationMinutes: 0,
     };
   }
 
@@ -337,36 +320,28 @@ export function calculateStandMetrics(
   const safeSeatWidth = Math.max(0.44, stand.seatWidth * 0.94);
 
   let totalRowSeats = 0;
-  let curOutwardD = 0.4;
 
-  for (let tierIdx = 0; tierIdx < tierSpecs.length; tierIdx++) {
-    const spec = tierSpecs[tierIdx];
-    if (tierIdx > 0) {
-      curOutwardD = Math.max(2.0, curOutwardD + stepBase - spec.overhang);
-    }
+  for (const row of section.rows) {
+    const curOutwardD = row.d + 0.06;
+    const openEndWingFlare = cornerQuadrants === 0 ? curOutwardD * 0.38 : 0;
+    const cornerDelta = bowlRing.facetedCorners
+      ? 2 * (Math.SQRT2 - 1) * curOutwardD * cornerExpansionEfficiency
+      : (Math.PI / 2) * curOutwardD * cornerExpansionEfficiency;
 
-    for (let tr = 0; tr < spec.rows; tr++) {
-      const openEndWingFlare = cornerQuadrants === 0 ? curOutwardD * 0.38 : 0;
-      const cornerDelta = bowlRing.facetedCorners
-        ? 2 * (Math.SQRT2 - 1) * curOutwardD * cornerExpansionEfficiency
-        : (Math.PI / 2) * curOutwardD * cornerExpansionEfficiency;
+    const rowArcSpan =
+      straightFrontSpan * multiTierWingBonus +
+      openEndWingFlare +
+      cornerQuadrants * (innerCornerArcPerQuadrant + cornerDelta);
 
-      const rowArcSpan =
-        straightFrontSpan * multiTierWingBonus +
-        openEndWingFlare +
-        cornerQuadrants * (innerCornerArcPerQuadrant + cornerDelta);
+    const netSeatLen = Math.max(0, (rowArcSpan - totalAisleWidth) * 0.975);
+    const baseRowCount = Math.floor(netSeatLen / safeSeatWidth);
 
-      const netSeatLen = Math.max(0, (rowArcSpan - totalAisleWidth) * 0.975);
-      const baseRowCount = Math.floor(netSeatLen / safeSeatWidth);
+    const standingDensityFactor =
+      seatingType === 'safe_standing' && (tierSpecs.length === 1 || row.tierIdx === 0)
+        ? 1.34
+        : 1.0;
 
-      const standingDensityFactor =
-        seatingType === 'safe_standing' && (tierSpecs.length === 1 || tierIdx === 0)
-          ? 1.34
-          : 1.0;
-
-      totalRowSeats += Math.round(baseRowCount * standingDensityFactor);
-      curOutwardD += stand.rowDepth;
-    }
+    totalRowSeats += Math.round(baseRowCount * standingDensityFactor);
   }
 
   // Account for custom vomitory portal cutouts relative to baseline
@@ -416,7 +391,35 @@ export function calculateStandMetrics(
     minCValueMm: sightlines.minCValueMm,
     avgCValueMm: sightlines.avgCValueMm,
     sightlineGrade: sightlines.grade,
+    evacuationMinutes: computeEvacuationMinutes(stand, tierSpecs, capacity),
   };
+}
+
+/** Green Guide rate of passage on stairways and through vomitories (persons per metre per minute). */
+const STAIRWAY_FLOW_PER_M_MIN = 79;
+/** Clear width of one vomitory mouth (m), as drawn by the 3D portals. */
+const VOMITORY_WIDTH_M = 1.8;
+
+/**
+ * Each tier empties through its own vomitories; a tier without any falls back to its radial
+ * stairways. The stand takes as long as its slowest tier (Green Guide target: 8 min or less).
+ */
+function computeEvacuationMinutes(
+  stand: StandConfig,
+  tierSpecs: ReturnType<typeof resolveStandTiers>,
+  capacity: number
+): number {
+  const totalRows = tierSpecs.reduce((acc, t) => acc + t.rows, 0);
+  if (capacity <= 0 || totalRows <= 0) return 0;
+  const vomitories = resolveStandVomitories(stand).count;
+  const exitWidth =
+    vomitories > 0
+      ? vomitories * VOMITORY_WIDTH_M
+      : Math.max(1, stand.aisleCount) * stand.aisleWidth;
+  const worst = Math.max(
+    ...tierSpecs.map((t) => (capacity * t.rows) / totalRows / (exitWidth * STAIRWAY_FLOW_PER_M_MIN))
+  );
+  return Number(worst.toFixed(1));
 }
 
 /**
@@ -648,6 +651,7 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
     costPerSeatEur,
     avgCValueMm,
     minCValueMm,
+    evacuationMinutes: activeStands.reduce((max, s) => Math.max(max, s.evacuationMinutes), 0),
     stands: standsMetrics,
   };
 }

@@ -49,7 +49,10 @@ import {
 } from '../schema';
 import {
   computeRowCValueMm,
+  computeStandSection,
   computeStandSightlines,
+  DEFAULT_TIER_OVERHANG_M,
+  OVERHANG_HEADROOM_M,
   resolveStandTiers,
 } from '../sightlines';
 import { normalizeStadiumDocument } from '../../state/useStadiumStore';
@@ -1170,3 +1173,67 @@ describe('StadiumForge 10 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
 
 
 
+
+describe('cantilevered upper tiers', () => {
+  const base = createPresetDocument('bowl_bowstring_60k');
+
+  it('keeps standing headroom over every sheltered row, with or without VIP loggias', () => {
+    for (const vipLoges of [true, false]) {
+      for (const tierOverhang of [0, DEFAULT_TIER_OVERHANG_M, 2.5, 5, 7.5]) {
+        const stand = { ...base.stands.south, tiers: 2 as const, rows: 40, vipLoges, tierOverhang };
+        const section = computeStandSection(stand);
+        expect(section.breaks).toHaveLength(1);
+        const brk = section.breaks[0];
+        const sheltered = section.rows.filter(
+          (r) => r.tierIdx === 0 && r.d + stand.rowDepth > brk.frontD
+        );
+        expect(sheltered.length).toBe(brk.shelteredRows);
+        for (const row of sheltered) {
+          expect(brk.soffitY - row.y).toBeGreaterThanOrEqual(OVERHANG_HEADROOM_M - 1e-9);
+        }
+        // The balcony really projects by the requested amount over the lower tier.
+        expect(brk.fromD - brk.frontD).toBeCloseTo(tierOverhang, 5);
+      }
+    }
+  });
+
+  it('gives the 3D profile, the capacity and the sightlines the same section', () => {
+    const stand = { ...base.stands.south, tiers: 3 as const, rows: 54, tierOverhang: 4 };
+    const doc = { ...base, stands: { ...base.stands, south: stand } };
+    const section = computeStandSection(stand);
+    const metrics = calculateStandMetrics(doc, 'south');
+    expect(metrics.totalDepth).toBeCloseTo(section.totalDepth, 1);
+    expect(metrics.maxHeight).toBeCloseTo(section.topHeight, 1);
+
+    const lines = computeStandSightlines(stand, 0);
+    const baseDist = Math.max(2, stand.distanceToPitch);
+    section.rows.forEach((row, i) => {
+      expect(lines.points[i].distanceX).toBeCloseTo(baseDist + row.d - 0.34, 1);
+    });
+  });
+
+  it('brings the upper tier closer to the pitch as the overhang grows', () => {
+    const at = (tierOverhang: number) => {
+      const stand = { ...base.stands.south, tiers: 2 as const, rows: 40, tierOverhang };
+      const first = computeStandSightlines(stand, 0).points.find((p) => p.tier === 2)!;
+      return first.distanceX;
+    };
+    expect(at(5)).toBeLessThan(at(1.15));
+    expect(at(1.15) - at(5)).toBeCloseTo(5 - 1.15, 5);
+  });
+
+  it('keeps the original projection when no overhang is set', () => {
+    const tiers = resolveStandTiers({ ...base.stands.south, tiers: 2, tierOverhang: undefined });
+    expect(tiers[1].overhang).toBe(1.15);
+  });
+
+  it('reports an evacuation time that falls as vomitories are added', () => {
+    const withCount = (vomitoryCount: number) =>
+      calculateStandMetrics(
+        { ...base, stands: { ...base.stands, south: { ...base.stands.south, vomitoryCount } } },
+        'south'
+      ).evacuationMinutes;
+    expect(withCount(4)).toBeGreaterThan(withCount(8));
+    expect(withCount(8)).toBeGreaterThan(0);
+  });
+});

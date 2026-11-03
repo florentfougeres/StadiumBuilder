@@ -387,6 +387,8 @@ export interface StandMetrics {
   minCValueMm: number;
   avgCValueMm: number;
   sightlineGrade: 'Optimal' | 'Conforme' | 'Acceptable' | 'Critique';
+  /** Time for the slowest tier to clear through its vomitories (Green Guide flow rate). */
+  evacuationMinutes: number;
 }
 
 export interface StadiumMetrics {
@@ -399,6 +401,8 @@ export interface StadiumMetrics {
   costPerSeatEur: number;
   avgCValueMm: number;
   minCValueMm: number;
+  /** Slowest stand's evacuation time in minutes. */
+  evacuationMinutes: number;
   stands: Record<StandSide, StandMetrics>;
 }
 

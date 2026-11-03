@@ -893,7 +893,7 @@ const StandInspector: React.FC = () => {
         {stand.tiers >= 2 && (
           <SliderField
             label="Avancée en encorbellement"
-            hint="Avance les niveaux supérieurs au-dessus du niveau inférieur pour rapprocher le public"
+            hint="Avance les niveaux supérieurs au-dessus des derniers rangs du niveau inférieur ; la dalle remonte pour garder 2,4 m au-dessus des rangs abrités"
             min={0}
             max={7.5}
             step={0.25}
@@ -1039,6 +1039,16 @@ const StandInspector: React.FC = () => {
           display={`${fr1(stand.aisleWidth)} m`}
           onChange={(v) => updateStand(side, { aisleWidth: v })}
         />
+        <FieldRow
+          label="Évacuation"
+          hint="Niveau le plus lent, 79 personnes par mètre et par minute (Green Guide : 8 min au plus)"
+        >
+          <span
+            className={`tabular-nums ${sm.evacuationMinutes > 8 ? 'text-danger' : 'text-ink'}`}
+          >
+            {off ? '—' : `${fr1(sm.evacuationMinutes)} min`}
+          </span>
+        </FieldRow>
       </PanelSection>
       <PanelSection title="Places">
         <OptionList
