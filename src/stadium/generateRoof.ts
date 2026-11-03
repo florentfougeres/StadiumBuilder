@@ -30,6 +30,7 @@ import {
   resolveCornerPylonFrame,
   resolveCounterweightTrusses,
   resolveFloodlightRig,
+  resolvePortalCount,
   resolveSpanningGirderCount,
   RoofStyle,
   StadiumDocument,
@@ -1026,7 +1027,9 @@ function buildPerimeterCanopyCrown(
   shaped?: {
     surface: (ctx: { roofY: number; depth: number; perimeter: number }) => CanopySurface;
     segments: number;
-  }
+  },
+  // Raking steel columns from the stand crest to the canopy rear edge.
+  rearColumns: boolean = true
 ) {
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
@@ -1093,7 +1096,7 @@ function buildPerimeterCanopyCrown(
 
   const primaryStructMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
 
-  const colBays = Math.max(12, Math.round(40 * arcFraction));
+  const colBays = rearColumns ? Math.max(12, Math.round(40 * arcFraction)) : 0;
   for (let i = 0; i < colBays; i++) {
     const f0 = closed ? i / colBays : i / Math.max(1, colBays - 1);
     const f1 = closed
@@ -1683,6 +1686,75 @@ function buildSpanningGirdersRoof(
   }
   const girders = mergedMesh(steel, primaryStructMat, 'SpanningMegaGirders');
   if (girders) group.add(girders);
+  return group;
+}
+
+/** Highest point of a `concrete_portals` rib above the canopy deck (m). */
+const PORTAL_MAX_RISE = 10;
+
+/**
+ * PRESTRESSED CONCRETE PORTALS (`concrete_portals`), after the Parc des Princes: ribs stand
+ * outside the facade, rise past the stands and cantilever inward over them, carrying the canopy
+ * with no column in the bowl. Their crests undulate around the perimeter, two waves per side.
+ */
+function buildConcretePortalsRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const { group, bounds, roofY, innerOffset, outerOffsetFn, surface } = buildPerimeterCanopyCrown(
+    doc,
+    crossSectionClip,
+    maxAnisotropy,
+    undefined,
+    false
+  );
+  const { ring } = bounds;
+  const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
+  const stations = Math.max(
+    6,
+    Math.round(resolvePortalCount(doc.roof) * Math.max(0.25, tEnd - tStart))
+  );
+  const ribWidth = 0.9;
+  const parts: THREE.BufferGeometry[] = [];
+
+  for (let i = 0; i < stations; i++) {
+    const t = tStart + ((closed ? i : i + 0.5) / stations) * (tEnd - tStart);
+    const base = sampleRoundedBowlRing(ring, t, 0);
+    const rOut = outerOffsetFn(base.nx, base.nz);
+    const crestY = roofY + 4 + (PORTAL_MAX_RISE - 4) * (0.5 + 0.5 * Math.cos(4 * Math.PI * t));
+    const tipY = surface(t, 0) + 0.3;
+    // Rib profile in (radial offset, height): an outer leg leaning in, a crest, and a cantilever
+    // whose underside runs from the deck's rear edge to a slender tip at the canopy front.
+    const profile = new THREE.Shape([
+      new THREE.Vector2(rOut + 4.2, 0),
+      new THREE.Vector2(rOut + 2.4, crestY),
+      new THREE.Vector2(rOut - 2, crestY + 0.6),
+      new THREE.Vector2(innerOffset, tipY + 0.9),
+      new THREE.Vector2(innerOffset, tipY),
+      new THREE.Vector2(rOut - 1, surface(t, 1) + 0.4),
+      new THREE.Vector2(rOut + 0.8, Math.max(4, crestY - 12)),
+      new THREE.Vector2(rOut + 1.2, 0),
+    ]);
+    const geo = new THREE.ExtrudeGeometry(profile, { depth: ribWidth, bevelEnabled: false });
+    // Map (radial offset, height, width) onto the ring normal and tangent at `t`.
+    const tx = -base.nz;
+    const tz = base.nx;
+    const pos = geo.getAttribute('position');
+    for (let v = 0; v < pos.count; v++) {
+      const r = pos.getX(v);
+      const w = pos.getZ(v) - ribWidth / 2;
+      pos.setXYZ(v, base.x + base.nx * r + tx * w, pos.getY(v), base.z + base.nz * r + tz * w);
+    }
+    geo.computeVertexNormals();
+    parts.push(geo);
+  }
+
+  const ribs = mergedMesh(parts, createConcreteBowlMaterial(maxAnisotropy), 'ConcretePortalRibs');
+  if (ribs) {
+    ribs.receiveShadow = true;
+    group.add(ribs);
+  }
   return group;
 }
 
@@ -3391,6 +3463,11 @@ function buildRoofAssembly(
 
     if (doc.roof.style === 'retractable' || doc.roof.style === 'petal_iris') {
       root.add(buildRetractableRoof(doc, crossSectionClip, maxAnisotropy));
+      return root;
+    }
+
+    if (doc.roof.style === 'concrete_portals') {
+      root.add(buildConcretePortalsRoof(doc, crossSectionClip, maxAnisotropy));
       return root;
     }
 

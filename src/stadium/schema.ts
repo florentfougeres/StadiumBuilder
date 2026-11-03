@@ -36,6 +36,7 @@ export type RoofStyle =
   | 'corner_pylons'
   | 'counterweighted_cantilever'
   | 'spanning_girders'
+  | 'concrete_portals'
   | 'wave_canopy'
   | 'petal_iris'
   | 'historic_gable';
@@ -281,6 +282,11 @@ export function resolveSpanningGirderCount(roof: RoofConfig): number {
   return Math.max(2, Math.min(6, Math.round(roof.girderCount ?? 4)));
 }
 
+/** Concrete portal ribs of a `concrete_portals` roof (Parc des Princes: 50). */
+export function resolvePortalCount(roof: RoofConfig): number {
+  return Math.max(24, Math.min(72, Math.round(roof.portalCount ?? 50)));
+}
+
 export interface RoofConfig {
   style: RoofStyle;
   heightOffset: number;
@@ -302,6 +308,8 @@ export interface RoofConfig {
   backspanRatio?: number;
   /** `spanning_girders`: transverse mega-girders carrying the closed roof (`2..6`). */
   girderCount?: number;
+  /** `concrete_portals`: prestressed concrete portal ribs around the bowl (`24..72`). */
+  portalCount?: number;
   /** Continuous bowls only: stands under the roof; absent means the whole bowl is covered. */
   coveredSides?: StandSide[];
   /** Extends the outer edge of all roofs across the outer concourse up to the facade (enabled by default). */

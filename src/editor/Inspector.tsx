@@ -35,6 +35,7 @@ import {
   resolveCornerPylonFrame,
   resolveCounterweightTrusses,
   resolveFloodlightRig,
+  resolvePortalCount,
   resolveSite,
   resolveSpanningGirderCount,
   resolveRetractable,
@@ -161,6 +162,11 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
     id: 'giant_arch',
     label: 'Arche géante porteuse',
     desc: 'Grand arc métallique franchissant le stade & câbles suspente',
+  },
+  {
+    id: 'concrete_portals',
+    label: 'Portiques en béton',
+    desc: 'Nervures en béton précontraint hors façade, en porte-à-faux sans poteau (Parc des Princes)',
   },
   {
     id: 'counterweighted_cantilever',
@@ -1342,6 +1348,20 @@ const RoofInspector: React.FC = () => {
           options={ROOF_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
         />
       </PanelSection>
+      {roof.style === 'concrete_portals' && (
+        <PanelSection title="Portiques en béton">
+          <SliderField
+            label="Nombre de portiques"
+            hint="Nervures réparties sur tout le pourtour du stade"
+            min={24}
+            max={72}
+            step={1}
+            value={resolvePortalCount(roof)}
+            display={String(resolvePortalCount(roof))}
+            onChange={(v) => updateRoof({ portalCount: v })}
+          />
+        </PanelSection>
+      )}
       {roof.style === 'spanning_girders' && (
         <PanelSection title="Méga-poutres">
           <SliderField

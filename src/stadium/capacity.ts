@@ -466,6 +466,8 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       ? Number((maxStandHeight + doc.roof.heightOffset + 22).toFixed(1))
       : doc.roof.style === 'giant_arch'
       ? Number((maxStandHeight + doc.roof.heightOffset + 38).toFixed(1))
+      : doc.roof.style === 'concrete_portals'
+      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 10.6).toFixed(1))
       : doc.roof.style === 'spanning_girders'
       ? Number((maxStandHeight + Math.max(2.8, doc.roof.heightOffset * 0.7) + 10).toFixed(1))
       : doc.roof.style === 'counterweighted_cantilever'
@@ -579,6 +581,9 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       break;
     case 'folded_plate':
       baseCostPerSeat += 900 * doc.roof.coverageRatio;
+      break;
+    case 'concrete_portals':
+      baseCostPerSeat += 1180 * doc.roof.coverageRatio;
       break;
     case 'spanning_girders':
       baseCostPerSeat += 1450 * doc.roof.coverageRatio;

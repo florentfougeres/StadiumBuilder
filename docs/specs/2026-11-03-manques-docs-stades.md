@@ -152,11 +152,11 @@ Nouveau `RoofStyle` : `'counterweighted_cantilever'`.
 
 ### C3. Portiques en béton précontraint visibles (Parc des Princes)
 
-Nouveau `EnvelopeStyle` : `'concrete_portal_ribs'`.
+Nouveau `RoofStyle` : `'concrete_portals'` (implémenté comme toiture plutôt qu'enveloppe : les nervures portent le toit, et l'enveloppe reste réglable à part).
 - Nervures en béton (50 par défaut) qui montent de l'extérieur du stade, passent au-dessus du
   bol et portent la couverture en porte-à-faux. La nervure est à la fois la façade et la
   structure du toit.
-- Paramètres : `materials.portalCount` (24 à 72), profil de nervure ondulé (alternance de hauteur
+- Paramètres : `roof.portalCount` (24 à 72), profil de nervure ondulé (alternance de hauteur
   sur le bord supérieur, comme le Parc des Princes).
 - Matériau imposé : `reinforced_concrete` (structure) ; la couverture garde le `roofMaterial`.
 - Utilisable avec `roof.style = 'cantilever'` ; d'autres combinaisons sont désactivées dans l'Inspector.
