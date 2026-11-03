@@ -610,6 +610,11 @@ function createVomitoryPortalUnit(
   return createCarvedVomitoryTunnel(2.2, 2.2, 1.65, portalMat, darkMouthMat, railMat, false);
 }
 
+/** Column density multiplier of a `colonnade_forest` envelope. */
+function colonnadeDensity(mats: { colonnadeDensity?: number }): number {
+  return Math.max(0.5, Math.min(4, mats.colonnadeDensity ?? 1));
+}
+
 function buildStraightStandMesh(
   stand: StandConfig,
   spanLength: number,
@@ -1285,7 +1290,7 @@ function buildStraightStandMesh(
       cornice.castShadow = true;
       group.add(cornice);
 
-      const colsPerRow = Math.max(12, Math.floor(spanLength / 4.2));
+      const colsPerRow = Math.max(12, Math.floor(spanLength / (4.2 / colonnadeDensity(mats))));
       const rowOffsets = [0.2, 2.5, 4.8];
       const totalCols = colsPerRow * rowOffsets.length;
       const slenderGeo = new THREE.CylinderGeometry(0.21, 0.24, wallH, 10);
@@ -4894,7 +4899,7 @@ function buildModernBowlSweep(
 
       // 3 staggered concentric rings of ultra-slender architectural columns
       const ringOffsets = [0.6, 2.9, 5.2];
-      const colsPerRing = Math.max(24, Math.round(58 * arcFraction));
+      const colsPerRing = Math.max(24, Math.round(58 * arcFraction * colonnadeDensity(mats)));
       const totalCols = colsPerRing * ringOffsets.length;
       const colGeo = new THREE.CylinderGeometry(0.21, 0.24, 1, 10);
       const colForest = new THREE.InstancedMesh(colGeo, structureMat, totalCols);

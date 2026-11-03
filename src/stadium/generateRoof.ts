@@ -33,6 +33,7 @@ import {
   resolveFloodlightRig,
   resolvePortalCount,
   resolveSpanningGirderCount,
+  resolveSuspendedMasts,
   resolveWaveAmplitude,
   RoofStyle,
   StadiumDocument,
@@ -859,7 +860,8 @@ function buildSuspendedMastsRoof(
   });
   const concretePedestalMat = createConcreteBowlMaterial(maxAnisotropy);
 
-  const mastCount = Math.max(6, Math.round(18 * arcFraction));
+  const masts = resolveSuspendedMasts(doc.roof);
+  const mastCount = Math.max(3, Math.round(masts.mastCount * arcFraction));
   for (let i = 0; i < mastCount; i++) {
     const frac = closed ? i / mastCount : i / Math.max(1, mastCount - 1);
     const t = tStart + frac * (tEnd - tStart);
@@ -880,7 +882,7 @@ function buildSuspendedMastsRoof(
     const standCrestPt = sampleRoundedBowlRing(ring, t, localStandD - 0.4);
 
     const pBase = new THREE.Vector3(mastGroundPt.x, groundY, mastGroundPt.z);
-    const pTip = new THREE.Vector3(mastTopPt.x, roofY + 19.5, mastTopPt.z);
+    const pTip = new THREE.Vector3(mastTopPt.x, roofY + masts.mastHeight, mastTopPt.z);
     const pRoofPierce = new THREE.Vector3(
       (mastGroundPt.x + mastTopPt.x) * 0.5,
       roofY + 0.2,

@@ -646,6 +646,12 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
         return sum + 1.6;
       case 'custom_roof':
         return sum + 2.8;
+      case 'inclined_mast':
+        return sum + 38;
+      case 'monumental_arch':
+        return sum + 1.2;
+      case 'monumental_gate':
+        return sum + 0.8;
       default:
         return sum + 0.15;
     }

@@ -531,6 +531,98 @@ export function generatePlacedObjectGroup(
       break;
     }
 
+    case 'inclined_mast': {
+      // Leaning concrete tower (45°, ~165 m long) whose head overhangs toward local +x, with a
+      // glazed observation deck at the top.
+      const concrete = createConcreteBowlMaterial(maxAnisotropy);
+      const foot = new THREE.Vector3(0, 0, 0);
+      const head = new THREE.Vector3(84, 118, 0);
+      const axis = new THREE.Vector3().subVectors(head, foot);
+      const tower = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 11, axis.length(), 4), concrete);
+      tower.position.copy(foot).add(head).multiplyScalar(0.5);
+      tower.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis.clone().normalize());
+      tower.rotateY(Math.PI / 4);
+      tower.castShadow = true;
+      tower.receiveShadow = true;
+      group.add(tower);
+      const deck = new THREE.Mesh(
+        new THREE.BoxGeometry(16, 9, 14),
+        new THREE.MeshPhysicalMaterial({ color: 0x9fb4c4, roughness: 0.1, metalness: 0.3, clearcoat: 1 })
+      );
+      deck.position.copy(head).add(new THREE.Vector3(-3, 2, 0));
+      deck.rotation.z = -Math.PI / 4;
+      group.add(deck);
+      const base = new THREE.Mesh(new THREE.BoxGeometry(26, 6, 26), concrete);
+      base.position.y = 3;
+      group.add(base);
+      break;
+    }
+
+    case 'monumental_arch': {
+      // Reinforced concrete parabolic entrance arch, 26 m span and 20 m high, 2.6 m deep.
+      const concrete = createConcreteBowlMaterial(maxAnisotropy);
+      const span = 26;
+      const rise = 20;
+      const thick = 2.2;
+      const pts: THREE.Vector2[] = [];
+      const steps = 24;
+      for (let k = 0; k <= steps; k++) {
+        const x = -span / 2 + (span * k) / steps;
+        pts.push(new THREE.Vector2(x, rise * (1 - (2 * x / span) ** 2)));
+      }
+      for (let k = steps; k >= 0; k--) {
+        const x = (-span / 2 + thick) + ((span - 2 * thick) * k) / steps;
+        const inner = span / 2 - thick;
+        pts.push(new THREE.Vector2(x, (rise - thick) * (1 - (x / inner) ** 2)));
+      }
+      const arch = new THREE.Mesh(
+        new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: 2.6, bevelEnabled: false }),
+        concrete
+      );
+      arch.position.z = -1.3;
+      arch.castShadow = true;
+      arch.receiveShadow = true;
+      group.add(arch);
+      for (const sx of [-1, 1]) {
+        const footing = new THREE.Mesh(new THREE.BoxGeometry(4, 1.2, 4.4), concrete);
+        footing.position.set(sx * (span / 2 - thick / 2), 0.6, 0);
+        group.add(footing);
+      }
+      break;
+    }
+
+    case 'monumental_gate': {
+      // 1930s entrance: two tall pilasters, lintel with a stepped crown, and iron gates.
+      const concrete = createConcreteBowlMaterial(maxAnisotropy);
+      for (const sx of [-9, -3.2, 3.2, 9]) {
+        const tall = Math.abs(sx) > 5;
+        const pilaster = new THREE.Mesh(new THREE.BoxGeometry(tall ? 2.6 : 1.6, tall ? 14 : 9, 2.6), concrete);
+        pilaster.position.set(sx, (tall ? 14 : 9) / 2, 0);
+        pilaster.castShadow = true;
+        group.add(pilaster);
+      }
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(21, 2, 3), concrete);
+      lintel.position.set(0, 10, 0);
+      group.add(lintel);
+      for (const [w, y] of [
+        [12, 11.6],
+        [7, 12.8],
+      ] as const) {
+        const step = new THREE.Mesh(new THREE.BoxGeometry(w, 1.2, 2.6), concrete);
+        step.position.set(0, y, 0);
+        group.add(step);
+      }
+      for (const sx of [-6.1, 0, 6.1]) {
+        const gate = new THREE.Mesh(
+          new THREE.BoxGeometry(Math.abs(sx) > 1 ? 3.8 : 4.6, 7.5, 0.12),
+          new THREE.MeshStandardMaterial({ color: 0x1f2933, roughness: 0.5, metalness: 0.7, wireframe: true })
+        );
+        gate.position.set(sx, 3.75, 0);
+        group.add(gate);
+      }
+      break;
+    }
+
     case 'custom_roof': {
       const roofPbr = createRoofPbrMaterial(mats.roof, 0.92, lighting, false, maxAnisotropy, 4, 2);
       const canopyDeck = new THREE.Mesh(new THREE.BoxGeometry(26, 0.45, 16), roofPbr);

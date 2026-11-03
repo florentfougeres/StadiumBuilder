@@ -47,6 +47,9 @@ import { cloneDocument, HistoryState, pushHistorySnapshot } from './history';
 const OBJECT_TYPE_LABELS: Record<PlacedObjectType, string> = {
   screen: 'Écran Géant LED',
   halo_screen: 'Écran Halo Central',
+  inclined_mast: 'Mât incliné',
+  monumental_arch: 'Arche monumentale',
+  monumental_gate: 'Porte monumentale',
   floodlight: 'Pylône d’Éclairage',
   dugout: 'Bancs de Touche',
   locker_room: 'Vestiaires & Médias',
@@ -61,6 +64,10 @@ const OBJECT_DEFAULT_SPAWN: Record<PlacedObjectType, [number, number, number]> =
   screen: [58, 16, -38],
   // Hung over the centre circle, high enough to clear the ball's flight.
   halo_screen: [0, 30, 0],
+  // Beyond the west end, leaning toward the bowl (local +x points at the centre).
+  inclined_mast: [-190, 0, 0],
+  monumental_arch: [0, 0, 110],
+  monumental_gate: [-40, 0, 110],
   floodlight: [68, 0, -48],
   dugout: [0, 0, 37.5],
   locker_room: [-52, 0, 88],

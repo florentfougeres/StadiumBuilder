@@ -38,6 +38,7 @@ import {
   resolvePortalCount,
   resolveSite,
   resolveSpanningGirderCount,
+  resolveSuspendedMasts,
   resolveWaveAmplitude,
   resolveRetractable,
   resolveStandVomitories,
@@ -1381,6 +1382,28 @@ const RoofInspector: React.FC = () => {
           options={ROOF_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
         />
       </PanelSection>
+      {roof.style === 'suspended_masts' && (
+        <PanelSection title="Mâts et haubans">
+          <SliderField
+            label="Nombre de mâts"
+            min={6}
+            max={36}
+            step={1}
+            value={resolveSuspendedMasts(roof).mastCount}
+            display={String(resolveSuspendedMasts(roof).mastCount)}
+            onChange={(v) => updateRoof({ mastCount: v })}
+          />
+          <SliderField
+            label="Hauteur des mâts au-dessus du toit"
+            min={8}
+            max={45}
+            step={0.5}
+            value={resolveSuspendedMasts(roof).mastHeight}
+            display={`${resolveSuspendedMasts(roof).mastHeight} m`}
+            onChange={(v) => updateRoof({ mastHeight: v })}
+          />
+        </PanelSection>
+      )}
       {roof.style === 'wave_canopy' && (
         <PanelSection title="Dentelle ondulante">
           <SliderField
@@ -1880,6 +1903,18 @@ const MaterialsInspector: React.FC = () => {
           onChange={(envelopeStyle) => updateMaterials({ envelopeStyle })}
           options={ENVELOPE_STYLE_CATALOG.map((o) => ({ id: o.id, label: o.label, detail: o.subtitle }))}
         />
+        {mats.envelopeStyle === 'colonnade_forest' && (
+          <SliderField
+            label="Densité des poteaux"
+            hint="Jusqu’à 4 fois plus de poteaux, pour une vraie forêt"
+            min={0.5}
+            max={4}
+            step={0.1}
+            value={mats.colonnadeDensity ?? 1}
+            display={`${fr1(mats.colonnadeDensity ?? 1)}×`}
+            onChange={(colonnadeDensity) => updateMaterials({ colonnadeDensity })}
+          />
+        )}
         {isContinuousBowlShape(doc.shape) && (
           <OptionList
             label="Silhouette de la peau"

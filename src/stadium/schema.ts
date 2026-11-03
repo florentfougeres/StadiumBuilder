@@ -57,6 +57,9 @@ export type EnvelopeStyle =
 export type PlacedObjectType =
   | 'screen'
   | 'halo_screen'
+  | 'inclined_mast'
+  | 'monumental_arch'
+  | 'monumental_gate'
   | 'floodlight'
   | 'dugout'
   | 'locker_room'
@@ -301,6 +304,14 @@ export function resolveWaveAmplitude(roof: RoofConfig): number {
   return Math.max(0, Math.min(14, roof.waveAmplitude ?? 9));
 }
 
+/** Masts of a `suspended_masts` roof: count around the full bowl and tip height above the canopy. */
+export function resolveSuspendedMasts(roof: RoofConfig): { mastCount: number; mastHeight: number } {
+  return {
+    mastCount: Math.max(6, Math.min(36, Math.round(roof.mastCount ?? 18))),
+    mastHeight: Math.max(8, Math.min(45, roof.mastHeight ?? 19.5)),
+  };
+}
+
 export interface RoofConfig {
   style: RoofStyle;
   heightOffset: number;
@@ -326,6 +337,10 @@ export interface RoofConfig {
   portalCount?: number;
   /** `wave_canopy`: peak rise (m) of the undulating roof line (`0..14`). */
   waveAmplitude?: number;
+  /** `suspended_masts`: masts around the full bowl (`6..36`, default 18). */
+  mastCount?: number;
+  /** `suspended_masts`: mast tip height above the canopy (m, `8..45`, default 19.5). */
+  mastHeight?: number;
   /** Continuous bowls only: stands under the roof; absent means the whole bowl is covered. */
   coveredSides?: StandSide[];
   /** Extends the outer edge of all roofs across the outer concourse up to the facade (enabled by default). */
@@ -550,6 +565,8 @@ export interface StadiumMaterialsConfig {
   facadeDepth?: number;
   /** Outward bow of lace and scale skins at mid-height (`0..1`, up to 6 m). */
   facadeBulge?: number;
+  /** `colonnade_forest`: column density multiplier (`0.5..4`, default 1). */
+  colonnadeDensity?: number;
 }
 
 export const DEFAULT_STADIUM_MATERIALS: StadiumMaterialsConfig = {
