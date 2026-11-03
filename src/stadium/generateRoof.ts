@@ -16,6 +16,7 @@ import {
 } from './capacity';
 import {
   createConcreteBowlMaterial,
+  createFacadePbrMaterial,
   createRoofPbrMaterial,
   createRoofShadowDepthMaterial,
   createStructurePbrMaterial,
@@ -32,6 +33,7 @@ import {
   resolveFloodlightRig,
   resolvePortalCount,
   resolveSpanningGirderCount,
+  resolveWaveAmplitude,
   RoofStyle,
   StadiumDocument,
   StadiumShape,
@@ -1689,6 +1691,139 @@ function buildSpanningGirdersRoof(
   return group;
 }
 
+/**
+ * TIMBER LATTICE (`timber_lattice`), after the Allianz Riviera: a diamond lattice of glulam
+ * members rises from the ground outside the facade, bows outward, then arches over the canopy to
+ * its front edge, so skin and roof read as one timber structure.
+ */
+function buildTimberLatticeRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const { group, bounds, innerOffset, outerOffsetFn, surface } = buildPerimeterCanopyCrown(
+    doc,
+    crossSectionClip,
+    maxAnisotropy,
+    undefined,
+    false
+  );
+  const { ring } = bounds;
+  const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
+  const along = Math.max(16, Math.round(80 * Math.max(0.25, tEnd - tStart)));
+  const across = 14;
+  const wallShare = 0.55;
+
+  const node = (i: number, j: number): THREE.Vector3 => {
+    const t = tStart + ((closed ? i % along : i) / along) * (tEnd - tStart);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const rOut = outerOffsetFn(n.nx, n.nz) + 1.5;
+    const eaveY = surface(t, 1) + 3;
+    const f = j / across;
+    let r: number;
+    let y: number;
+    if (f <= wallShare) {
+      const s = f / wallShare;
+      r = rOut + 2.5 * Math.sin(Math.PI * s);
+      y = eaveY * s;
+    } else {
+      const s = (f - wallShare) / (1 - wallShare);
+      r = rOut + (innerOffset - rOut) * s;
+      y = eaveY + (surface(t, 0) + 1.2 - eaveY) * s + 4 * Math.sin(Math.PI * s);
+    }
+    const p = sampleRoundedBowlRing(ring, t, r);
+    return new THREE.Vector3(p.x, y, p.z);
+  };
+
+  const members: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < along; i++) {
+    for (let j = 0; j < across; j++) {
+      members.push(beamGeometry(node(i, j), node(i + 1, j + 1), 0.45, 0.7));
+      members.push(beamGeometry(node(i + 1, j), node(i, j + 1), 0.45, 0.7));
+    }
+  }
+  const lattice = mergedMesh(
+    members,
+    createStructurePbrMaterial('glulam_timber', maxAnisotropy),
+    'TimberLattice'
+  );
+  if (lattice) group.add(lattice);
+  return group;
+}
+
+/**
+ * UNDULATING LACE CANOPY (`wave_canopy`), after Stade Jean-Bouin: roof and facade form one skin of
+ * perforated UHPC whose height undulates around the bowl (two crests per side), carried by steel
+ * cantilever arms under the canopy.
+ */
+function buildWaveCanopyRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const amp = resolveWaveAmplitude(doc.roof);
+  const wave = (t: number) => amp * (0.5 + 0.5 * Math.cos(4 * Math.PI * t + 0.6));
+  const { group, bounds, innerOffset, outerOffsetFn, primaryStructMat, surface } =
+    buildPerimeterCanopyCrown(
+      doc,
+      crossSectionClip,
+      maxAnisotropy,
+      {
+        segments: 192,
+        surface:
+          ({ roofY }) =>
+          (t, f) =>
+            roofY + 1.8 * (1 - f) + wave(t),
+      },
+      false
+    );
+  const { ring } = bounds;
+  const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
+
+  // Lace skin from the ground up to the canopy's rear edge.
+  const segs = Math.max(48, Math.round(192 * Math.max(0.25, tEnd - tStart)));
+  const count = closed ? segs : segs + 1;
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  for (let s = 0; s < count; s++) {
+    const t = tStart + (s / segs) * (tEnd - tStart);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const p = sampleRoundedBowlRing(ring, t, outerOffsetFn(n.nx, n.nz) + 0.4);
+    pos.push(p.x, 0, p.z, p.x, surface(t, 1) + 0.2, p.z);
+    uv.push(s / 4, 0, s / 4, 1);
+  }
+  for (let s = 0; s < segs; s++) {
+    const a = s * 2;
+    const b = ((s + 1) % count) * 2;
+    idx.push(a, b, a + 1, b, b + 1, a + 1);
+  }
+  const skinGeo = new THREE.BufferGeometry();
+  skinGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  skinGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  skinGeo.setIndex(idx);
+  skinGeo.computeVertexNormals();
+  const skin = new THREE.Mesh(
+    skinGeo,
+    createFacadePbrMaterial('uhpc_lace_panels', doc.lighting, false, maxAnisotropy)
+  );
+  skin.name = 'WaveCanopyLaceSkin';
+  skin.castShadow = true;
+  skin.receiveShadow = true;
+  group.add(skin);
+
+  // Steel cantilever arms under the canopy.
+  const arms = Math.max(12, Math.round(74 * Math.max(0.25, tEnd - tStart)));
+  for (let i = 0; i < arms; i++) {
+    const t = tStart + ((closed ? i : i + 0.5) / arms) * (tEnd - tStart);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    group.add(
+      buildCanopyRib(ring, t, innerOffset, outerOffsetFn(n.nx, n.nz), surface, 0.28, primaryStructMat)
+    );
+  }
+  return group;
+}
+
 /** Highest point of a `concrete_portals` rib above the canopy deck (m). */
 const PORTAL_MAX_RISE = 10;
 
@@ -3046,6 +3181,82 @@ function buildSingleStandRoofGroup(
     return standRoofGroup;
   }
 
+  if (style === 'historic_gable') {
+    // Pre-war pitched roof: two slopes on exposed king-post trusses and riveted columns,
+    // with a pediment facing the pitch at mid-span.
+    const rise = Math.max(2.5, roofDepth * 0.16);
+    const eaveY = roofHeight - 0.4;
+    const ridgeY = eaveY + rise;
+    const slopeLen = Math.hypot(roofDepth / 2, rise);
+    const tilt = Math.atan2(rise, roofDepth / 2);
+    for (const side of [-1, 1] as const) {
+      const slope = new THREE.Mesh(createOrientedRoofBoxGeometry(roofSpan, 0.18, slopeLen), membraneMat);
+      slope.name = 'RoofCanopySurface';
+      slope.customDepthMaterial = shadowDepthMat;
+      slope.position.set(0, (eaveY + ridgeY) / 2, midZ + (side * roofDepth) / 4);
+      slope.rotation.x = side * tilt;
+      slope.castShadow = true;
+      slope.receiveShadow = true;
+      standRoofGroup.add(slope);
+    }
+
+    const parts: THREE.BufferGeometry[] = [];
+    const bays = Math.max(4, Math.round(roofSpan / 6));
+    for (let b = 0; b <= bays; b++) {
+      const x = -roofSpan / 2 + (b * roofSpan) / bays;
+      const front = new THREE.Vector3(x, eaveY - 0.2, frontZ);
+      const back = new THREE.Vector3(x, eaveY - 0.2, rearZ);
+      const ridge = new THREE.Vector3(x, ridgeY - 0.25, midZ);
+      const foot = new THREE.Vector3(x, eaveY - 0.2, midZ);
+      parts.push(
+        beamGeometry(front, back, 0.22, 0.3),
+        beamGeometry(front, ridge, 0.22, 0.3),
+        beamGeometry(back, ridge, 0.22, 0.3),
+        beamGeometry(foot, ridge, 0.16, 0.16)
+      );
+      if (b % 2 === 0) {
+        // Riveted columns: one in the upper rows, one on the stand crest.
+        const footY = Math.max(1.8, standTopY * 0.55);
+        const colZ = frontZ + Math.min(3.4, roofDepth * 0.22);
+        parts.push(beamGeometry(new THREE.Vector3(x, footY, colZ), new THREE.Vector3(x, eaveY - 0.2, colZ), 0.32, 0.32));
+        parts.push(
+          beamGeometry(
+            new THREE.Vector3(x, Math.max(0, standTopY - 2), crestSupportZ),
+            new THREE.Vector3(x, eaveY - 0.2, crestSupportZ),
+            0.36,
+            0.36
+          )
+        );
+      }
+    }
+    const frame = mergedMesh(parts, primaryStructMat, 'HistoricGableTrusses');
+    if (frame) standRoofGroup.add(frame);
+
+    // Pediment over the centre of the front slope.
+    const pedW = Math.min(22, roofSpan * 0.3);
+    const pedH = rise + 3.2;
+    const pediment = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(
+        new THREE.Shape([
+          new THREE.Vector2(-pedW / 2, 0),
+          new THREE.Vector2(pedW / 2, 0),
+          new THREE.Vector2(0, pedH),
+        ]),
+        { depth: 0.5, bevelEnabled: false }
+      ),
+      membraneMat
+    );
+    pediment.name = 'HistoricGablePediment';
+    pediment.position.set(0, eaveY, frontZ - 0.25);
+    pediment.castShadow = true;
+    standRoofGroup.add(pediment);
+
+    standRoofGroup.add(
+      buildStraightCatwalkFloodlights(roofSpan, frontZ, eaveY - 0.25, doc.lighting, gantryLights)
+    );
+    return standRoofGroup;
+  }
+
   if (style === 'goalpost_truss') {
     // Monumental "Poutre-portique" (Goalpost) box-girder resting on 2 corner mega-pylons!
     const deck = new THREE.Mesh(
@@ -3463,6 +3674,16 @@ function buildRoofAssembly(
 
     if (doc.roof.style === 'retractable' || doc.roof.style === 'petal_iris') {
       root.add(buildRetractableRoof(doc, crossSectionClip, maxAnisotropy));
+      return root;
+    }
+
+    if (doc.roof.style === 'timber_lattice') {
+      root.add(buildTimberLatticeRoof(doc, crossSectionClip, maxAnisotropy));
+      return root;
+    }
+
+    if (doc.roof.style === 'wave_canopy') {
+      root.add(buildWaveCanopyRoof(doc, crossSectionClip, maxAnisotropy));
       return root;
     }
 

@@ -38,6 +38,7 @@ import {
   resolvePortalCount,
   resolveSite,
   resolveSpanningGirderCount,
+  resolveWaveAmplitude,
   resolveRetractable,
   resolveStandVomitories,
   RETRACTABLE_PANEL_LIMITS,
@@ -162,6 +163,21 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
     id: 'giant_arch',
     label: 'Arche géante porteuse',
     desc: 'Grand arc métallique franchissant le stade & câbles suspente',
+  },
+  {
+    id: 'timber_lattice',
+    label: 'Résille en bois',
+    desc: 'Losanges de bois lamellé-collé qui enveloppent la façade et couvrent les tribunes',
+  },
+  {
+    id: 'wave_canopy',
+    label: 'Dentelle ondulante',
+    desc: 'Peau ajourée en béton fibré dont la hauteur ondule autour du stade',
+  },
+  {
+    id: 'historic_gable',
+    label: 'Toit à pignon historique',
+    desc: 'Toit à deux pans sur fermes rivetées, fronton au centre (stades d’avant-guerre)',
   },
   {
     id: 'concrete_portals',
@@ -601,6 +617,7 @@ const STAND_ROOF_OVERRIDES: { id: RoofStyle | 'inherit'; label: string }[] = [
   { id: 'inherit', label: 'Comme le stade' },
   { id: 'cantilever', label: 'Porte-à-faux' },
   { id: 'column_supported', label: 'Sur poteaux' },
+  { id: 'historic_gable', label: 'Pignon historique' },
   { id: 'goalpost_truss', label: 'Poutre-portique' },
   { id: 'truss', label: 'Charpente treillis' },
   { id: 'none', label: 'Découverte' },
@@ -1364,6 +1381,20 @@ const RoofInspector: React.FC = () => {
           options={ROOF_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
         />
       </PanelSection>
+      {roof.style === 'wave_canopy' && (
+        <PanelSection title="Dentelle ondulante">
+          <SliderField
+            label="Amplitude de l’ondulation"
+            hint="Écart de hauteur entre les creux et les crêtes du toit"
+            min={0}
+            max={14}
+            step={0.5}
+            value={resolveWaveAmplitude(roof)}
+            display={`${resolveWaveAmplitude(roof)} m`}
+            onChange={(v) => updateRoof({ waveAmplitude: v })}
+          />
+        </PanelSection>
+      )}
       {roof.style === 'concrete_portals' && (
         <PanelSection title="Portiques en béton">
           <SliderField

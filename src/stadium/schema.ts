@@ -37,6 +37,7 @@ export type RoofStyle =
   | 'counterweighted_cantilever'
   | 'spanning_girders'
   | 'concrete_portals'
+  | 'timber_lattice'
   | 'wave_canopy'
   | 'petal_iris'
   | 'historic_gable';
@@ -295,6 +296,11 @@ export function resolvePortalCount(roof: RoofConfig): number {
   return Math.max(24, Math.min(72, Math.round(roof.portalCount ?? 50)));
 }
 
+/** Peak rise (m) of a `wave_canopy` roof line above its lowest point. */
+export function resolveWaveAmplitude(roof: RoofConfig): number {
+  return Math.max(0, Math.min(14, roof.waveAmplitude ?? 9));
+}
+
 export interface RoofConfig {
   style: RoofStyle;
   heightOffset: number;
@@ -318,6 +324,8 @@ export interface RoofConfig {
   girderCount?: number;
   /** `concrete_portals`: prestressed concrete portal ribs around the bowl (`24..72`). */
   portalCount?: number;
+  /** `wave_canopy`: peak rise (m) of the undulating roof line (`0..14`). */
+  waveAmplitude?: number;
   /** Continuous bowls only: stands under the roof; absent means the whole bowl is covered. */
   coveredSides?: StandSide[];
   /** Extends the outer edge of all roofs across the outer concourse up to the facade (enabled by default). */

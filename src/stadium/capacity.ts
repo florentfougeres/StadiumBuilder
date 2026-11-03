@@ -9,6 +9,7 @@ import {
   resolveCornerPylonFrame,
   resolveFloodlightRig,
   resolveStandVomitories,
+  resolveWaveAmplitude,
   RoofStyle,
   SeatingType,
   slopeDegFromRiser,
@@ -466,6 +467,10 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       ? Number((maxStandHeight + doc.roof.heightOffset + 22).toFixed(1))
       : doc.roof.style === 'giant_arch'
       ? Number((maxStandHeight + doc.roof.heightOffset + 38).toFixed(1))
+      : doc.roof.style === 'timber_lattice'
+      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 9).toFixed(1))
+      : doc.roof.style === 'wave_canopy'
+      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 1.8 + resolveWaveAmplitude(doc.roof)).toFixed(1))
       : doc.roof.style === 'concrete_portals'
       ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 10.6).toFixed(1))
       : doc.roof.style === 'spanning_girders'
@@ -581,6 +586,15 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       break;
     case 'folded_plate':
       baseCostPerSeat += 900 * doc.roof.coverageRatio;
+      break;
+    case 'timber_lattice':
+      baseCostPerSeat += 1260 * doc.roof.coverageRatio;
+      break;
+    case 'wave_canopy':
+      baseCostPerSeat += 1320 * doc.roof.coverageRatio;
+      break;
+    case 'historic_gable':
+      baseCostPerSeat += 520 * doc.roof.coverageRatio;
       break;
     case 'concrete_portals':
       baseCostPerSeat += 1180 * doc.roof.coverageRatio;
