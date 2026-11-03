@@ -1121,6 +1121,33 @@ const StandInspector: React.FC = () => {
           />
         )}
         {!isContinuousBowlShape(doc.shape) && (
+          <ToggleField
+            label="Tifo aux couleurs du club"
+            hint="Tous les supporters habillés en bandes diagonales des deux couleurs (public activé)"
+            disabled={off || doc.materials?.crowd !== true}
+            checked={stand.tifo === true}
+            onChange={(tifo) => updateStand(target, { tifo })}
+          />
+        )}
+        {!isContinuousBowlShape(doc.shape) && (
+          <ToggleField
+            label="Banderoles de supporters"
+            hint="Bâches aux couleurs du club sur le mur du terrain et les nez de balcon"
+            disabled={off}
+            checked={stand.banners === true}
+            onChange={(banners) => updateStand(target, { banners })}
+          />
+        )}
+        {!isContinuousBowlShape(doc.shape) && (
+          <ToggleField
+            label="Gradins sur talus enherbé"
+            hint="Gradins posés sur une butte de terre engazonnée, comme les petits stades et stades d’athlétisme"
+            disabled={off}
+            checked={stand.embankment === true}
+            onChange={(embankment) => updateStand(target, { embankment })}
+          />
+        )}
+        {!isContinuousBowlShape(doc.shape) && (
           <SelectField
             label="Toiture de cette tribune"
             disabled={off}
@@ -1428,6 +1455,13 @@ const RoofInspector: React.FC = () => {
           checked={roof.enclosed !== false}
           onChange={(enclosed) => updateRoof({ enclosed })}
         />
+        <ToggleField
+          label="Pare-vent vitré"
+          hint="Remplace la peau par des vitrages clairs entre les tribunes et le toit"
+          disabled={none || roof.enclosed === false}
+          checked={roof.enclosureGlazed === true}
+          onChange={(enclosureGlazed) => updateRoof({ enclosureGlazed })}
+        />
       </PanelSection>
     </>
   );
@@ -1503,6 +1537,13 @@ const MaterialsInspector: React.FC = () => {
           onChange={(facade) => updateMaterials({ facade })}
           options={materialOptions(FACADE_MATERIAL_CATALOG)}
         />
+        {mats.facade === 'etfe_cushions_facade' && (
+          <ColorField
+            label="Couleur d’éclairage la nuit"
+            value={mats.facadeGlowHex ?? '#ffffff'}
+            onChange={(facadeGlowHex) => updateMaterials({ facadeGlowHex })}
+          />
+        )}
       </PanelSection>
       <PanelSection title="Couverture du toit">
         <OptionList
@@ -1526,6 +1567,25 @@ const MaterialsInspector: React.FC = () => {
           hint="Désactive pour un rendu plus léger sur les machines modestes"
           checked={mats.seats3d !== false}
           onChange={(seats3d) => updateMaterials({ seats3d })}
+        />
+        <ToggleField
+          label="Public dans les tribunes"
+          hint="Désactivé, les sièges restent vides"
+          disabled={mats.seats3d === false}
+          checked={mats.crowd === true}
+          onChange={(crowd) => updateMaterials({ crowd })}
+        />
+        <SliderField
+          label="Affluence"
+          hint="Part des places occupées par des spectateurs"
+          disabled={mats.seats3d === false || mats.crowd !== true}
+          value={mats.crowdAttendance ?? 0.9}
+          min={0}
+          max={1}
+          step={0.05}
+          scale={100}
+          display={`${Math.round((mats.crowdAttendance ?? 0.9) * 100)} %`}
+          onChange={(crowdAttendance) => updateMaterials({ crowdAttendance })}
         />
         <OptionList
           label="Finition des sièges"

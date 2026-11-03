@@ -1242,4 +1242,85 @@ describe('cantilevered upper tiers', () => {
     expect(withCount(4)).toBeGreaterThan(withCount(8));
     expect(withCount(8)).toBeGreaterThan(0);
   });
+  it('seats a crowd sized by attendance and lays terraces on a grass bank', () => {
+    const base = createPresetDocument('asymmetric_modular_30k');
+    const crowdOf = (attendance: number) => {
+      const doc = { ...base, materials: { ...base.materials!, crowd: true, crowdAttendance: attendance } };
+      let count = 0;
+      generateStandsGroup(doc, false).traverse((o) => {
+        if (o.name === 'CrowdBodies') count += (o as THREE.InstancedMesh).count;
+      });
+      return count;
+    };
+    // Off by default: existing grounds keep their empty seats
+    let defaultCrowd = 0;
+    generateStandsGroup(base, false).traverse((o) => {
+      if (o.name.startsWith('Crowd')) defaultCrowd++;
+    });
+    expect(defaultCrowd).toBe(0);
+    expect(crowdOf(0)).toBe(0);
+    const half = crowdOf(0.5);
+    const full = crowdOf(1);
+    expect(half).toBeGreaterThan(0);
+    expect(full).toBeGreaterThan(half * 1.5);
+
+    const banked = {
+      ...base,
+      stands: { ...base.stands, east: { ...base.stands.east, embankment: true } },
+    };
+    const east = generateStandsGroup(banked, false).getObjectByName('Stand_EAST')!;
+    const bank = east.getObjectByName('GrassEmbankment') as THREE.Mesh;
+    expect(bank).toBeDefined();
+    bank.geometry.computeBoundingBox();
+    expect(bank.geometry.boundingBox!.max.y).toBeGreaterThan(1);
+    expect(generateStandsGroup(base, false).getObjectByName('GrassEmbankment')).toBeUndefined();
+  });
+
+  it('synthesises the ceramic, corrugated and new lacquer finishes', () => {
+    for (const id of ['ceramic_tile_mosaic', 'corrugated_steel_sheet'] as const) {
+      const mat = createFacadePbrMaterial(id, 'day', false, 1);
+      expect(mat.map).toBeTruthy();
+      expect(mat.normalMap).toBeTruthy();
+    }
+    for (const id of ['yellow_lacquer_steel', 'sky_blue_lacquer_steel'] as const) {
+      const mat = createStructurePbrMaterial(id, 1);
+      expect(mat.map).toBeTruthy();
+    }
+  });
+  it('dresses kops with standing fans, tifos and banners, and lights ETFE in the club colour', () => {
+    const base = createPresetDocument('traditional_four_stands_42k');
+    const doc = {
+      ...base,
+      materials: { ...base.materials!, crowd: true },
+      stands: {
+        ...base.stands,
+        south: { ...base.stands.south, seatingType: 'safe_standing' as const, banners: true },
+        east: { ...base.stands.east, tifo: true },
+      },
+    };
+    const stands = generateStandsGroup(doc, false);
+    const south = stands.getObjectByName('Stand_SOUTH')!;
+    let standing = 0;
+    south.traverse((o) => {
+      if (o.name === 'CrowdBodies') standing += (o as THREE.InstancedMesh).count;
+    });
+    expect(standing).toBeGreaterThan(500);
+    expect(south.getObjectByName('SupporterBanners')).toBeDefined();
+    expect(stands.getObjectByName('Stand_NORTH')!.getObjectByName('SupporterBanners')).toBeUndefined();
+
+    // A tifo fills every seat in two club colours only
+    const east = stands.getObjectByName('Stand_EAST')!;
+    const colours = new Set<string>();
+    east.traverse((o) => {
+      const mesh = o as THREE.InstancedMesh;
+      if (o.name !== 'CrowdBodies' || !mesh.instanceColor) return;
+      const c = new THREE.Color();
+      for (let i = 0; i < mesh.count; i++) colours.add(mesh.getColorAt(i, c).getHexString());
+    });
+    expect(colours.size).toBe(2);
+
+    const glow = createFacadePbrMaterial('etfe_cushions_facade', 'night', false, 1, '#dc2626');
+    expect(glow.emissive.getHexString()).toBe(new THREE.Color('#dc2626').getHexString());
+    expect(createFacadePbrMaterial('etfe_cushions_facade', 'day', false, 1, '#dc2626').emissive.getHex()).toBe(0);
+  });
 });

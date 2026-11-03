@@ -177,6 +177,22 @@ export const FACADE_MATERIAL_CATALOG: MaterialCatalogEntry<FacadeMaterialId>[] =
     swatchBackground:
       'radial-gradient(circle at 30% 30%, #6aa84f 0 3px, transparent 3.5px) 0 0 / 9px 9px, linear-gradient(135deg, #5b8c3e 0%, #2f5226 100%)',
   },
+  {
+    id: 'ceramic_tile_mosaic',
+    label: 'Céramique émaillée',
+    subtitle: 'Mosaïque de carreaux vernissés jaunes aux tons nuancés',
+    fallbackHex: '#f2c21b',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, rgba(120,90,20,0.5) 0 1px, transparent 1px 7px), repeating-linear-gradient(0deg, rgba(120,90,20,0.5) 0 1px, transparent 1px 7px), linear-gradient(135deg, #fbd34d 0%, #e9a90b 100%)',
+  },
+  {
+    id: 'corrugated_steel_sheet',
+    label: 'Tôle ondulée',
+    subtitle: 'Bardage acier ondulé galvanisé des petites tribunes',
+    fallbackHex: '#9aa3ad',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, #6b7480 0 2px, #c7cdd4 2px 4px, #9aa3ad 4px 6px)',
+  },
 ];
 
 export const ROOF_MATERIAL_CATALOG: MaterialCatalogEntry<RoofMaterialId>[] = [
@@ -355,6 +371,22 @@ export const STRUCTURE_MATERIAL_CATALOG: MaterialCatalogEntry<StructureMaterialI
     fallbackHex: '#1f5136',
     swatchBackground:
       'linear-gradient(135deg, #3f8a5c 0%, #1f5136 60%, #0f2a1c 100%)',
+  },
+  {
+    id: 'yellow_lacquer_steel',
+    label: 'Acier laqué jaune',
+    subtitle: 'Pylônes et charpente jaune signal',
+    fallbackHex: '#ecba16',
+    swatchBackground:
+      'linear-gradient(135deg, #fcd34d 0%, #ecba16 60%, #a16207 100%)',
+  },
+  {
+    id: 'sky_blue_lacquer_steel',
+    label: 'Acier laqué bleu ciel',
+    subtitle: 'Charpente peinte bleu ciel',
+    fallbackHex: '#64aadc',
+    swatchBackground:
+      'linear-gradient(135deg, #93c5fd 0%, #64aadc 60%, #2c6c9c 100%)',
   },
   {
     id: 'reinforced_concrete',
@@ -1089,7 +1121,8 @@ export function createFacadePbrMaterial(
   facadeId: FacadeMaterialId,
   lighting: LightingMode,
   flatShading: boolean = false,
-  maxAnisotropy: number = 8
+  maxAnisotropy: number = 8,
+  glowHex?: string
 ): THREE.MeshPhysicalMaterial {
   const isNight = lighting !== 'day';
   const key = `facade_${facadeId}_${isNight ? 'lit' : 'day'}_v6`;
@@ -1401,6 +1434,41 @@ export function createFacadePbrMaterial(
       };
     }
 
+    if (facadeId === 'ceramic_tile_mosaic') {
+      // 40 x 40 glazed 20 cm tiles per 8 m, each fired a slightly different yellow
+      const tu = (u * 40) % 1;
+      const tv = (v * 40) % 1;
+      if (tu < 0.07 || tv < 0.07) {
+        return { r: 150, g: 128, b: 92, height: 0.2, roughness: 0.9 };
+      }
+      const tone = hash2Periodic(Math.floor(u * 40), Math.floor(v * 40), 40, 40, 1521);
+      const dome = Math.sin(tu * Math.PI) * Math.sin(tv * Math.PI);
+      const deep = tone > 0.86 ? -38 : 0; // a scatter of ochre tiles
+      return {
+        r: 238 + (tone - 0.5) * 20 + deep * 0.4,
+        g: 188 + (tone - 0.5) * 40 + deep,
+        b: 30 + (tone - 0.5) * 30,
+        height: 0.6 + dome * 0.08,
+        roughness: 0.12 + (fine - 0.5) * 0.06,
+      };
+    }
+
+    if (facadeId === 'corrugated_steel_sheet') {
+      // 76 mm-pitch sinusoidal corrugation (105 waves per 8 m), sheets lapped every 2.5 m
+      const wave = Math.sin(u * 105 * Math.PI * 2);
+      const lap = ((v * 3.2) % 1) < 0.012;
+      const sheet = hash2Periodic(Math.floor(u * 8), Math.floor(v * 3.2), 8, 4, 1531);
+      const val = 150 + wave * 22 + (sheet - 0.5) * 18 + (fbm - 0.5) * 16;
+      const rust = Math.max(0, med - 0.74) * 160; // streaks of weathering
+      return {
+        r: (lap ? val - 30 : val) + rust * 0.5,
+        g: (lap ? val - 28 : val + 4) - rust * 0.1,
+        b: (lap ? val - 24 : val + 10) - rust * 0.4,
+        height: lap ? 0.2 : 0.5 + wave * 0.32,
+        roughness: 0.36 + (fbm - 0.5) * 0.12 + rust * 0.003,
+      };
+    }
+
     if (facadeId === 'gold_anodized_panels') {
       // 4x8 staggered champagne-gold anodized aluminum cassettes per 8 m (2.0 m x 1.0 m)
       const rowIdx = Math.floor(v * 8);
@@ -1539,7 +1607,11 @@ export function createFacadePbrMaterial(
   const maps = wrapDataTextures(buffers, 1, 1, maxAnisotropy);
 
   const isMetallic = facadeId === 'brushed_steel_mesh' || facadeId === 'gold_anodized_panels';
-  const isPaintedMetal = facadeId === 'perforated_red_metal' || facadeId === 'black_zinc_cladding';
+  const isPaintedMetal =
+    facadeId === 'perforated_red_metal' ||
+    facadeId === 'black_zinc_cladding' ||
+    facadeId === 'corrugated_steel_sheet';
+  const isCeramic = facadeId === 'ceramic_tile_mosaic';
   const isGlass = facadeId === 'glass_curtain';
   const isEtfe = facadeId === 'etfe_cushions_facade';
   const isCorten = facadeId === 'weathered_corten';
@@ -1552,10 +1624,10 @@ export function createFacadePbrMaterial(
     roughness: 1.0,
     metalness: isMetallic ? 0.78 : isPaintedMetal ? 0.5 : isGlass ? 0.32 : isCorten ? 0.38 : 0.04,
     clearcoat:
-      isGlass || isEtfe ? 0.9 : isMetallic ? 0.32 : facadeId === 'white_composite_panels' ? 0.36 : 0.0,
+      isGlass || isEtfe || isCeramic ? 0.9 : isMetallic ? 0.32 : facadeId === 'white_composite_panels' ? 0.36 : 0.0,
     clearcoatRoughness: isGlass ? 0.08 : isEtfe ? 0.14 : 0.25,
     envMapIntensity: isGlass ? 1.4 : isMetallic ? 1.2 : isEtfe ? 1.15 : 0.85,
-    emissive: new THREE.Color(isNight ? 0xffffff : 0x000000),
+    emissive: new THREE.Color(isNight ? (isEtfe && glowHex ? glowHex : 0xffffff) : 0x000000),
     emissiveMap: maps.emissiveMap,
     emissiveIntensity: isNight ? (isEtfe ? 1.15 : 0.82) : 0,
     flatShading,
@@ -2098,6 +2170,8 @@ export function createStructurePbrMaterial(
       red_lacquer_steel: [190, 34, 40],
       navy_lacquer_steel: [30, 50, 102],
       forest_green_steel: [30, 82, 54],
+      yellow_lacquer_steel: [236, 186, 22],
+      sky_blue_lacquer_steel: [100, 170, 220],
     };
     const paint = lacquer[structureId];
     if (paint) {
@@ -2129,7 +2203,9 @@ export function createStructurePbrMaterial(
   const isLacquer =
     structureId === 'red_lacquer_steel' ||
     structureId === 'navy_lacquer_steel' ||
-    structureId === 'forest_green_steel';
+    structureId === 'forest_green_steel' ||
+    structureId === 'yellow_lacquer_steel' ||
+    structureId === 'sky_blue_lacquer_steel';
 
   return new THREE.MeshPhysicalMaterial({
     map: maps.map,

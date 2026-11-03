@@ -115,8 +115,21 @@ export function generateEnvelopeSkirt(
   if (run.length > 0) runs.push(run);
   const loop = unbroken && runs.length === 1;
 
-  // The band continues the facade up to the roof, in the same cladding and envelope.
-  const screenMat = createFacadePbrMaterial(mats.facade, doc.lighting, false, maxAnisotropy);
+  // The band continues the facade up to the roof, in the same cladding and envelope, or is glazed
+  // as a clear windbreak that keeps the bowl and the sky line visible.
+  const glazed = doc.roof.enclosureGlazed === true;
+  const screenMat = glazed
+    ? new THREE.MeshPhysicalMaterial({
+        color: 0xdbeafe,
+        transparent: true,
+        opacity: 0.22,
+        roughness: 0.05,
+        metalness: 0.1,
+        clearcoat: 1,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+    : createFacadePbrMaterial(mats.facade, doc.lighting, false, maxAnisotropy, mats.facadeGlowHex);
   const facadePattern = mats.facadePattern ?? 'none';
   const finMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
 
@@ -145,9 +158,14 @@ export function generateEnvelopeSkirt(
     geo.setIndex(idx);
     geo.computeVertexNormals();
     const panel = new THREE.Mesh(geo, screenMat);
-    panel.castShadow = true;
+    panel.castShadow = !glazed;
     panel.receiveShadow = true;
     group.add(panel);
+
+    if (glazed) {
+      group.add(buildGlazingMullions(rail, loop, finMat));
+      continue;
+    }
 
     const dressing =
       facadePattern === 'none'
@@ -171,4 +189,42 @@ export function generateEnvelopeSkirt(
     if (dressing) group.add(dressing);
   }
   return group;
+}
+
+/** Glazing pitch (m) between the mullions of a glass windbreak. */
+const WINDBREAK_MULLION_SPACING_M = 2.4;
+
+/** Slim mullions holding the windbreak panes, one every `WINDBREAK_MULLION_SPACING_M` along the rail. */
+function buildGlazingMullions(
+  rail: { x: number; z: number; yBottom: number; yTop: number }[],
+  closed: boolean,
+  mat: THREE.Material
+): THREE.InstancedMesh {
+  const matrices: THREE.Matrix4[] = [];
+  const segs = closed ? rail.length : rail.length - 1;
+  let carry = 0;
+  for (let i = 0; i < segs; i++) {
+    const a = rail[i];
+    const b = rail[(i + 1) % rail.length];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    for (let along = carry; along < len; along += WINDBREAK_MULLION_SPACING_M) {
+      const f = along / len;
+      const yB = a.yBottom + (b.yBottom - a.yBottom) * f;
+      const yT = a.yTop + (b.yTop - a.yTop) * f + 0.3;
+      matrices.push(
+        new THREE.Matrix4()
+          .makeScale(0.09, Math.max(0.1, yT - yB), 0.12)
+          .setPosition(a.x + (b.x - a.x) * f, (yB + yT) / 2, a.z + (b.z - a.z) * f)
+      );
+    }
+    carry = len < carry ? carry - len : WINDBREAK_MULLION_SPACING_M - ((len - carry) % WINDBREAK_MULLION_SPACING_M);
+  }
+  const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, Math.max(1, matrices.length));
+  matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
+  mesh.count = matrices.length;
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.computeBoundingSphere();
+  mesh.name = 'WindbreakMullions';
+  mesh.castShadow = true;
+  return mesh;
 }

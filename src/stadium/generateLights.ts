@@ -347,7 +347,7 @@ export function generatePlacedObjectGroup(
     }
 
     case 'locker_room': {
-      const facadeClad = createFacadePbrMaterial(mats.facade, lighting, false, maxAnisotropy);
+      const facadeClad = createFacadePbrMaterial(mats.facade, lighting, false, maxAnisotropy, mats.facadeGlowHex);
       const mainBody = new THREE.Mesh(new THREE.BoxGeometry(28, 7.2, 17), facadeClad);
       mainBody.position.y = 3.6;
       mainBody.castShadow = true;
@@ -380,7 +380,7 @@ export function generatePlacedObjectGroup(
     }
 
     case 'shop': {
-      const facadeClad = createFacadePbrMaterial(mats.facade, lighting, false, maxAnisotropy);
+      const facadeClad = createFacadePbrMaterial(mats.facade, lighting, false, maxAnisotropy, mats.facadeGlowHex);
       const body = new THREE.Mesh(new THREE.BoxGeometry(20, 6.4, 15), facadeClad);
       body.position.y = 3.2;
       body.castShadow = true;

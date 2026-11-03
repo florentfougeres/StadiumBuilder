@@ -48,7 +48,7 @@ export function generateConcourseGroup(
   });
 
   const mats = resolveStadiumMaterials(doc);
-  const facadeMat = createFacadePbrMaterial(mats.facade, doc.lighting, false, maxAnisotropy);
+  const facadeMat = createFacadePbrMaterial(mats.facade, doc.lighting, false, maxAnisotropy, mats.facadeGlowHex);
   const deckMat = createConcreteBowlMaterial(maxAnisotropy);
   const slabMat = new THREE.MeshStandardMaterial({ color: 0xd6d3cd, roughness: 0.8 });
 

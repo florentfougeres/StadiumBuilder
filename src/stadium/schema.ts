@@ -159,6 +159,12 @@ export interface StandConfig {
   pressGantry?: boolean;
   /** Players' & service tunnel layout at pitch level (`center`, `corner_twin`, or `none`). */
   tunnelStyle?: StandTunnelStyle;
+  /** Terraces laid on a grassed earth bank instead of a built stand (small and athletics grounds). */
+  embankment?: boolean;
+  /** Supporters dressed as a diagonal club-colour tifo across the whole stand. */
+  tifo?: boolean;
+  /** Supporters' banners hung over the pitch wall and balcony fronts. */
+  banners?: boolean;
 }
 
 export interface RoofConfig {
@@ -173,6 +179,8 @@ export interface RoofConfig {
   overConcourse?: boolean;
   /** Closes the band between the facade (or concourse) top and the roof with a fin screen (default on). */
   enclosed?: boolean;
+  /** Clear glass windbreak instead of facade cladding in that band, keeping the bowl visible. */
+  enclosureGlazed?: boolean;
   /** Skylight / daylight cutout pattern across the canopy. */
   skylightMode?: SkylightMode;
   /** Share of canopy area opened to direct sunlight (`0..0.75`). */
@@ -300,7 +308,9 @@ export type FacadeMaterialId =
   | 'white_composite_panels'
   | 'perforated_red_metal'
   | 'black_zinc_cladding'
-  | 'living_green_wall';
+  | 'living_green_wall'
+  | 'ceramic_tile_mosaic'
+  | 'corrugated_steel_sheet';
 
 export type RoofMaterialId =
   | 'ptfe_membrane'
@@ -327,6 +337,8 @@ export type StructureMaterialId =
   | 'red_lacquer_steel'
   | 'navy_lacquer_steel'
   | 'forest_green_steel'
+  | 'yellow_lacquer_steel'
+  | 'sky_blue_lacquer_steel'
   | 'reinforced_concrete';
 
 export type SeatMaterialId =
@@ -362,6 +374,12 @@ export interface StadiumMaterialsConfig {
   plazaSurface: PlazaMaterialId;
   /** Individual 3D seats on every row; false falls back to the lighter painted terrace texture. */
   seats3d?: boolean;
+  /** Spectators in the stands (3D seats only); off shows the empty ground. */
+  crowd?: boolean;
+  /** Share of places occupied when `crowd` is on (`0..1`). */
+  crowdAttendance?: number;
+  /** Night glow colour of a backlit ETFE facade; absent glows white. */
+  facadeGlowHex?: string;
   /** Parametric 3D geometric relief pattern overlaid on the exterior facade. */
   facadePattern?: FacadePatternId;
   /** Parametric pattern repetition density (`0.4..2.2`). */
@@ -377,6 +395,8 @@ export const DEFAULT_STADIUM_MATERIALS: StadiumMaterialsConfig = {
   structure: 'white_steel',
   seatFinish: 'molded_poly_mosaic',
   seats3d: true,
+  crowd: false,
+  crowdAttendance: 0.9,
   pitchTurf: 'hybrid_emerald',
   trackSurface: 'mondo_red',
   plazaSurface: 'granite_pavers',
@@ -676,3 +696,7 @@ export function slopeDegFromRiser(riserHeight: number, rowDepth: number): number
   return Number(((Math.atan2(riserHeight, rowDepth) * 180) / Math.PI).toFixed(1));
 }
 
+/** Share of places filled with spectators: none unless the crowd is switched on. */
+export function resolveCrowdAttendance(materials: StadiumMaterialsConfig): number {
+  return materials.crowd === true ? materials.crowdAttendance ?? 0.9 : 0;
+}

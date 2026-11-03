@@ -16,6 +16,7 @@ import {
   getTrackRadialOffset,
 } from './capacity';
 import {
+  applyTurfCloseUpDetail,
   createConcreteBowlMaterial,
   createFacadePbrMaterial,
   createLedSponsorRibbonTexture,
@@ -44,6 +45,7 @@ import {
   StadiumDocument,
   StandConfig,
   StandSide,
+  resolveCrowdAttendance,
 } from './schema';
 import {
   computeStandSection,
@@ -778,8 +780,24 @@ function buildStraightStandMesh(
       primaryHex: doc.colors.seatsPrimary,
       secondaryHex: doc.colors.seatsSecondary,
       isHoleQuad,
+      attendance: resolveCrowdAttendance(mats),
+      tifo: mats.crowd === true && stand.tifo,
     });
     if (seats) group.add(seats);
+  }
+
+  if (seats3d && stand.seatingType === 'safe_standing') {
+    const fans = buildCrowd(
+      standingSpots(rowPositions, spanLength, stand.aisleCount, stand.aisleWidth),
+      {
+        attendance: resolveCrowdAttendance(mats),
+        primary: new THREE.Color(doc.colors.seatsPrimary),
+        secondary: new THREE.Color(doc.colors.seatsSecondary),
+        pose: 'standing',
+        tifo: mats.crowd === true && stand.tifo,
+      }
+    );
+    if (fans) group.add(fans);
   }
 
   // 2. Open-End Concrete Gable Walls & Stepped Side Safety Balustrades ONLY on genuinely open ends!
@@ -1389,7 +1407,93 @@ function buildStraightStandMesh(
     group.add(entranceCanopy);
   }
 
+  if (stand.banners) {
+    const parapetTop = stand.elevationStart + 0.58;
+    const banners = buildStandBanners(
+      [
+        // Over the pitch wall, and hanging from each balcony front below its fascia
+        { top: parapetTop - 0.04, z: -0.05, maxHeight: parapetTop - 0.15 },
+        ...balconies.map((bal) => ({ top: bal.y - 0.47, z: bal.d - 0.32, maxHeight: 1.3 })),
+      ],
+      spanLength,
+      new THREE.Color(doc.colors.seatsPrimary),
+      new THREE.Color(doc.colors.seatsSecondary),
+      ['north', 'south', 'east', 'west'].indexOf(stand.id) + 1
+    );
+    if (banners) group.add(banners);
+  }
+
+  if (stand.embankment) {
+    group.add(buildGrassEmbankment(spanLength, totalDepth, topHeight, concreteMat.map?.anisotropy ?? 4));
+  }
+
   return group;
+}
+
+/** Earth bank slope (run per metre of rise) behind and beside terraces built into a bank. */
+const EMBANKMENT_SLOPE = 1.7;
+
+let embankmentMaterialCache: THREE.MeshStandardMaterial | null = null;
+
+/**
+ * Grassed earth mound filling under and behind a stand's terraces, in the stand's local frame
+ * (x along the stand, z away from the pitch): it meets the rear of the top row and falls to the
+ * ground behind and at both ends, as on athletics grounds and small clubs' open terraces.
+ */
+function buildGrassEmbankment(
+  spanLength: number,
+  totalDepth: number,
+  topHeight: number,
+  maxAnisotropy: number
+): THREE.Mesh {
+  if (!embankmentMaterialCache) {
+    embankmentMaterialCache = new THREE.MeshStandardMaterial({
+      color: 0x4d7a36,
+      roughness: 0.96,
+      side: THREE.DoubleSide,
+    });
+    applyTurfCloseUpDetail(embankmentMaterialCache, maxAnisotropy);
+  }
+  const crestY = Math.max(0.5, topHeight - 0.25);
+  const run = crestY * EMBANKMENT_SLOPE;
+  // Cross-section (z, y): tucked under the front rows, up to the rear crest, down the back slope.
+  const section: [number, number][] = [
+    [0.4, 0],
+    [totalDepth * 0.35, crestY * 0.3],
+    [totalDepth, crestY],
+    [totalDepth + 0.8, crestY],
+    [totalDepth + 0.8 + run, 0],
+  ];
+  const half = spanLength * 0.5;
+  // Full section along the stand, collapsing to the ground line over `run` past each end.
+  const stations: { x: number; k: number }[] = [
+    { x: -half - run, k: 0 },
+    { x: -half, k: 1 },
+    { x: half, k: 1 },
+    { x: half + run, k: 0 },
+  ];
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const cols = section.length;
+  stations.forEach(({ x, k }) => {
+    section.forEach(([z, y]) => positions.push(x, y * k, z));
+  });
+  for (let r = 0; r < stations.length - 1; r++) {
+    for (let c = 0; c < cols - 1; c++) {
+      const a = r * cols + c;
+      const b = (r + 1) * cols + c;
+      indices.push(a, a + 1, b, b, a + 1, b + 1);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, embankmentMaterialCache);
+  mesh.name = 'GrassEmbankment';
+  mesh.receiveShadow = true;
+  mesh.castShadow = true;
+  return mesh;
 }
 
 function buildMultiMaterialSweptStandGeometry(
@@ -1546,6 +1650,10 @@ function buildSweepSeatInstances(opts: {
   primaryHex: string;
   secondaryHex: string;
   isHoleQuad?: (sliceIdx: number, profileSegIdx: number) => boolean;
+  /** Share of seats with a spectator sitting in them (`0..1`). */
+  attendance: number;
+  /** Dress every spectator in the club-colour tifo pattern. */
+  tifo?: boolean;
 }): THREE.Group | null {
   const {
     ringCount,
@@ -1561,6 +1669,8 @@ function buildSweepSeatInstances(opts: {
     primaryHex,
     secondaryHex,
     isHoleQuad,
+    attendance,
+    tifo = false,
   } = opts;
   const pitch = Math.max(0.42, seatWidth);
   const nextSlice = (s: number) => (closed ? (s + 1) % ringCount : s + 1);
@@ -1680,8 +1790,334 @@ function buildSweepSeatInstances(opts: {
   group.add(mesh);
   const rails = buildAisleHandrails(aislePoints);
   if (rails) group.add(rails);
+  const crowd = buildCrowd(
+    placements.map((p) => p.m),
+    { attendance, primary, secondary, pose: 'seated', tifo }
+  );
+  if (crowd) group.add(crowd);
   return group;
 }
+
+/** Deterministic per-seat hash in `[0, 1)`, so the crowd does not reshuffle between rebuilds. */
+function seatHash(i: number, salt: number): number {
+  const x = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+type BoxPart = [w: number, h: number, d: number, x: number, y: number, z: number, shade: number];
+
+/** Merges shaded boxes into one non-indexed geometry; `shade` goes into the vertex colour. */
+function mergeShadedBoxes(parts: BoxPart[]): THREE.BufferGeometry {
+  const geos = parts.map(([w, h, d, x, y, z, shade]) => {
+    const g = new THREE.BoxGeometry(w, h, d).toNonIndexed();
+    g.translate(x, y, z);
+    g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count * 3).fill(shade), 3));
+    return g;
+  });
+  const merged = mergeGeometries(geos);
+  geos.forEach((g) => g.dispose());
+  merged?.computeVertexNormals();
+  return merged ?? new THREE.BoxGeometry(0.36, 1, 0.3);
+}
+
+/**
+ * Spectator bodies in metres on the spot's frame (facing -Z, like the seats). Vertex colours shade
+ * trousers and shoes darker than the shirt, which the instance colour tints. Seated fans have
+ * thighs on the pan and shins down to the tread; standing fans either keep their arms down or hold
+ * a scarf up over their heads.
+ */
+const crowdBodyGeometryCache = new Map<string, THREE.BufferGeometry>();
+function getCrowdBodyGeometry(kind: 'seated' | 'standing' | 'scarf'): THREE.BufferGeometry {
+  const cached = crowdBodyGeometryCache.get(kind);
+  if (cached) return cached;
+  const shoes: BoxPart = [0.3, 0.06, 0.18, 0, 0.03, -0.04, 0.12];
+  const parts: BoxPart[] =
+    kind === 'seated'
+      ? [
+          [0.36, 0.5, 0.22, 0, 0.72, 0.04, 1], // torso
+          [0.46, 0.12, 0.2, 0, 0.92, 0.04, 1], // shoulders
+          [0.1, 0.34, 0.1, -0.21, 0.66, 0.02, 1], // arms
+          [0.1, 0.34, 0.1, 0.21, 0.66, 0.02, 1],
+          [0.34, 0.14, 0.42, 0, 0.47, -0.1, 0.32], // thighs on the pan
+          [0.3, 0.42, 0.12, 0, 0.22, -0.28, 0.3], // shins
+          [0.3, 0.06, 0.18, 0, 0.03, -0.32, 0.12], // shoes
+        ]
+      : [
+          [0.13, 0.84, 0.14, -0.09, 0.48, 0, 0.3], // legs
+          [0.13, 0.84, 0.14, 0.09, 0.48, 0, 0.3],
+          shoes,
+          [0.36, 0.56, 0.22, 0, 1.17, 0, 1], // torso
+          [0.46, 0.12, 0.2, 0, 1.39, 0, 1], // shoulders
+          ...(kind === 'standing'
+            ? ([
+                [0.1, 0.6, 0.1, -0.24, 1.11, 0, 1],
+                [0.1, 0.6, 0.1, 0.24, 1.11, 0, 1],
+              ] as BoxPart[])
+            : ([
+                [0.1, 0.6, 0.1, -0.22, 1.72, -0.02, 1], // arms raised
+                [0.1, 0.6, 0.1, 0.22, 1.72, -0.02, 1],
+                [0.62, 0.16, 0.03, 0, 2.02, -0.06, 1.15], // scarf held between the hands
+              ] as BoxPart[])),
+        ];
+  const geo = mergeShadedBoxes(parts);
+  crowdBodyGeometryCache.set(kind, geo);
+  return geo;
+}
+
+/** Head with a darker crown of hair at height `y`; the instance colour carries the skin tone. */
+const crowdHeadGeometryCache = new Map<number, THREE.BufferGeometry>();
+function getCrowdHeadGeometry(y: number): THREE.BufferGeometry {
+  const cached = crowdHeadGeometryCache.get(y);
+  if (cached) return cached;
+  const g = new THREE.IcosahedronGeometry(0.105, 1);
+  g.scale(0.92, 1.08, 1);
+  const pos = g.attributes.position;
+  const colors: number[] = [];
+  for (let i = 0; i < pos.count; i++) {
+    // Hair over the crown and the back of the head (+Z faces away from the pitch)
+    const hair = pos.getY(i) > 0.02 || (pos.getZ(i) > 0.05 && pos.getY(i) > -0.05);
+    const c = hair ? 0.22 : 1;
+    colors.push(c, c, c);
+  }
+  g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  g.translate(0, y, 0.03);
+  crowdHeadGeometryCache.set(y, g);
+  return g;
+}
+
+/** Hand-held flag: a pole from the raised hand and a cloth the instance colour tints. */
+let crowdFlagGeometryCache: THREE.BufferGeometry | null = null;
+function getCrowdFlagGeometry(): THREE.BufferGeometry {
+  crowdFlagGeometryCache ??= mergeShadedBoxes([
+    [0.03, 1.6, 0.03, 0.24, 2.15, -0.05, 0.25], // pole
+    [0.8, 0.52, 0.02, 0.65, 2.68, -0.05, 1], // cloth
+  ]);
+  return crowdFlagGeometryCache;
+}
+
+let crowdMaterialCache: THREE.MeshStandardMaterial | null = null;
+function getCrowdMaterial(): THREE.MeshStandardMaterial {
+  crowdMaterialCache ??= new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.85,
+    metalness: 0,
+    side: THREE.DoubleSide,
+  });
+  return crowdMaterialCache;
+}
+
+const CROWD_NEUTRAL_CLOTHES = ['#f4f4f2', '#1c1f26', '#27344f', '#6b7280', '#3f4a3c', '#8a1c1c'];
+const CROWD_SKIN_TONES = ['#f1c7a5', '#e0ac85', '#c68863', '#9c6644', '#6e4630', '#4a2f22'];
+/** Width (m) of each diagonal band of a tifo. */
+const TIFO_BAND_M = 2.4;
+
+interface CrowdOptions {
+  attendance: number;
+  primary: THREE.Color;
+  secondary: THREE.Color;
+  pose: 'seated' | 'standing';
+  tifo?: boolean;
+}
+
+/**
+ * Fills a share of the spots (seats, or standing places on a terrace) with supporters: club shirts
+ * in the seat palette mixed with everyday clothing, varied skin tones, build and angle. Occupancy
+ * is clustered in blocks so empty places read as gaps rather than noise. Standing ends add raised
+ * scarves and a scatter of flags; a tifo fills every spot and dresses it in diagonal club bands.
+ */
+function buildCrowd(spots: THREE.Matrix4[], opts: CrowdOptions): THREE.Group | null {
+  const { primary, secondary, pose, tifo = false } = opts;
+  const share = tifo ? 1 : Math.max(0, Math.min(1, opts.attendance));
+  if (share <= 0 || spots.length === 0) return null;
+  const occupied: number[] = [];
+  spots.forEach((_, i) => {
+    // Neighbouring spots share most of their draw, so fans gather in groups
+    const block = seatHash(Math.floor(i / 6), 3);
+    if (block * 0.55 + seatHash(i, 7) * 0.45 < share) occupied.push(i);
+  });
+  if (occupied.length === 0) return null;
+
+  type Variant = { geo: THREE.BufferGeometry; headY: number; idx: number[] };
+  const variants: Variant[] =
+    pose === 'seated'
+      ? [{ geo: getCrowdBodyGeometry('seated'), headY: 1.11, idx: occupied }]
+      : [
+          { geo: getCrowdBodyGeometry('standing'), headY: 1.6, idx: [] },
+          { geo: getCrowdBodyGeometry('scarf'), headY: 1.6, idx: [] },
+        ];
+  const flagIdx: number[] = [];
+  if (pose === 'standing') {
+    for (const i of occupied) {
+      const r = seatHash(i, 37);
+      variants[r < 0.3 ? 1 : 0].idx.push(i);
+      if (r > 0.985) flagIdx.push(i);
+    }
+  }
+
+  const neutral = CROWD_NEUTRAL_CLOTHES.map((h) => new THREE.Color(h));
+  const skins = CROWD_SKIN_TONES.map((h) => new THREE.Color(h));
+  const shirtOf = (i: number, m: THREE.Matrix4, out: THREE.Color) => {
+    if (tifo) {
+      const band = Math.floor((m.elements[12] * 0.35 + m.elements[13]) / TIFO_BAND_M);
+      return out.copy(band % 2 === 0 ? primary : secondary);
+    }
+    const pick = seatHash(i, 19);
+    if (pick < 0.58) out.copy(primary);
+    else if (pick < 0.76) out.copy(secondary);
+    else out.copy(neutral[Math.floor(seatHash(i, 23) * neutral.length)]);
+    return out.multiplyScalar(0.85 + seatHash(i, 29) * 0.25);
+  };
+  const placed = (i: number) => {
+    const build = 0.92 + seatHash(i, 11) * 0.16;
+    const yaw = (seatHash(i, 13) - 0.5) * 0.35;
+    // Seated fans lean toward the pitch
+    const lean = pose === 'seated' ? -seatHash(i, 17) * 0.12 : 0;
+    return spots[i]
+      .clone()
+      .multiply(new THREE.Matrix4().makeRotationY(yaw))
+      .multiply(new THREE.Matrix4().makeRotationX(lean))
+      .multiply(new THREE.Matrix4().makeScale(build, build, build));
+  };
+
+  const group = new THREE.Group();
+  group.name = 'Crowd';
+  const color = new THREE.Color();
+  const finish = (mesh: THREE.InstancedMesh, name: string) => {
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    // Tens of thousands of casters would swamp the shadow pass; the crowd only receives
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    mesh.name = name;
+    group.add(mesh);
+  };
+  for (const v of variants) {
+    if (v.idx.length === 0) continue;
+    const bodies = new THREE.InstancedMesh(v.geo, getCrowdMaterial(), v.idx.length);
+    const heads = new THREE.InstancedMesh(getCrowdHeadGeometry(v.headY), getCrowdMaterial(), v.idx.length);
+    v.idx.forEach((i, k) => {
+      const m = placed(i);
+      bodies.setMatrixAt(k, m);
+      heads.setMatrixAt(k, m);
+      bodies.setColorAt(k, shirtOf(i, m, color));
+      heads.setColorAt(k, skins[Math.floor(seatHash(i, 31) * skins.length)]);
+    });
+    finish(bodies, 'CrowdBodies');
+    finish(heads, 'CrowdHeads');
+  }
+  if (flagIdx.length > 0) {
+    const flags = new THREE.InstancedMesh(getCrowdFlagGeometry(), getCrowdMaterial(), flagIdx.length);
+    flagIdx.forEach((i, k) => {
+      flags.setMatrixAt(k, placed(i));
+      flags.setColorAt(k, seatHash(i, 41) < 0.6 ? primary : secondary);
+    });
+    finish(flags, 'CrowdFlags');
+  }
+  return group;
+}
+
+/**
+ * Standing places on a terrace in the stand's local frame (x along the stand, facing the pitch at
+ * -Z): one fan every half metre along each row, keeping the aisles clear.
+ */
+function standingSpots(
+  rows: { y: number; d: number }[],
+  spanLength: number,
+  aisleCount: number,
+  aisleWidth: number
+): THREE.Matrix4[] {
+  const spacing = 0.52;
+  const half = spanLength * 0.5 - 0.6;
+  const aisles = Array.from({ length: Math.max(0, aisleCount) }, (_, k) => -half + ((k + 0.5) / aisleCount) * half * 2);
+  const spots: THREE.Matrix4[] = [];
+  for (const row of rows) {
+    for (let x = -half; x <= half; x += spacing) {
+      if (aisles.some((a) => Math.abs(a - x) < aisleWidth * 0.5 + 0.2)) continue;
+      spots.push(new THREE.Matrix4().makeTranslation(x, row.y, row.d));
+    }
+  }
+  return spots;
+}
+
+/** Height range (m) of a supporters' banner. */
+const BANNER_HEIGHT_M = 1.15;
+
+/**
+ * Supporters' banners hung against a wall face in the stand's local frame: each `rail` is a run
+ * along x at the face (`z`) with the banners' top edge at `top`. Designs (stripes, halves, bordered
+ * panels) mix the two club colours; banners vary in width and leave gaps, as hung by fan groups.
+ */
+function buildStandBanners(
+  rails: { top: number; z: number; maxHeight: number }[],
+  spanLength: number,
+  primary: THREE.Color,
+  secondary: THREE.Color,
+  seed: number
+): THREE.Mesh | null {
+  const pos: number[] = [];
+  const col: number[] = [];
+  const quad = (x0: number, x1: number, y0: number, y1: number, z: number, c: THREE.Color) => {
+    pos.push(x0, y0, z, x1, y0, z, x1, y1, z, x0, y0, z, x1, y1, z, x0, y1, z);
+    for (let k = 0; k < 6; k++) col.push(c.r, c.g, c.b);
+  };
+  const white = new THREE.Color('#f5f5f4');
+  let n = 0;
+  rails.forEach((rail, r) => {
+    const h = Math.min(BANNER_HEIGHT_M, rail.maxHeight);
+    if (h < 0.4) return;
+    const y1 = rail.top;
+    const y0 = rail.top - h;
+    const z = rail.z;
+    let x = -spanLength * 0.5 + 1.5 + seatHash(seed + r, 3) * 6;
+    while (x < spanLength * 0.5 - 4) {
+      const i = seed * 97 + r * 31 + n++;
+      const w = 3.5 + seatHash(i, 5) * 6;
+      const x1 = Math.min(spanLength * 0.5 - 1, x + w);
+      const a = seatHash(i, 7) < 0.6 ? primary : secondary;
+      const b = a === primary ? (seatHash(i, 9) < 0.5 ? secondary : white) : primary;
+      const design = Math.floor(seatHash(i, 11) * 4);
+      if (design === 0) {
+        // Horizontal tricolour bands
+        const t = (y1 - y0) / 3;
+        quad(x, x1, y0, y0 + t, z, a);
+        quad(x, x1, y0 + t, y0 + 2 * t, z, b);
+        quad(x, x1, y0 + 2 * t, y1, z, a);
+      } else if (design === 1) {
+        // Vertical stripes
+        const stripes = 4 + Math.floor(seatHash(i, 13) * 5);
+        const sw = (x1 - x) / stripes;
+        for (let k = 0; k < stripes; k++) quad(x + k * sw, x + (k + 1) * sw, y0, y1, z, k % 2 ? b : a);
+      } else if (design === 2) {
+        // Halves
+        const mid = (x + x1) / 2;
+        quad(x, mid, y0, y1, z, a);
+        quad(mid, x1, y0, y1, z, b);
+      } else {
+        // Panel with a border
+        const e = 0.16;
+        quad(x, x1, y0, y1, z, b);
+        quad(x + e, x1 - e, y0 + e, y1 - e, z - 0.01, a);
+      }
+      x = x1 + 1 + seatHash(i, 15) * 4;
+    }
+  });
+  if (pos.length === 0) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  bannerMaterialCache ??= new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.9,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geo, bannerMaterialCache);
+  mesh.name = 'SupporterBanners';
+  mesh.receiveShadow = true;
+  return mesh;
+}
+let bannerMaterialCache: THREE.MeshStandardMaterial | null = null;
 
 /** Galvanised steel shared by every aisle handrail. */
 let handrailMaterialCache: THREE.MeshStandardMaterial | null = null;
@@ -2026,6 +2462,7 @@ function buildCornerVirageQuadrant(
       aisleWidth: (standA.aisleWidth + standB.aisleWidth) * 0.5,
       primaryHex: doc.colors.seatsPrimary,
       secondaryHex: doc.colors.seatsSecondary,
+      attendance: resolveCrowdAttendance(resolveStadiumMaterials(doc)),
     });
     if (seats) group.add(seats);
   }
@@ -3882,6 +4319,7 @@ function buildModernBowlSweep(
       primaryHex: doc.colors.seatsPrimary,
       secondaryHex: doc.colors.seatsSecondary,
       isHoleQuad: isBowlQuadHole,
+      attendance: resolveCrowdAttendance(mats),
     });
     if (seats) group.add(seats);
   }
@@ -3930,7 +4368,7 @@ function buildModernBowlSweep(
       sideTrackOffset: trackOffsets.sideOffset,
       stands: doc.stands,
     });
-    const cFacadeMat = createFacadePbrMaterial(mats.facade, doc.lighting, false, maxAnisotropy);
+    const cFacadeMat = createFacadePbrMaterial(mats.facade, doc.lighting, false, maxAnisotropy, mats.facadeGlowHex);
     const cStructMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
 
     for (const cid of ['se', 'sw', 'nw', 'ne'] as CornerId[]) {
@@ -4287,7 +4725,8 @@ function buildModernBowlSweep(
       mats.facade,
       doc.lighting,
       doc.shape === 'octagonal_arena',
-      maxAnisotropy
+      maxAnisotropy,
+      mats.facadeGlowHex
     );
     const structureMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
     const isNight = doc.lighting !== 'day';
@@ -4744,7 +5183,8 @@ export function generateStandsGroup(
     mats.facade,
     doc.lighting,
     false,
-    maxAnisotropy
+    maxAnisotropy,
+    mats.facadeGlowHex
   );
   const structureMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
 
