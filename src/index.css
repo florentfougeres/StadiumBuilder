@@ -1,34 +1,157 @@
 @import "tailwindcss";
-@custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-display: "Outfit", sans-serif;
-  --font-sans: "Plus Jakarta Sans", sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Surfaces */
+  --color-canvas: #1e1e1e;
+  --color-panel: #2c2c2c;
+  --color-raised: #383838;
+  --color-hover: #333333;
+  --color-line: #3a3a3a;
+  --color-line-strong: #4a4a4a;
+
+  /* Text */
+  --color-ink: #e6e6e6;
+  --color-ink-muted: #b8b8b8;
+  --color-ink-faint: #9a9a9a;
+
+  /* Accent: bright for marks on dark, deep for filled controls carrying white text */
+  --color-accent: #0d99ff;
+  --color-accent-strong: #0a6fcc;
+  --color-accent-soft: #0d99ff26;
+  --color-accent-ink: #5cb8ff;
+
+  /* State */
+  --color-warn: #f2b44c;
+  --color-danger: #f26b5b;
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
 }
 
 @layer base {
-  html, body, #root {
+  html,
+  body,
+  #root {
     width: 100%;
     height: 100%;
     margin: 0;
     padding: 0;
+  }
+
+  body {
     font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  ::selection {
+    background: var(--color-accent-strong);
+    color: #fff;
+  }
+
+  input,
+  select,
+  textarea {
+    caret-color: var(--color-accent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
   }
 }
 
-/* Custom subtle scrollbars for inspector panels without blocking WebGL */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
+/* Range slider: thin track filled to the value via --fill, round thumb */
+.sf-range {
+  appearance: none;
+  width: 100%;
+  height: 16px;
   background: transparent;
+  cursor: pointer;
 }
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.25);
-  border-radius: 9999px;
+.sf-range::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 1px;
+  background: linear-gradient(
+    to right,
+    var(--color-accent) var(--fill, 0%),
+    var(--color-line-strong) var(--fill, 0%)
+  );
 }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.45);
+.sf-range::-moz-range-track {
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-line-strong);
+}
+.sf-range::-moz-range-progress {
+  height: 2px;
+  background: var(--color-accent);
+}
+.sf-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+  transition: transform 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sf-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+}
+.sf-range:hover::-webkit-slider-thumb {
+  transform: scale(1.2);
+}
+.sf-range:focus-visible {
+  outline: none;
+}
+.sf-range:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.2);
+  box-shadow: 0 0 0 3px var(--color-accent-soft), 0 1px 2px rgb(0 0 0 / 0.5);
+}
+.sf-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/* Metric delta: appears, holds, fades */
+@keyframes sf-delta {
+  0% {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  12%,
+  70% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.sf-delta {
+  animation: sf-delta 1800ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sf-delta {
+    animation: sf-delta 2400ms steps(1, end) forwards;
+  }
 }

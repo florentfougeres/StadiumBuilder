@@ -694,13 +694,13 @@ export const Viewport: React.FC = () => {
   }, [cameraMode, cameraTriggerNonce]);
 
   return (
-    <div className="relative w-full h-full select-none overflow-hidden bg-slate-950">
+    <div className="relative w-full h-full select-none overflow-hidden bg-canvas">
       <div ref={mountRef} className="w-full h-full" />
       {webglLost && (
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-950/95 text-slate-200 p-6 text-center z-30">
+        <div className="absolute inset-0 flex items-center justify-center bg-canvas/95 text-ink p-6 text-center z-30">
           <div className="max-w-md space-y-2">
             <p className="text-base font-semibold">Contexte WebGL suspendu</p>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-ink-muted">
               Restauration automatique du moteur 3D StadiumForge en cours…
             </p>
           </div>

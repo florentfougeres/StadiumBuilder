@@ -1,156 +1,303 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Box,
   Camera,
+  ChevronDown,
   Eye,
+  FileCode2,
+  FileDown,
   Grid2x2,
+  ImageDown,
   Layers,
   Moon,
   Move,
+  PanelsTopLeft,
   Redo2,
   RotateCw,
   Scaling,
   Sun,
   Sunset,
   Undo2,
+  Upload,
   Video,
 } from 'lucide-react';
+import {
+  exportStadiumGlb,
+  exportStadiumJson,
+  parseImportedStadiumJson,
+} from '../export/exportGlb';
+import { exportArchitecturalPlanPdf } from '../export/exportPlan';
+import { exportViewportPng } from '../export/exportPng';
 import { CameraPresetMode, LightingMode, TransformMode } from '../stadium/schema';
 import { useStadiumStore } from '../state/useStadiumStore';
+import { Button, IconButton, Segmented } from './ui';
 
 const CAMERA_MODES: { id: CameraPresetMode; label: string; icon: React.ReactNode }[] = [
   { id: 'drone', label: 'Drone', icon: <Video className="w-3.5 h-3.5" /> },
   { id: 'touchline', label: 'Bord terrain', icon: <Camera className="w-3.5 h-3.5" /> },
   { id: 'spectator', label: 'Vue siège', icon: <Eye className="w-3.5 h-3.5" /> },
-  { id: 'cross_section', label: 'Coupe 3D', icon: <Layers className="w-3.5 h-3.5" /> },
-  { id: 'plan2d', label: 'Plan 2D', icon: <Grid2x2 className="w-3.5 h-3.5" /> },
-];
-
-const TRANSFORM_MODES: {
-  id: TransformMode;
-  label: string;
-  shortcut: string;
-  icon: React.ReactNode;
-}[] = [
-  { id: 'translate', label: 'Déplacer', shortcut: 'G', icon: <Move className="w-3.5 h-3.5" /> },
-  { id: 'rotate', label: 'Tourner', shortcut: 'R', icon: <RotateCw className="w-3.5 h-3.5" /> },
-  { id: 'scale', label: 'Échelle', shortcut: 'S', icon: <Scaling className="w-3.5 h-3.5" /> },
+  { id: 'cross_section', label: 'Coupe', icon: <Layers className="w-3.5 h-3.5" /> },
+  { id: 'plan2d', label: 'Plan', icon: <Grid2x2 className="w-3.5 h-3.5" /> },
 ];
 
 const LIGHTING_MODES: { id: LightingMode; label: string; icon: React.ReactNode }[] = [
   { id: 'day', label: 'Jour', icon: <Sun className="w-3.5 h-3.5" /> },
   { id: 'dusk', label: 'Crépuscule', icon: <Sunset className="w-3.5 h-3.5" /> },
-  { id: 'night', label: 'Match Nuit', icon: <Moon className="w-3.5 h-3.5" /> },
+  { id: 'night', label: 'Nuit', icon: <Moon className="w-3.5 h-3.5" /> },
 ];
 
+const TRANSFORM_MODES: { id: TransformMode; label: string; icon: React.ReactNode }[] = [
+  { id: 'translate', label: 'Déplacer (G)', icon: <Move className="w-3.5 h-3.5" /> },
+  { id: 'rotate', label: 'Tourner (R)', icon: <RotateCw className="w-3.5 h-3.5" /> },
+  { id: 'scale', label: 'Échelle (S)', icon: <Scaling className="w-3.5 h-3.5" /> },
+];
+
+function formatSavedAt(ts: number | null): string {
+  if (!ts) return 'Non enregistré';
+  const time = new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  return `Enregistré à ${time}`;
+}
+
+const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus }) => {
+  const doc = useStadiumStore((s) => s.doc);
+  const loadDocument = useStadiumStore((s) => s.loadDocument);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('pointerdown', onPointer);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', onPointer);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const run = async (action: () => void | Promise<void>, success: string, failure: string) => {
+    setOpen(false);
+    setBusy(true);
+    try {
+      await action();
+      onStatus(success);
+    } catch {
+      onStatus(failure);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = await parseImportedStadiumJson(file);
+      loadDocument(parsed);
+      onStatus(`« ${parsed.name} » ouvert`);
+    } catch (err) {
+      onStatus(err instanceof Error ? err.message : 'Fichier JSON non reconnu');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const items: { label: string; detail: string; icon: React.ReactNode; onSelect: () => void }[] = [
+    {
+      label: 'Image PNG',
+      detail: 'Vue actuelle',
+      icon: <ImageDown className="w-3.5 h-3.5" />,
+      onSelect: () =>
+        run(
+          () => {
+            if (!exportViewportPng(doc.name)) throw new Error('png');
+          },
+          'Image PNG téléchargée',
+          'Capture impossible : la vue 3D n’est pas prête'
+        ),
+    },
+    {
+      label: 'Plan PDF',
+      detail: 'A4, cotes et capacité',
+      icon: <FileDown className="w-3.5 h-3.5" />,
+      onSelect: () => run(() => exportArchitecturalPlanPdf(doc), 'Plan PDF téléchargé', 'Échec du plan PDF'),
+    },
+    {
+      label: 'Modèle 3D GLB',
+      detail: 'Pour Blender, SketchUp…',
+      icon: <Box className="w-3.5 h-3.5" />,
+      onSelect: () => run(() => exportStadiumGlb(doc), 'Modèle GLB téléchargé', 'Échec de l’export GLB'),
+    },
+    {
+      label: 'Projet JSON',
+      detail: 'Pour le rouvrir plus tard',
+      icon: <FileCode2 className="w-3.5 h-3.5" />,
+      onSelect: () => run(() => exportStadiumJson(doc), 'Projet JSON téléchargé', 'Échec de l’export JSON'),
+    },
+  ];
+
+  return (
+    <div ref={rootRef} className="relative">
+      <Button
+        variant="primary"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={busy}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {busy ? 'Export…' : 'Exporter'}
+        <ChevronDown aria-hidden className="w-3.5 h-3.5 -mr-0.5" />
+      </Button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-1.5 w-80 p-1 rounded-md bg-panel border border-line shadow-[0_8px_24px_rgb(0_0_0/0.45)] z-50"
+        >
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              onClick={item.onSelect}
+              className="flex items-center gap-2.5 w-full h-9 px-2 rounded text-left hover:bg-accent-strong group"
+            >
+              <span className="text-ink-muted group-hover:text-white">{item.icon}</span>
+              <span className="flex-1 text-xs text-ink whitespace-nowrap group-hover:text-white">{item.label}</span>
+              <span className="text-2xs text-ink-faint whitespace-nowrap group-hover:text-white/80">{item.detail}</span>
+            </button>
+          ))}
+          <div className="my-1 border-t border-line" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              fileInputRef.current?.click();
+            }}
+            className="flex items-center gap-2.5 w-full h-9 px-2 rounded text-left hover:bg-accent-strong group"
+          >
+            <Upload className="w-3.5 h-3.5 text-ink-muted group-hover:text-white" />
+            <span className="flex-1 text-xs text-ink group-hover:text-white">Ouvrir un projet JSON…</span>
+          </button>
+        </div>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json,application/json"
+        onChange={handleImport}
+        className="hidden"
+      />
+    </div>
+  );
+};
+
+/** Lighting switch; lives in the top bar from md up and in the properties drawer below. */
+export const LightingControl: React.FC = () => {
+  const lighting = useStadiumStore((s) => s.doc.lighting);
+  const setLighting = useStadiumStore((s) => s.setLighting);
+  return (
+    <Segmented
+      label="Éclairage"
+      value={lighting}
+      onChange={setLighting}
+      options={LIGHTING_MODES.map((m) => ({ id: m.id, title: m.label, label: m.icon }))}
+    />
+  );
+};
+
 export const Toolbar: React.FC = () => {
+  const docName = useStadiumStore((s) => s.doc.name);
+  const setProjectName = useStadiumStore((s) => s.setProjectName);
+  const lastSavedAt = useStadiumStore((s) => s.lastSavedAt);
   const cameraMode = useStadiumStore((s) => s.cameraMode);
   const setCameraMode = useStadiumStore((s) => s.setCameraMode);
   const transformMode = useStadiumStore((s) => s.transformMode);
   const setTransformMode = useStadiumStore((s) => s.setTransformMode);
   const selectedObjectId = useStadiumStore((s) => s.selectedObjectId);
-  const lighting = useStadiumStore((s) => s.doc.lighting);
-  const setLighting = useStadiumStore((s) => s.setLighting);
-
+  const panelsHidden = useStadiumStore((s) => s.dockCollapsed);
+  const togglePanels = useStadiumStore((s) => s.toggleDockCollapsed);
   const canUndo = useStadiumStore((s) => s.history.past.length > 0);
   const canRedo = useStadiumStore((s) => s.history.future.length > 0);
   const undo = useStadiumStore((s) => s.undo);
   const redo = useStadiumStore((s) => s.redo);
 
+  const [status, setStatus] = useState<string | null>(null);
+  useEffect(() => {
+    if (!status) return;
+    const t = window.setTimeout(() => setStatus(null), 3200);
+    return () => window.clearTimeout(t);
+  }, [status]);
+
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-slate-800">
-      {/* Camera Presets */}
-      <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
-        {CAMERA_MODES.map((m) => {
-          const active = cameraMode === m.id;
-          return (
-            <button
-              key={m.id}
-              type="button"
-              onClick={() => setCameraMode(m.id)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                active
-                  ? 'bg-emerald-600 text-white'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
-              }`}
-            >
-              {m.icon}
-              <span>{m.label}</span>
-            </button>
-          );
-        })}
+    <header className="flex justify-between lg:grid lg:grid-cols-[1fr_auto_1fr] items-center gap-2 lg:gap-3 h-11 px-2 bg-panel border-b border-line shrink-0 z-30">
+      <div className="hidden sm:flex items-center gap-1 min-w-0">
+        <span className="px-2 text-sm font-semibold text-ink whitespace-nowrap">StadiumForge</span>
+        <span aria-hidden className="w-px h-4 bg-line-strong" />
+        <input
+          aria-label="Nom du projet"
+          value={docName}
+          onChange={(e) => setProjectName(e.target.value)}
+          className="min-w-0 w-56 h-7 px-2 text-xs text-ink bg-transparent rounded border border-transparent hover:border-line-strong focus:border-accent focus:bg-canvas outline-none truncate"
+        />
+        <span className="hidden xl:inline text-2xs text-ink-faint whitespace-nowrap" aria-live="polite">
+          {status ?? formatSavedAt(lastSavedAt)}
+        </span>
       </div>
 
-      {/* Gizmo Transform Modes + Lighting + Undo/Redo */}
       <div className="flex items-center gap-2">
-        <div
-          className={`flex items-center gap-1 bg-slate-950 p-1 rounded-lg border ${
-            selectedObjectId ? 'border-emerald-500/40' : 'border-slate-800'
-          }`}
-        >
-          {TRANSFORM_MODES.map((tm) => {
-            const active = transformMode === tm.id;
-            return (
-              <button
-                key={tm.id}
-                type="button"
-                onClick={() => setTransformMode(tm.id)}
-                title={`${tm.label} (${tm.shortcut})`}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                  active
-                    ? 'bg-slate-800 text-emerald-400'
-                    : 'text-slate-400 hover:text-slate-100'
-                }`}
-              >
-                {tm.icon}
-                <span className="hidden sm:inline">{tm.label}</span>
-              </button>
-            );
-          })}
+        <Segmented
+          label="Caméra"
+          value={cameraMode}
+          onChange={setCameraMode}
+          options={CAMERA_MODES.map((m) => ({
+            id: m.id,
+            title: m.label,
+            label: (
+              <>
+                {m.icon}
+                <span className="hidden lg:inline">{m.label}</span>
+              </>
+            ),
+          }))}
+        />
+        <div className="hidden md:block">
+          <LightingControl />
         </div>
-
-        <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
-          {LIGHTING_MODES.map((lm) => {
-            const active = lighting === lm.id;
-            return (
-              <button
-                key={lm.id}
-                type="button"
-                onClick={() => setLighting(lm.id)}
-                title={lm.label}
-                className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                  active
-                    ? 'bg-slate-800 text-amber-300'
-                    : 'text-slate-400 hover:text-slate-100'
-                }`}
-              >
-                {lm.icon}
-                <span className="hidden md:inline">{lm.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
-          <button
-            type="button"
-            onClick={undo}
-            disabled={!canUndo}
-            title="Annuler (Ctrl+Z)"
-            className="p-1.5 text-xs rounded-md text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-35 disabled:pointer-events-none transition-colors"
-          >
-            <Undo2 className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={redo}
-            disabled={!canRedo}
-            title="Rétablir (Ctrl+Y)"
-            className="p-1.5 text-xs rounded-md text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-35 disabled:pointer-events-none transition-colors"
-          >
-            <Redo2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
+        {selectedObjectId && (
+          <Segmented
+            label="Outil de transformation"
+            value={transformMode}
+            onChange={setTransformMode}
+            options={TRANSFORM_MODES.map((m) => ({ id: m.id, title: m.label, label: m.icon }))}
+          />
+        )}
       </div>
-    </div>
+
+      <div className="flex items-center justify-end gap-1">
+        <IconButton label="Annuler (Ctrl+Z)" onClick={undo} disabled={!canUndo}>
+          <Undo2 className="w-4 h-4" />
+        </IconButton>
+        <IconButton label="Rétablir (Ctrl+Y)" onClick={redo} disabled={!canRedo}>
+          <Redo2 className="w-4 h-4" />
+        </IconButton>
+        <IconButton
+          label={panelsHidden ? 'Afficher les panneaux (H)' : 'Masquer les panneaux (H)'}
+          active={panelsHidden}
+          onClick={togglePanels}
+        >
+          <PanelsTopLeft className="w-4 h-4" />
+        </IconButton>
+        <span aria-hidden className="max-sm:hidden w-px h-4 mx-1 bg-line-strong" />
+        <ExportMenu onStatus={setStatus} />
+      </div>
+    </header>
   );
 };
