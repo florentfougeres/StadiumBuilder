@@ -5,6 +5,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Inspector } from './editor/Inspector';
+import { OnboardingDialog, shouldShowOnboardingOnStart } from './editor/OnboardingDialog';
 import { EditorNode, StructureTree } from './editor/StructureTree';
 import { LightingControl, Toolbar } from './editor/Toolbar';
 import { Viewport } from './editor/Viewport';
@@ -18,7 +19,7 @@ const NODE_LABELS: Record<EditorNode, string> = {
   roof: 'Toiture',
   materials: 'Façade et matériaux',
   objects: 'Équipements',
-  projects: 'Préréglages et projets',
+  projects: 'Mes projets',
 };
 
 const fr = (n: number) => n.toLocaleString('fr-FR');
@@ -106,14 +107,17 @@ export default function App() {
   const selectObject = useStadiumStore((s) => s.selectObject);
   const undo = useStadiumStore((s) => s.undo);
   const redo = useStadiumStore((s) => s.redo);
+  const examplesOpen = useStadiumStore((s) => s.examplesOpen);
+  const setExamplesOpen = useStadiumStore((s) => s.setExamplesOpen);
 
   const metrics = useMemo(() => calculateStadiumMetrics(doc), [doc]);
 
   useEffect(() => {
     initFromDb();
+    if (shouldShowOnboardingOnStart()) setExamplesOpen(true);
     // Small screens open on the stadium; panels come in as drawers on demand.
     if (window.innerWidth < 1024 && !useStadiumStore.getState().dockCollapsed) togglePanels();
-  }, [initFromDb, togglePanels]);
+  }, [initFromDb, togglePanels, setExamplesOpen]);
 
   // Picking an object in the 3D scene opens its inspector.
   useEffect(() => {
@@ -223,6 +227,8 @@ export default function App() {
           </aside>
         )}
       </div>
+
+      <OnboardingDialog open={examplesOpen} onClose={() => setExamplesOpen(false)} />
     </div>
   );
 }

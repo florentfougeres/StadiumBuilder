@@ -8,6 +8,7 @@ import {
   FileDown,
   Grid2x2,
   ImageDown,
+  LayoutGrid,
   Layers,
   Moon,
   Move,
@@ -228,6 +229,7 @@ export const Toolbar: React.FC = () => {
   const canRedo = useStadiumStore((s) => s.history.future.length > 0);
   const undo = useStadiumStore((s) => s.undo);
   const redo = useStadiumStore((s) => s.redo);
+  const setExamplesOpen = useStadiumStore((s) => s.setExamplesOpen);
 
   const [status, setStatus] = useState<string | null>(null);
   useEffect(() => {
@@ -282,6 +284,11 @@ export const Toolbar: React.FC = () => {
       </div>
 
       <div className="flex items-center justify-end gap-1">
+        <Button variant="ghost" onClick={() => setExamplesOpen(true)} className="max-xl:px-1.5" title="Exemples de stades">
+          <LayoutGrid aria-hidden className="w-4 h-4" />
+          <span className="max-xl:sr-only">Exemples</span>
+        </Button>
+        <span aria-hidden className="max-sm:hidden w-px h-4 mx-1 bg-line-strong" />
         <IconButton label="Annuler (Ctrl+Z)" onClick={undo} disabled={!canUndo}>
           <Undo2 className="w-4 h-4" />
         </IconButton>

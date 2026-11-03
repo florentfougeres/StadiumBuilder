@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   buildShapeBowlRing,
   computeRectangularCornerLayout,
@@ -508,10 +509,29 @@ function buildStraightStandMesh(
     vRepeat
   );
 
-  const bowlMesh = new THREE.Mesh(straightBowlGeo, [concreteMat, seatMat]);
+  const seats3d = mats.seats3d !== false;
+  const bowlMesh = new THREE.Mesh(straightBowlGeo, [concreteMat, seats3d ? concreteMat : seatMat]);
   bowlMesh.castShadow = true;
   bowlMesh.receiveShadow = true;
   group.add(bowlMesh);
+
+  if (seats3d && stand.seatingType !== 'safe_standing') {
+    const seats = buildSweepSeatInstances({
+      ringCount: 2,
+      activeSegments: 1,
+      closed: false,
+      profilePtsPerSlice: [profilePts, profilePts],
+      sampleWorldPoint: (s, radD, py) => [s === 0 ? spanLength * 0.5 : -spanLength * 0.5, py, radD],
+      isSeatSegmentMask,
+      rowDepth: stand.rowDepth,
+      seatWidth: stand.seatWidth,
+      aisleCount: stand.aisleCount,
+      aisleWidth: stand.aisleWidth,
+      primaryHex: doc.colors.seatsPrimary,
+      secondaryHex: doc.colors.seatsSecondary,
+    });
+    if (seats) group.add(seats);
+  }
 
   // 2. Open-End Concrete Gable Walls & Stepped Side Safety Balustrades ONLY on genuinely open ends!
   //    (Never emitted inside closed corners -> 0 concrete wall artifacts in corners!)
@@ -583,8 +603,8 @@ function buildStraightStandMesh(
   frontGlassRail.position.set(0, stand.elevationStart + 0.92, 0.17);
   group.add(frontGlassRail);
 
-  // 4. 3D Sculpted Ergonomic Bucket-Seat Backrest Shells along every row
-  if (rowPositions.length > 0) {
+  // 4. Continuous backrest strips stand in for seats on the lighter painted terrace
+  if (!seats3d && rowPositions.length > 0) {
     const backrestGeo = new THREE.BoxGeometry(
       Math.max(1, spanLength - 0.16),
       0.27,
@@ -1016,6 +1036,160 @@ function buildMultiMaterialSweptStandGeometry(
   return geo;
 }
 
+/** One seat in metres, facing -Z: pedestal, pan and a back tilted away from the pitch. */
+let seatGeometryCache: THREE.BufferGeometry | null = null;
+function getSeatGeometry(): THREE.BufferGeometry {
+  if (seatGeometryCache) return seatGeometryCache;
+  const pedestal = new THREE.BoxGeometry(0.07, 0.36, 0.07);
+  pedestal.translate(0, 0.18, 0.06);
+  const pan = new THREE.BoxGeometry(0.44, 0.05, 0.4);
+  pan.translate(0, 0.4, 0);
+  const back = new THREE.BoxGeometry(0.44, 0.42, 0.045);
+  back.rotateX(-0.16);
+  back.translate(0, 0.64, 0.2);
+  const merged = mergeGeometries([pedestal, pan, back]);
+  pedestal.dispose();
+  pan.dispose();
+  back.dispose();
+  seatGeometryCache = merged ?? new THREE.BoxGeometry(0.44, 0.5, 0.4);
+  return seatGeometryCache;
+}
+
+/** Shared seat material; instance colours carry the club palette. */
+let seatMaterialCache: THREE.MeshStandardMaterial | null = null;
+function getSeatMaterial(): THREE.MeshStandardMaterial {
+  seatMaterialCache ??= new THREE.MeshStandardMaterial({ roughness: 0.48, metalness: 0.02 });
+  return seatMaterialCache;
+}
+
+/**
+ * Places individual seats on every seat tread of a swept stand, using the same profile slices and
+ * world mapping as `buildMultiMaterialSweptStandGeometry`. Seats are spaced by `seatWidth`, leave
+ * radial aisles empty, fill deep treads with several rows, and alternate club colours per tier.
+ */
+function buildSweepSeatInstances(opts: {
+  ringCount: number;
+  activeSegments: number;
+  closed: boolean;
+  profilePtsPerSlice: [number, number][][];
+  sampleWorldPoint: (sliceIdx: number, radD: number, py: number) => [number, number, number];
+  isSeatSegmentMask: boolean[];
+  rowDepth: number;
+  seatWidth: number;
+  aisleCount: number;
+  aisleWidth: number;
+  primaryHex: string;
+  secondaryHex: string;
+}): THREE.InstancedMesh | null {
+  const {
+    ringCount,
+    activeSegments,
+    closed,
+    profilePtsPerSlice,
+    sampleWorldPoint,
+    isSeatSegmentMask,
+    rowDepth,
+    seatWidth,
+    aisleCount,
+    aisleWidth,
+    primaryHex,
+    secondaryHex,
+  } = opts;
+  const pitch = Math.max(0.42, seatWidth);
+  const nextSlice = (s: number) => (closed ? (s + 1) % ringCount : s + 1);
+
+  // Tier index per seat tread: a run of three or more non-seat segments is a balcony break.
+  const tierOfSegment: number[] = [];
+  let tier = 0;
+  let gap = 0;
+  let seenSeat = false;
+  isSeatSegmentMask.forEach((isSeat, p) => {
+    if (isSeat) {
+      if (seenSeat && gap >= 3) tier++;
+      seenSeat = true;
+      gap = 0;
+    } else {
+      gap++;
+    }
+    tierOfSegment[p] = tier;
+  });
+
+  type SeatRow = { p: number; f: number };
+  const rows: SeatRow[] = [];
+  const ref = profilePtsPerSlice[0];
+  isSeatSegmentMask.forEach((isSeat, p) => {
+    if (!isSeat) return;
+    const treadDepth = Math.abs(ref[p + 1][0] - ref[p][0]);
+    const count = Math.max(1, Math.round(treadDepth / Math.max(0.6, rowDepth)));
+    for (let k = 0; k < count; k++) rows.push({ p, f: (k + 0.52) / count });
+  });
+  if (rows.length === 0) return null;
+
+  const pointAt = (s: number, row: SeatRow, dOffset = 0) => {
+    const pts = profilePtsPerSlice[s];
+    const [d0, y0] = pts[row.p];
+    const [d1, y1] = pts[row.p + 1];
+    const d = d0 + (d1 - d0) * row.f + dOffset;
+    const y = y0 + (y1 - y0) * row.f;
+    return new THREE.Vector3(...sampleWorldPoint(s, d, y));
+  };
+
+  const placements: { m: THREE.Matrix4; tier: number }[] = [];
+  const up = new THREE.Vector3(0, 1, 0);
+  for (const row of rows) {
+    // Row length first, so aisles sit at the same fractions along every row.
+    const segLens: number[] = [];
+    let total = 0;
+    for (let s = 0; s < activeSegments; s++) {
+      const len = pointAt(s, row).distanceTo(pointAt(nextSlice(s), row));
+      segLens.push(len);
+      total += len;
+    }
+    const aisleAt = Array.from({ length: Math.max(0, aisleCount) }, (_, k) => ((k + 0.5) / aisleCount) * total);
+
+    let run = 0;
+    let carry = pitch * 0.5;
+    for (let s = 0; s < activeSegments; s++) {
+      const len = segLens[s];
+      const a = pointAt(s, row);
+      const b = pointAt(nextSlice(s), row);
+      const front = pointAt(s, row, -0.5);
+      const zAxis = new THREE.Vector3().subVectors(a, front).setY(0).normalize();
+      const xAxis = new THREE.Vector3().crossVectors(up, zAxis).normalize();
+      for (let along = carry; along < len; along += pitch) {
+        const at = run + along;
+        if (aisleAt.some((x) => Math.abs(x - at) < aisleWidth * 0.5 + pitch * 0.4)) continue;
+        const pos = new THREE.Vector3().lerpVectors(a, b, along / len);
+        const m = new THREE.Matrix4().makeBasis(xAxis, up, zAxis).setPosition(pos);
+        placements.push({ m, tier: tierOfSegment[row.p] });
+      }
+      // Carry the spacing into the next slice so seats stay evenly spaced across slice joins.
+      if (len < carry) carry -= len;
+      else carry = pitch - ((len - carry) % pitch);
+      run += len;
+    }
+  }
+  if (placements.length === 0) return null;
+
+  const mesh = new THREE.InstancedMesh(getSeatGeometry(), getSeatMaterial(), placements.length);
+  const primary = new THREE.Color(primaryHex);
+  const secondary = new THREE.Color(secondaryHex);
+  const tint = new THREE.Color();
+  placements.forEach(({ m, tier: t }, i) => {
+    mesh.setMatrixAt(i, m);
+    // Slight per-seat value drift reads as sun-faded plastic instead of a flat fill.
+    const jitter = 0.92 + ((Math.sin(i * 12.9898) * 43758.5453) % 1 + 1) % 1 * 0.14;
+    tint.copy(t % 2 === 0 ? primary : secondary).multiplyScalar(jitter);
+    mesh.setColorAt(i, tint);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.computeBoundingSphere();
+  mesh.receiveShadow = true;
+  mesh.name = 'Seats';
+  return mesh;
+}
+
 /**
  * Builds a high-realism, C1-tangent-lofted 90° corner virage quadrant in World Space:
  * - `compact_urban` (`!corner.facetedThreeBay`): smooth curved UEFA urban cauldron corner + glazed spiral core tower
@@ -1255,16 +1429,38 @@ function buildCornerVirageQuadrant(
     cornerVRepeat
   );
 
-  const cornerMesh = new THREE.Mesh(cornerGeo, [concreteMat, seatMat]);
+  const cornerSeats3d = resolveStadiumMaterials(doc).seats3d !== false;
+  const cornerMesh = new THREE.Mesh(cornerGeo, [concreteMat, cornerSeats3d ? concreteMat : seatMat]);
   cornerMesh.castShadow = true;
   cornerMesh.receiveShadow = true;
   group.add(cornerMesh);
+
+  if (cornerSeats3d) {
+    const seats = buildSweepSeatInstances({
+      ringCount: segs + 1,
+      activeSegments: segs,
+      closed: false,
+      profilePtsPerSlice,
+      sampleWorldPoint: (s, radD, py) => {
+        const pt = sampleCornerQuadrantPoint(corner, s / segs, radD);
+        return [pt.x, py, pt.z];
+      },
+      isSeatSegmentMask: isSeatMask,
+      rowDepth: (standA.rowDepth + standB.rowDepth) * 0.5,
+      seatWidth: (standA.seatWidth + standB.seatWidth) * 0.5,
+      aisleCount: 2,
+      aisleWidth: (standA.aisleWidth + standB.aisleWidth) * 0.5,
+      primaryHex: doc.colors.seatsPrimary,
+      secondaryHex: doc.colors.seatsSecondary,
+    });
+    if (seats) group.add(seats);
+  }
 
   // 2. 3D Molded Ergonomic Bucket-Seat Backrest Shells sweeping across every corner row
   const rowStride = nSteps > 52 ? 2 : 1;
   const sampledRowIndices: number[] = [];
   for (let k = 0; k < nSteps; k += rowStride) sampledRowIndices.push(k);
-  const totalBackrestSegs = segs * sampledRowIndices.length;
+  const totalBackrestSegs = cornerSeats3d ? 0 : segs * sampledRowIndices.length;
 
   if (totalBackrestSegs > 0) {
     const unitBackGeo = new THREE.BoxGeometry(1.0, 0.26, 0.11);
@@ -2256,10 +2452,33 @@ function buildModernBowlSweep(
     true
   );
 
-  const bowlMesh = new THREE.Mesh(bowlGeo, [concreteMat, seatMat]);
+  const bowlSeats3d = mats.seats3d !== false;
+  const bowlMesh = new THREE.Mesh(bowlGeo, [concreteMat, bowlSeats3d ? concreteMat : seatMat]);
   bowlMesh.castShadow = true;
   bowlMesh.receiveShadow = true;
   group.add(bowlMesh);
+
+  if (bowlSeats3d) {
+    const refStand = doc.stands.south;
+    const seats = buildSweepSeatInstances({
+      ringCount,
+      activeSegments,
+      closed,
+      profilePtsPerSlice,
+      sampleWorldPoint: (s, radD, py) => {
+        const pt = sampleRoundedBowlRing(bowlRing, tAtSlice(s), radD);
+        return [pt.x, py, pt.z];
+      },
+      isSeatSegmentMask,
+      rowDepth: refStand.rowDepth,
+      seatWidth: refStand.seatWidth,
+      aisleCount: Math.max(8, refStand.aisleCount * 4),
+      aisleWidth: refStand.aisleWidth,
+      primaryHex: doc.colors.seatsPrimary,
+      secondaryHex: doc.colors.seatsSecondary,
+    });
+    if (seats) group.add(seats);
+  }
 
   // Continuous Pitch-Side Laminated Glass Safety Balustrade around the swept bowl front parapet
   const bowlGlassPos = new Float32Array(ringCount * 2 * 3);

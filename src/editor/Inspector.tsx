@@ -87,6 +87,11 @@ export const SHAPE_OPTIONS: { id: StadiumShape; label: string; desc: string }[] 
     label: 'Arène octogonale facettée',
     desc: '8 pans coupés géométriques & virages à 45°',
   },
+  {
+    id: 'circular_bowl',
+    label: 'Bol circulaire',
+    desc: 'Enceinte ronde : virages près des buts, tribunes latérales éloignées',
+  },
 ];
 
 export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
@@ -139,6 +144,16 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
     id: 'enveloping_shell',
     label: 'Coque intégrale enveloppante',
     desc: 'Continuité fluide entre façade et couverture',
+  },
+  {
+    id: 'vaulted_ring',
+    label: 'Couronne voûtée',
+    desc: 'Anneau de toiture en arc sur toute sa profondeur, nervures cintrées',
+  },
+  {
+    id: 'folded_plate',
+    label: 'Toiture plissée',
+    desc: 'Plis en dents de scie tout autour du stade, poutre sur chaque faîtage',
   },
   {
     id: 'twin_arch',
@@ -502,8 +517,11 @@ const BowlInspector: React.FC = () => {
   const setCornerFill = useStadiumStore((s) => s.setCornerFill);
   const updatePitch = useStadiumStore((s) => s.updatePitch);
   const applyTargetCapacity = useStadiumStore((s) => s.applyTargetCapacity);
+  const updateConcourse = useStadiumStore((s) => s.updateConcourse);
   const metrics = useMemo(() => calculateStadiumMetrics(doc), [doc]);
   const sunken = getEffectiveSunkenDepth(doc);
+  const concourseWidth = doc.concourse?.width ?? 0;
+  const concourseHeight = doc.concourse?.heightRatio ?? 1;
 
   return (
     <>
@@ -536,6 +554,30 @@ const BowlInspector: React.FC = () => {
           value={sunken}
           display={sunken > 0 ? `−${fr1(sunken)} m` : 'Au niveau du sol'}
           onChange={setSunkenDepth}
+        />
+      </PanelSection>
+      <PanelSection title="Coursive extérieure">
+        <SliderField
+          label="Profondeur derrière les tribunes"
+          hint="Bâtiment qui entoure les gradins : coursives, escaliers, loges, accès"
+          min={0}
+          max={24}
+          step={0.5}
+          value={concourseWidth}
+          display={concourseWidth > 0 ? `${fr1(concourseWidth)} m` : 'Aucune'}
+          onChange={(v) => updateConcourse({ width: v })}
+        />
+        <SliderField
+          label="Hauteur"
+          hint="Part de la hauteur des tribunes : basse pour un socle, pleine pour une façade continue"
+          min={0.15}
+          max={1}
+          step={0.05}
+          scale={100}
+          disabled={concourseWidth <= 0}
+          value={concourseHeight}
+          display={concourseHeight >= 0.98 ? 'Jusqu’en haut des tribunes' : `${Math.round(concourseHeight * 100)} %`}
+          onChange={(v) => updateConcourse({ heightRatio: v })}
         />
       </PanelSection>
       <PanelSection title="Terrain">
@@ -951,6 +993,12 @@ const MaterialsInspector: React.FC = () => {
         />
       </PanelSection>
       <PanelSection title="Sièges">
+        <ToggleField
+          label="Sièges 3D individuels"
+          hint="Désactive pour un rendu plus léger sur les machines modestes"
+          checked={mats.seats3d !== false}
+          onChange={(seats3d) => updateMaterials({ seats3d })}
+        />
         <OptionList
           label="Finition des sièges"
           value={mats.seatFinish}

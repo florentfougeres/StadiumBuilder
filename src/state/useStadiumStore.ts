@@ -17,6 +17,7 @@ import {
   PitchConfig,
   PlacedObject,
   PlacedObjectType,
+  ConcourseConfig,
   RoofConfig,
   StadiumColors,
   StadiumDocument,
@@ -67,6 +68,7 @@ export interface StadiumStoreState {
   cameraTriggerNonce: number;
   transformMode: TransformMode;
   dockCollapsed: boolean;
+  examplesOpen: boolean;
   savedProjects: SavedStadiumRecord[];
   lastSavedAt: number | null;
 
@@ -88,6 +90,7 @@ export interface StadiumStoreState {
   updateAllStands: (patch: Partial<StandConfig>) => void;
   applyTargetCapacity: (targetCapacity: number) => void;
   updateRoof: (patch: Partial<RoofConfig>) => void;
+  updateConcourse: (patch: Partial<ConcourseConfig>) => void;
   updateColors: (patch: Partial<StadiumColors>) => void;
   updateMaterials: (patch: Partial<StadiumMaterialsConfig>) => void;
 
@@ -96,7 +99,9 @@ export interface StadiumStoreState {
   selectObject: (id: string | null) => void;
   updateObjectTransform: (
     id: string,
-    patch: Partial<Pick<PlacedObject, 'position' | 'rotation' | 'scale' | 'name' | 'color'>>,
+    patch: Partial<
+      Pick<PlacedObject, 'position' | 'rotation' | 'scale' | 'name' | 'color' | 'mount' | 'mountSide'>
+    >,
     recordHistory?: boolean
   ) => void;
   recordSnapshotBeforeGizmoDrag: () => void;
@@ -108,6 +113,7 @@ export interface StadiumStoreState {
   setCameraMode: (mode: CameraPresetMode) => void;
   setTransformMode: (mode: TransformMode) => void;
   toggleDockCollapsed: () => void;
+  setExamplesOpen: (open: boolean) => void;
 
   // History
   undo: () => void;
@@ -188,6 +194,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     cameraTriggerNonce: 1,
     transformMode: 'translate',
     dockCollapsed: false,
+    examplesOpen: false,
     savedProjects: [],
     lastSavedAt: null,
 
@@ -474,6 +481,11 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
         d.roof = { ...d.roof, ...patch };
       }),
 
+    updateConcourse: (patch) =>
+      commitChange((d) => {
+        d.concourse = { width: 0, heightRatio: 1, ...d.concourse, ...patch };
+      }),
+
     updateColors: (patch) =>
       commitChange((d) => {
         d.colors = { ...d.colors, ...patch };
@@ -525,6 +537,12 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
         rotation: [0, 0, 0],
         scale: [1, 1, 1],
       };
+      if (type === 'screen') {
+        // New screens start fixed to an end stand rather than floating in mid-air.
+        created.mount = nextDoc.roof.style === 'none' ? 'stand' : 'roof';
+        created.mountSide = countOfType % 2 === 0 ? 'west' : 'east';
+        created.position = [0, 0, 0];
+      }
 
       nextDoc.objects.push(created);
       nextDoc.updatedAt = Date.now();
@@ -558,6 +576,8 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
       if (patch.scale) target.scale = patch.scale;
       if (patch.name !== undefined) target.name = patch.name;
       if (patch.color !== undefined) target.color = patch.color;
+      if (patch.mount !== undefined) target.mount = patch.mount;
+      if (patch.mountSide !== undefined) target.mountSide = patch.mountSide;
 
       nextDoc.updatedAt = Date.now();
       set({ doc: nextDoc, history: nextHistory });
@@ -615,6 +635,8 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
 
     toggleDockCollapsed: () =>
       set((state) => ({ dockCollapsed: !state.dockCollapsed })),
+
+    setExamplesOpen: (open) => set({ examplesOpen: open }),
 
     undo: () => {
       const { history, doc } = get();

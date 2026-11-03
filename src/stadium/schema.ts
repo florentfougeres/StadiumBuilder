@@ -7,7 +7,8 @@ export type StadiumShape =
   | 'compact_urban'
   | 'english_rectangular'
   | 'four_stands'
-  | 'horseshoe';
+  | 'horseshoe'
+  | 'circular_bowl';
 
 export type StandSide = 'north' | 'south' | 'east' | 'west';
 
@@ -27,6 +28,8 @@ export type RoofStyle =
   | 'enveloping_shell'
   | 'twin_arch'
   | 'retractable'
+  | 'vaulted_ring'
+  | 'folded_plate'
   | 'fixed_dome';
 
 export type EnvelopeStyle =
@@ -161,6 +164,8 @@ export interface StadiumMaterialsConfig {
   pitchTurf: PitchTurfMaterialId;
   trackSurface: TrackMaterialId;
   plazaSurface: PlazaMaterialId;
+  /** Individual 3D seats on every row; false falls back to the lighter painted terrace texture. */
+  seats3d?: boolean;
 }
 
 export const DEFAULT_STADIUM_MATERIALS: StadiumMaterialsConfig = {
@@ -169,10 +174,18 @@ export const DEFAULT_STADIUM_MATERIALS: StadiumMaterialsConfig = {
   roof: 'ptfe_membrane',
   structure: 'white_steel',
   seatFinish: 'molded_poly_mosaic',
+  seats3d: true,
   pitchTurf: 'hybrid_emerald',
   trackSurface: 'mondo_red',
   plazaSurface: 'granite_pavers',
 };
+
+/**
+ * How a giant screen is held: `free` uses its own transform; `roof` hangs it under the front
+ * edge of a stand's roof; `stand` sets it on the stand's rear crest. Mounted screens keep only
+ * their offset along the stand from `position`; height, depth and facing come from the stand.
+ */
+export type ObjectMount = 'free' | 'roof' | 'stand';
 
 export interface PlacedObject {
   id: string;
@@ -182,6 +195,16 @@ export interface PlacedObject {
   rotation: [number, number, number];
   scale: [number, number, number];
   color?: string;
+  mount?: ObjectMount;
+  mountSide?: StandSide;
+}
+
+/** Building mass wrapping the bowl behind the stands (see generateConcourse). */
+export interface ConcourseConfig {
+  /** Depth of the ring behind the stands in metres; 0 means no outer concourse. */
+  width: number;
+  /** Ring height as a share of the adjacent stand height (0.15–1). */
+  heightRatio: number;
 }
 
 export interface StadiumDocument {
@@ -197,6 +220,7 @@ export interface StadiumDocument {
   roof: RoofConfig;
   colors: StadiumColors;
   materials?: StadiumMaterialsConfig;
+  concourse?: ConcourseConfig;
   objects: PlacedObject[];
   lighting: LightingMode;
 }
@@ -244,7 +268,8 @@ export function isContinuousBowlShape(shape: StadiumShape): boolean {
     shape === 'olympic_oval' ||
     shape === 'sunken_bowl' ||
     shape === 'octagonal_arena' ||
-    shape === 'horseshoe'
+    shape === 'horseshoe' ||
+    shape === 'circular_bowl'
   );
 }
 
@@ -268,6 +293,7 @@ export const STADIUM_SHAPE_LABELS: Record<StadiumShape, string> = {
   horseshoe: 'Fer à cheval (en U)',
   sunken_bowl: 'Amphithéâtre semi-enterré',
   octagonal_arena: 'Arène octogonale facettée',
+  circular_bowl: 'Bol circulaire',
 };
 
 export function riserFromSlopeDeg(slopeDeg: number, rowDepth: number): number {

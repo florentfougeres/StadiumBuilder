@@ -141,7 +141,7 @@ export const StructureTree: React.FC<{
       <TreeRow
         active={node === 'projects'}
         icon={<FolderOpen className="w-3.5 h-3.5" />}
-        label="Préréglages et projets"
+        label="Mes projets"
         onClick={() => onSelect('projects')}
       />
     </nav>

@@ -75,11 +75,11 @@ function ensureCanvasMock() {
   }
 }
 
-describe('StadiumForge 9 Morphologies, 13 Roofs, 4 Envelopes & Full-Height Kop Wall', () => {
+describe('StadiumForge 10 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop Wall', () => {
   const forbiddenNameRe =
     /emirates|stade de france|at&t|marvingt|roazhon|bernab|allianz|olimpico|rome|beşiktaş|besiktas|villa park|tottenham|havre|wembley|dortmund|südtribüne|sudtribune|bordeaux|matmut|munich|maracan|francfort|amsterdam|cardiff|gelsenkirchen|mauroy/i;
 
-  it('guarantees zero real-world stadium names in templates and supports all 9 morphologies without pitch intrusion', () => {
+  it('guarantees zero real-world stadium names in templates and supports all 10 morphologies without pitch intrusion', () => {
     ensureCanvasMock();
 
     for (const preset of STADIUM_PRESETS) {
@@ -90,7 +90,7 @@ describe('StadiumForge 9 Morphologies, 13 Roofs, 4 Envelopes & Full-Height Kop W
     }
 
     const shapes = Object.keys(STADIUM_SHAPE_LABELS) as StadiumShape[];
-    expect(shapes.length).toBe(9);
+    expect(shapes.length).toBe(10);
 
     const countWorldIntrusions = (docToTest: ReturnType<typeof createPresetDocument>) => {
       const bowlGroup = generateStandsGroup(docToTest, false);
@@ -165,7 +165,7 @@ describe('StadiumForge 9 Morphologies, 13 Roofs, 4 Envelopes & Full-Height Kop W
     expect(foundSteppedMultiMatBowl).toBe(true);
   });
 
-  it('builds all 13 covered structural roof typologies plus retractable closed state across bowls and discrete stands', () => {
+  it('builds all 15 covered structural roof typologies plus retractable closed state across bowls and discrete stands', () => {
     ensureCanvasMock();
     const styles: RoofStyle[] = [
       'column_supported',
@@ -179,6 +179,8 @@ describe('StadiumForge 9 Morphologies, 13 Roofs, 4 Envelopes & Full-Height Kop W
       'tensile_net',
       'enveloping_shell',
       'twin_arch',
+      'vaulted_ring',
+      'folded_plate',
       'retractable',
       'fixed_dome',
     ];
@@ -264,10 +266,21 @@ describe('StadiumForge 9 Morphologies, 13 Roofs, 4 Envelopes & Full-Height Kop W
       const mesh = obj as THREE.Mesh;
       if (!mesh.isMesh || !mesh.geometry?.attributes?.position) return;
       const pos = mesh.geometry.attributes.position;
-      for (let i = 0; i < pos.count; i++) {
-        vW.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
-        if (Math.abs(vW.x) < 54.5 && Math.abs(vW.z) < 36.0) {
-          domeIntrusions++;
+      // Instanced meshes (seats) are checked at every instance, not at their template origin.
+      const instanced = obj as THREE.InstancedMesh;
+      const instanceMatrices: THREE.Matrix4[] = instanced.isInstancedMesh
+        ? Array.from({ length: instanced.count }, (_, k) => {
+            const m = new THREE.Matrix4();
+            instanced.getMatrixAt(k, m);
+            return m.premultiply(mesh.matrixWorld);
+          })
+        : [mesh.matrixWorld];
+      for (const m of instanceMatrices) {
+        for (let i = 0; i < pos.count; i++) {
+          vW.fromBufferAttribute(pos, i).applyMatrix4(m);
+          if (Math.abs(vW.x) < 54.5 && Math.abs(vW.z) < 36.0) {
+            domeIntrusions++;
+          }
         }
       }
     });

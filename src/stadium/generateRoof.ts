@@ -52,7 +52,7 @@ function createStrutBetween(
   return mesh;
 }
 
-function computeStadiumRingBounds(doc: StadiumDocument) {
+export function computeStadiumRingBounds(doc: StadiumDocument) {
   const trackOffsets = getTrackRadialOffset(doc);
   const southMetrics = calculateStandMetrics(doc, 'south');
   const northMetrics = calculateStandMetrics(doc, 'north');
@@ -586,10 +586,67 @@ function buildSuspendedMastsRoof(
  * Shared perimeter crown for whole-arena roofs with an open centre: annular canopy following the
  * bowl contour, catwalk floodlights on its inner edge and raking columns down to the stand crest.
  */
+/** Canopy height at ring position `t` and depth fraction `f` (0 = front edge, 1 = rear edge). */
+type CanopySurface = (t: number, f: number) => number;
+
+/** Builds a canopy that follows the bowl contour with an arbitrary surface (vaults, folds…). */
+function buildShapedCanopyMesh(
+  ring: ReturnType<typeof buildShapeBowlRing>,
+  shape: StadiumShape,
+  innerOffset: number,
+  outerOffset: number,
+  surface: CanopySurface,
+  crossSectionClip: boolean,
+  segments: number,
+  mat: THREE.Material
+): THREE.Mesh {
+  const { tStart, tEnd, closed } = getBowlArcRange(shape, crossSectionClip);
+  const activeSegs = Math.max(32, Math.round(segments * Math.max(0.25, tEnd - tStart)));
+  const ringCount = closed ? activeSegs : activeSegs + 1;
+  const depthSteps = 10;
+  const cols = depthSteps + 1;
+
+  const positions = new Float32Array(ringCount * cols * 3);
+  const uvs = new Float32Array(ringCount * cols * 2);
+  const indices: number[] = [];
+  for (let s = 0; s < ringCount; s++) {
+    const t = tStart + (s / activeSegs) * (tEnd - tStart);
+    for (let c = 0; c < cols; c++) {
+      const f = c / depthSteps;
+      const pt = sampleRoundedBowlRing(ring, t, innerOffset + (outerOffset - innerOffset) * f);
+      const i = s * cols + c;
+      positions.set([pt.x, surface(t, f), pt.z], i * 3);
+      uvs.set([(s / activeSegs) * 14, f], i * 2);
+    }
+  }
+  for (let s = 0; s < activeSegs; s++) {
+    const n = closed ? (s + 1) % ringCount : s + 1;
+    for (let c = 0; c < depthSteps; c++) {
+      const a = s * cols + c;
+      const b = n * cols + c;
+      indices.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.renderOrder = 2;
+  return mesh;
+}
+
 function buildPerimeterCanopyCrown(
   doc: StadiumDocument,
   crossSectionClip: boolean,
-  maxAnisotropy: number
+  maxAnisotropy: number,
+  shaped?: {
+    surface: (ctx: { roofY: number; depth: number; perimeter: number }) => CanopySurface;
+    segments: number;
+  }
 ) {
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
@@ -609,17 +666,32 @@ function buildPerimeterCanopyCrown(
     maxAnisotropy
   );
 
+  const surface: CanopySurface = shaped
+    ? shaped.surface({ roofY, depth: outerOffset - innerOffset, perimeter: ring.perimeter })
+    : (_t, f) => roofY + 1.8 * (1 - f);
+
   group.add(
-    buildAnnularCanopyMesh(
-      ring,
-      doc.shape,
-      innerOffset,
-      outerOffset,
-      roofY + 1.8,
-      roofY,
-      crossSectionClip,
-      canopyMat
-    ),
+    shaped
+      ? buildShapedCanopyMesh(
+          ring,
+          doc.shape,
+          innerOffset,
+          outerOffset,
+          surface,
+          crossSectionClip,
+          shaped.segments,
+          canopyMat
+        )
+      : buildAnnularCanopyMesh(
+          ring,
+          doc.shape,
+          innerOffset,
+          outerOffset,
+          roofY + 1.8,
+          roofY,
+          crossSectionClip,
+          canopyMat
+        ),
     buildAnnularCatwalkFloodlights(
       ring,
       doc.shape,
@@ -649,7 +721,7 @@ function buildPerimeterCanopyCrown(
     group.add(
       createStrutBetween(
         new THREE.Vector3(wallBase.x, h0 - 0.6, wallBase.z),
-        new THREE.Vector3(roofNode.x, roofY, roofNode.z),
+        new THREE.Vector3(roofNode.x, surface(t1, 1) - 0.4, roofNode.z),
         0.32,
         0.38,
         primaryStructMat,
@@ -658,7 +730,85 @@ function buildPerimeterCanopyCrown(
     );
   }
 
-  return { group, bounds, roofY, innerOffset, outerOffset, primaryStructMat };
+  return { group, bounds, roofY, innerOffset, outerOffset, primaryStructMat, surface };
+}
+
+/** Tube following the canopy surface across its depth at ring position `t`. */
+function buildCanopyRib(
+  ring: ReturnType<typeof buildShapeBowlRing>,
+  t: number,
+  innerOffset: number,
+  outerOffset: number,
+  surface: CanopySurface,
+  radius: number,
+  mat: THREE.Material
+): THREE.Mesh {
+  const pts = Array.from({ length: 13 }, (_, k) => {
+    const f = k / 12;
+    const p = sampleRoundedBowlRing(ring, t, innerOffset + (outerOffset - innerOffset) * f);
+    return new THREE.Vector3(p.x, surface(t, f) - radius, p.z);
+  });
+  return new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, radius, 6, false),
+    mat
+  );
+}
+
+/**
+ * VAULTED RING (`vaulted_ring`): a canopy whose cross-section is an arch springing from the rear
+ * and dipping to a thin front edge, carried by arched ribs at regular bays.
+ */
+function buildVaultedRingRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const { group, bounds, innerOffset, outerOffset, primaryStructMat, surface } =
+    buildPerimeterCanopyCrown(doc, crossSectionClip, maxAnisotropy, {
+      segments: 160,
+      surface:
+        ({ roofY, depth }) =>
+        (_t, f) =>
+          roofY + 1.2 * (1 - f) + Math.min(9, depth * 0.2) * Math.sin(Math.PI * f),
+    });
+  const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
+  const ribs = Math.max(12, Math.round(48 * Math.max(0.25, tEnd - tStart)));
+  for (let i = 0; i < ribs; i++) {
+    const t = tStart + (closed ? i / ribs : i / Math.max(1, ribs - 1)) * (tEnd - tStart);
+    group.add(buildCanopyRib(bounds.ring, t, innerOffset, outerOffset, surface, 0.32, primaryStructMat));
+  }
+  return group;
+}
+
+/**
+ * FOLDED PLATE (`folded_plate`): a zigzag canopy whose ridges and valleys alternate around the
+ * bowl like a sawtooth crown, with a steel ridge beam on every fold.
+ */
+function buildFoldedPlateRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  let folds = 0;
+  const { group, bounds, innerOffset, outerOffset, primaryStructMat, surface } =
+    buildPerimeterCanopyCrown(doc, crossSectionClip, maxAnisotropy, {
+      segments: 320,
+      surface: ({ roofY, perimeter }) => {
+        folds = Math.max(16, Math.round(perimeter / 16));
+        return (t, f) => {
+          const phase = (((t * folds) % 1) + 1) % 1;
+          const ridge = 1 - Math.abs(2 * phase - 1);
+          return roofY + 1.6 * (1 - f) + ridge * (1.2 + 3.2 * f);
+        };
+      },
+    });
+  const { tStart, tEnd } = getBowlArcRange(doc.shape, crossSectionClip);
+  for (let k = 0; k < folds; k++) {
+    const t = (k + 0.5) / folds;
+    if (t < tStart || t > tEnd) continue;
+    group.add(buildCanopyRib(bounds.ring, t, innerOffset, outerOffset, surface, 0.22, primaryStructMat));
+  }
+  return group;
 }
 
 /**
@@ -2343,6 +2493,16 @@ export function generateRoofGroup(
 
     if (doc.roof.style === 'retractable') {
       root.add(buildRetractableRoof(doc, crossSectionClip, maxAnisotropy));
+      return root;
+    }
+
+    if (doc.roof.style === 'vaulted_ring') {
+      root.add(buildVaultedRingRoof(doc, crossSectionClip, maxAnisotropy));
+      return root;
+    }
+
+    if (doc.roof.style === 'folded_plate') {
+      root.add(buildFoldedPlateRoof(doc, crossSectionClip, maxAnisotropy));
       return root;
     }
 

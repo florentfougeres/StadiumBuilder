@@ -329,6 +329,14 @@ export function buildShapeBowlRing(
   sideTrackOffset: number,
   hasTrack: boolean
 ): RoundedBowlGeometry {
+  if (shape === 'circular_bowl') {
+    // A round bowl must clear the pitch corners: ends sit close to the goals, sides far away.
+    const radius =
+      Math.hypot(pitchLength / 2 + endTrackOffset, pitchWidth / 2 + sideTrackOffset) +
+      Math.max(3, Math.min(avgDistX, avgDistZ) * 0.6);
+    return createRoundedBowlRing(radius, radius, radius, false);
+  }
+
   const octPush = shape === 'octagonal_arena' ? 6.2 : 0;
   const cauldronPull = shape === 'steep_cauldron' ? -0.6 : 0;
   const olympicPush = shape === 'olympic_oval' ? 1.8 : 0;

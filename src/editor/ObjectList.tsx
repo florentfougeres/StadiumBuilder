@@ -13,9 +13,9 @@ import {
   Trees,
   Users,
 } from 'lucide-react';
-import { PlacedObjectType } from '../stadium/schema';
+import { ObjectMount, PlacedObjectType, StandSide } from '../stadium/schema';
 import { useStadiumStore } from '../state/useStadiumStore';
-import { IconButton, NumberField, PanelSection } from './ui';
+import { IconButton, NumberField, PanelSection, Segmented, SelectField, SliderField } from './ui';
 
 const ADDABLE_ASSETS: {
   type: PlacedObjectType;
@@ -33,14 +33,33 @@ const ADDABLE_ASSETS: {
   { type: 'custom_roof', label: 'Toit libre', icon: <Tent className="w-3.5 h-3.5" /> },
 ];
 
+const MOUNT_OPTIONS: { id: ObjectMount; label: string; title: string }[] = [
+  { id: 'roof', label: 'Sous le toit', title: 'Suspendu au bord avant de la toiture' },
+  { id: 'stand', label: 'Haut de tribune', title: 'Posé sur la crête arrière de la tribune' },
+  { id: 'free', label: 'Libre', title: 'Position et orientation manuelles' },
+];
+
+const SIDE_OPTIONS: { id: StandSide; label: string }[] = [
+  { id: 'west', label: 'Ouest' },
+  { id: 'east', label: 'Est' },
+  { id: 'north', label: 'Nord' },
+  { id: 'south', label: 'Sud' },
+];
+
 const SelectedObjectInspector: React.FC = () => {
   const objects = useStadiumStore((s) => s.doc.objects);
   const selectedObjectId = useStadiumStore((s) => s.selectedObjectId);
   const updateObjectTransform = useStadiumStore((s) => s.updateObjectTransform);
   const duplicateSelectedObject = useStadiumStore((s) => s.duplicateSelectedObject);
   const removeObject = useStadiumStore((s) => s.removeObject);
+  const roofStyle = useStadiumStore((s) => s.doc.roof.style);
   const obj = objects.find((o) => o.id === selectedObjectId);
   if (!obj) return null;
+
+  const mount = obj.type === 'screen' ? (obj.mount ?? 'free') : 'free';
+  const side = obj.mountSide ?? 'west';
+  const isEnd = side === 'east' || side === 'west';
+  const alongIdx = isEnd ? 2 : 0;
 
   return (
     <>
@@ -56,34 +75,76 @@ const SelectedObjectInspector: React.FC = () => {
           <Trash2 className="w-3.5 h-3.5" />
         </IconButton>
       </div>
-      <PanelSection title="Position">
-        <div className="grid grid-cols-3 gap-2">
-          {(['X', 'Y', 'Z'] as const).map((axis, idx) => (
+      {obj.type === 'screen' && (
+        <PanelSection title="Fixation">
+          <Segmented
+            label="Fixation de l’écran"
+            value={mount}
+            onChange={(m) => updateObjectTransform(obj.id, { mount: m, mountSide: side })}
+            options={MOUNT_OPTIONS}
+          />
+          {mount !== 'free' && (
+            <>
+              <SelectField
+                label="Tribune"
+                value={side}
+                onChange={(v) => updateObjectTransform(obj.id, { mountSide: v })}
+                options={SIDE_OPTIONS}
+              />
+              <SliderField
+                label="Décalage le long de la tribune"
+                min={-60}
+                max={60}
+                step={1}
+                value={obj.position[alongIdx]}
+                display={`${obj.position[alongIdx] > 0 ? '+' : ''}${Math.round(obj.position[alongIdx])} m`}
+                onChange={(v) => {
+                  const next: [number, number, number] = [...obj.position];
+                  next[alongIdx] = v;
+                  updateObjectTransform(obj.id, { position: next });
+                }}
+              />
+              {mount === 'roof' && roofStyle === 'none' && (
+                <p className="text-2xs text-ink-muted">
+                  Sans toit, l’écran se pose en haut de la tribune.
+                </p>
+              )}
+            </>
+          )}
+        </PanelSection>
+      )}
+      {mount === 'free' && (
+        <PanelSection title="Position">
+          <div className="grid grid-cols-3 gap-2">
+            {(['X', 'Y', 'Z'] as const).map((axis, idx) => (
+              <NumberField
+                key={axis}
+                label={axis}
+                value={obj.position[idx]}
+                onChange={(val) => {
+                  const next: [number, number, number] = [...obj.position];
+                  next[idx] = idx === 1 ? Math.max(0, val) : val;
+                  updateObjectTransform(obj.id, { position: next });
+                }}
+              />
+            ))}
+          </div>
+          <p className="text-2xs text-ink-faint">En mètres depuis le centre du terrain.</p>
+        </PanelSection>
+      )}
+      <PanelSection title={mount === 'free' ? 'Orientation et taille' : 'Taille'}>
+        <div className="grid grid-cols-2 gap-2">
+          {mount === 'free' && (
             <NumberField
-              key={axis}
-              label={axis}
-              value={obj.position[idx]}
-              onChange={(val) => {
-                const next: [number, number, number] = [...obj.position];
-                next[idx] = idx === 1 ? Math.max(0, val) : val;
-                updateObjectTransform(obj.id, { position: next });
+              label="Rotation °"
+              step={15}
+              value={Math.round((obj.rotation[1] * 180) / Math.PI)}
+              onChange={(deg) => {
+                const rad = Number(((deg * Math.PI) / 180).toFixed(3));
+                updateObjectTransform(obj.id, { rotation: [obj.rotation[0], rad, obj.rotation[2]] });
               }}
             />
-          ))}
-        </div>
-        <p className="text-2xs text-ink-faint">En mètres depuis le centre du terrain.</p>
-      </PanelSection>
-      <PanelSection title="Orientation et taille">
-        <div className="grid grid-cols-2 gap-2">
-          <NumberField
-            label="Rotation °"
-            step={15}
-            value={Math.round((obj.rotation[1] * 180) / Math.PI)}
-            onChange={(deg) => {
-              const rad = Number(((deg * Math.PI) / 180).toFixed(3));
-              updateObjectTransform(obj.id, { rotation: [obj.rotation[0], rad, obj.rotation[2]] });
-            }}
-          />
+          )}
           <NumberField
             label="Échelle"
             step={0.1}

@@ -481,6 +481,12 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
     case 'twin_arch':
       baseCostPerSeat += 1100 * doc.roof.coverageRatio;
       break;
+    case 'vaulted_ring':
+      baseCostPerSeat += 960 * doc.roof.coverageRatio;
+      break;
+    case 'folded_plate':
+      baseCostPerSeat += 900 * doc.roof.coverageRatio;
+      break;
     case 'retractable':
       baseCostPerSeat += 1350 * doc.roof.coverageRatio;
       break;

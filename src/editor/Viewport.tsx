@@ -149,7 +149,8 @@ function computePresetCameraPose(
       );
       const pt = sight.points[sampleIdx];
       const distZ = pt ? doc.pitch.width / 2 + pt.distanceX : doc.pitch.width / 2 + 22;
-      const eyeY = pt ? pt.eyeHeightY + 0.15 : 14;
+      // Standing eye height, so the 3D seat backs of the rows ahead stay below the view.
+      const eyeY = pt ? pt.eyeHeightY + 0.75 : 14;
       return {
         position: new THREE.Vector3(-12, eyeY, signZ * distZ),
         target: new THREE.Vector3(4, 1.0, 0),
