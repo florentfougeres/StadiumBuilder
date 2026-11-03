@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   calculateStadiumMetrics,
+  fitStandRowsToCapacity,
   computeKopWallStandPatch,
 } from '../stadium/capacity';
 import {
@@ -592,43 +593,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
 
     applyTargetCapacity: (targetCapacity) =>
       commitChange((d) => {
-        const sides: StandSide[] = ['north', 'south', 'east', 'west'];
-        const active = sides.filter((s) => d.stands[s].enabled);
-        if (active.length === 0) return;
-
-        const tiersForRows = (r: number): 1 | 2 | 3 | 4 | 5 =>
-          r >= 70 ? 5 : r >= 54 ? 4 : r >= 38 ? 3 : r >= 24 ? 2 : 1;
-
-        let bestRows = 24;
-        let smallestError = Infinity;
-        for (let candidateRows = 6; candidateRows <= 104; candidateRows++) {
-          const testDoc = cloneDocument(d);
-          for (const s of active) {
-            const isEnd = s === 'east' || s === 'west';
-            const rCount = isEnd
-              ? Math.max(6, Math.round(candidateRows * 0.92))
-              : candidateRows;
-            testDoc.stands[s].rows = rCount;
-            if (testDoc.stands[s].seatingType !== 'safe_standing' || testDoc.stands[s].tiers > 1) {
-              testDoc.stands[s].tiers = tiersForRows(rCount);
-            }
-          }
-          const cap = calculateStadiumMetrics(testDoc).totalCapacity;
-          const err = Math.abs(cap - targetCapacity);
-          if (err < smallestError) {
-            smallestError = err;
-            bestRows = candidateRows;
-          }
-        }
-
-        for (const s of active) {
-          const isEnd = s === 'east' || s === 'west';
-          const rCount = isEnd ? Math.max(6, Math.round(bestRows * 0.92)) : bestRows;
-          d.stands[s].rows = rCount;
-          if (d.stands[s].seatingType !== 'safe_standing' || d.stands[s].tiers > 1) {
-            d.stands[s].tiers = tiersForRows(rCount);
-          }
-        }
+        fitStandRowsToCapacity(d, targetCapacity);
       }),
 
     updateRoof: (patch) =>

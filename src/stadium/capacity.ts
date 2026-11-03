@@ -435,6 +435,42 @@ function computeEvacuationMinutes(
 /**
  * Pure calculation of overall stadium KPIs: total capacity, built surface, roof height, budget estimate
  */
+/**
+ * Sets the row count of every enabled stand (ends at 92 % of the sides) so the total capacity
+ * comes closest to `targetCapacity`, adding tiers as stands grow.
+ */
+export function fitStandRowsToCapacity(doc: StadiumDocument, targetCapacity: number): void {
+  const sides: StandSide[] = ['north', 'south', 'east', 'west'];
+  const active = sides.filter((s) => doc.stands[s].enabled);
+  if (active.length === 0) return;
+
+  const tiersForRows = (r: number): 1 | 2 | 3 | 4 | 5 =>
+    r >= 70 ? 5 : r >= 54 ? 4 : r >= 38 ? 3 : r >= 24 ? 2 : 1;
+  const applyRows = (target: StadiumDocument, rows: number) => {
+    for (const s of active) {
+      const isEnd = s === 'east' || s === 'west';
+      const rCount = isEnd ? Math.max(6, Math.round(rows * 0.92)) : rows;
+      target.stands[s].rows = rCount;
+      if (target.stands[s].seatingType !== 'safe_standing' || target.stands[s].tiers > 1) {
+        target.stands[s].tiers = tiersForRows(rCount);
+      }
+    }
+  };
+
+  let bestRows = 24;
+  let smallestError = Infinity;
+  for (let candidateRows = 6; candidateRows <= 104; candidateRows++) {
+    const testDoc = structuredClone(doc);
+    applyRows(testDoc, candidateRows);
+    const err = Math.abs(calculateStadiumMetrics(testDoc).totalCapacity - targetCapacity);
+    if (err < smallestError) {
+      smallestError = err;
+      bestRows = candidateRows;
+    }
+  }
+  applyRows(doc, bestRows);
+}
+
 export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
   const standsMetrics = {
     north: calculateStandMetrics(doc, 'north'),

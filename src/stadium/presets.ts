@@ -1,4 +1,4 @@
-import { computeKopWallStandPatch } from './capacity';
+import { computeKopWallStandPatch, fitStandRowsToCapacity } from './capacity';
 import {
   riserFromSlopeDeg,
   StadiumDocument,
@@ -1624,6 +1624,7 @@ function derivedPreset(
   label: string,
   subtitle: string,
   name: string,
+  targetCapacity: number | null,
   patch: (doc: StadiumDocument) => void
 ): PresetDefinition {
   return {
@@ -1637,6 +1638,7 @@ function derivedPreset(
       doc.name = name;
       doc.presetId = id;
       patch(doc);
+      if (targetCapacity !== null) fitStandRowsToCapacity(doc, targetCapacity);
       return doc;
     },
   };
@@ -1653,6 +1655,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Arène à Toit Coulissant',
     'Quatre panneaux sur méga-poutres · pelouse relevable en mode arène · ~50 000 pl.',
     'Arène Toit Coulissant',
+    50000,
     (doc) => {
       doc.roof = {
         ...doc.roof,
@@ -1670,6 +1673,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Grand Stade Haubané à 18 Mâts',
     'Toit suspendu à 18 mâts par groupes de haubans · tribune basse mobile · ~80 000 pl.',
     'Stade Haubané 18 Mâts',
+    80000,
     (doc) => {
       doc.roof = { ...doc.roof, style: 'suspended_masts', mastCount: 18, mastHeight: 14 };
     }
@@ -1680,6 +1684,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Ovale à Portiques en Béton',
     '50 portiques précontraints hors façade, crête ondulée, aucun poteau · ~48 000 pl.',
     'Ovale Portiques Béton',
+    48000,
     (doc) => {
       doc.roof = { ...doc.roof, style: 'concrete_portals', portalCount: 50 };
       withMaterials(doc, { facade: 'architectural_concrete', envelopeStyle: 'exposed_structure' });
@@ -1691,6 +1696,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Stade en Résille de Bois',
     'Losanges de bois lamellé-collé de la façade au toit · membrane ETFE · ~36 000 pl.',
     'Stade Résille Bois',
+    36000,
     (doc) => {
       doc.roof = { ...doc.roof, style: 'timber_lattice', opacity: 0.55 };
       withMaterials(doc, { facade: 'glulam_lattice', roof: 'etfe_cushions', structure: 'glulam_timber' });
@@ -1702,6 +1708,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Stade en Dentelle de Béton',
     'Peau ajourée en béton fibré à hauteur ondulante, triangles vitrés · ~20 000 pl.',
     'Stade Dentelle',
+    20000,
     (doc) => {
       doc.roof = { ...doc.roof, style: 'wave_canopy', waveAmplitude: 10 };
       withMaterials(doc, {
@@ -1718,6 +1725,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Quatre Tribunes et Méga-Poutres',
     'Tribunes indépendantes coiffées de 4 méga-poutres sur pylônes d’angle de 72 m · ~38 000 pl.',
     'Quatre Tribunes Méga-Poutres',
+    38000,
     (doc) => {
       doc.roof = { ...doc.roof, style: 'corner_pylons', pylonHeight: 72, spaceFrame: false };
     }
@@ -1728,6 +1736,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Couronne en Treillis 3D',
     'Résille de poutres treillis sur 4 appuis d’angle, couverture bombée en PTFE · ~67 000 pl.',
     'Couronne Treillis 3D',
+    67000,
     (doc) => {
       doc.roof = { ...doc.roof, style: 'corner_pylons', spaceFrame: true, crownRise: 12, opacity: 0.7 };
       withMaterials(doc, { roof: 'ptfe_membrane', structure: 'galvanized_steel' });
@@ -1739,6 +1748,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Fermes Rayonnantes à Contre-Poids',
     '32 fermes en porte-à-faux ancrées par tirants derrière les tribunes · ~59 000 pl.',
     'Fermes à Contre-Poids',
+    59000,
     (doc) => {
       doc.roof = { ...doc.roof, style: 'counterweighted_cantilever', trussCount: 32, backspanRatio: 0.53 };
     }
@@ -1749,6 +1759,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Forêt de Poteaux et Tribunes Mixtes',
     'Péristyle de ~600 poteaux fins · deux tribunes béton, deux tribunes acier · ~42 000 pl.',
     'Forêt de Poteaux',
+    42000,
     (doc) => {
       withMaterials(doc, { envelopeStyle: 'colonnade_forest', colonnadeDensity: 3.7, facade: 'white_composite_panels' });
       doc.stands.east.structureMaterialOverride = 'white_steel';
@@ -1761,6 +1772,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Arène Fermée à Écailles',
     'Toit fermé sur 4 méga-poutres de 80 m · façade bombée en écailles de béton · ~30 000 pl.',
     'Arène Écailles',
+    30000,
     (doc) => {
       doc.roof = { ...doc.roof, style: 'spanning_girders', girderCount: 4 };
       withMaterials(doc, {
@@ -1777,6 +1789,8 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Stade Années 30 à Piste Cycliste',
     'Ovale peu pentu autour d’une piste cycliste relevée, tribune d’honneur couverte, arche d’entrée',
     'Stade Piste Cycliste 1930',
+    // Kept single-tier: its capacity follows from the shallow terraces.
+    null,
     (doc) => {
       doc.shape = 'heritage_bowl';
       doc.pitch.hasTrack = false;
@@ -1812,6 +1826,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Mât Incliné et Membrane Repliable',
     'Membrane suspendue à un mât incliné, repliée vers un anneau central · ~56 000 pl.',
     'Mât Incliné',
+    56000,
     (doc) => {
       doc.roof = {
         ...doc.roof,
@@ -1826,6 +1841,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'Toit Empilable Coulissant et Pivotant',
     'Quatre panneaux : un fixe, deux coulissants, un pivotant qui vient s’empiler · ~50 000 pl.',
     'Toit Empilable',
+    50000,
     (doc) => {
       doc.roof = { ...doc.roof, style: 'retractable', retractable: { motion: 'combined_stack', openRatio: 0.5 } };
     }

@@ -80,7 +80,11 @@ describe('every roof style has a builder', () => {
   for (const preset of STADIUM_PRESETS) {
     it(`builds the ${preset.id} preset`, () => {
       const doc = createPresetDocument(preset.id);
-      expect(calculateStadiumMetrics(doc).totalCapacity).toBeGreaterThan(8000);
+      const capacity = calculateStadiumMetrics(doc).totalCapacity;
+      expect(capacity).toBeGreaterThan(8000);
+      // Ids ending in a capacity (`..._50k`) must land within 12 % of it.
+      const k = /_(\d+)k$/.exec(preset.id);
+      if (k) expect(Math.abs(capacity / (Number(k[1]) * 1000) - 1)).toBeLessThan(0.12);
       const roof = generateRoofGroup(doc);
       disposeObject3D(roof);
     });
