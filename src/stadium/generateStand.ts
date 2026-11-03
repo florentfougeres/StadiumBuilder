@@ -1468,21 +1468,57 @@ function buildMultiMaterialSweptStandGeometry(
   return geo;
 }
 
-/** One seat in metres, facing -Z: pedestal, pan and a back tilted away from the pitch. */
+/** Extrudes a side profile (shape x = depth toward +Z, shape y = height) across a seat width. */
+function extrudeSeatProfile(points: [number, number][], width: number): THREE.BufferGeometry {
+  const shape = new THREE.Shape(points.map(([z, y]) => new THREE.Vector2(z, y)));
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: width, bevelEnabled: false, curveSegments: 1 });
+  // Shape x -> world z, extrusion -> world -x; then centre across the width.
+  geo.rotateY(-Math.PI / 2);
+  geo.translate(width / 2, 0, 0);
+  return geo;
+}
+
+/**
+ * One tip-up stadium seat in metres, facing -Z, as found in an empty ground: a moulded shell
+ * back curving away from the pitch, the seat pan folded up against it, and a side bracket
+ * bolted to the tread.
+ */
 let seatGeometryCache: THREE.BufferGeometry | null = null;
 function getSeatGeometry(): THREE.BufferGeometry {
   if (seatGeometryCache) return seatGeometryCache;
-  const pedestal = new THREE.BoxGeometry(0.07, 0.36, 0.07);
-  pedestal.translate(0, 0.18, 0.06);
-  const pan = new THREE.BoxGeometry(0.44, 0.05, 0.4);
-  pan.translate(0, 0.4, 0);
-  const back = new THREE.BoxGeometry(0.44, 0.42, 0.045);
-  back.rotateX(-0.16);
-  back.translate(0, 0.64, 0.2);
-  const merged = mergeGeometries([pedestal, pan, back]);
-  pedestal.dispose();
-  pan.dispose();
+  const back = extrudeSeatProfile(
+    [
+      [0.13, 0.3],
+      [0.17, 0.3],
+      [0.21, 0.55],
+      [0.245, 0.8],
+      [0.24, 0.86],
+      [0.205, 0.86],
+      [0.2, 0.8],
+      [0.17, 0.56],
+    ],
+    0.44
+  );
+  const foldedPan = extrudeSeatProfile(
+    [
+      [0.075, 0.36],
+      [0.125, 0.34],
+      [0.15, 0.72],
+      [0.1, 0.74],
+    ],
+    0.4
+  );
+  const bracket = new THREE.BoxGeometry(0.05, 0.36, 0.2);
+  bracket.translate(-0.2, 0.18, 0.12);
+  const merged = mergeGeometries([
+    back.toNonIndexed(),
+    foldedPan.toNonIndexed(),
+    bracket.toNonIndexed(),
+  ]);
   back.dispose();
+  foldedPan.dispose();
+  bracket.dispose();
+  merged?.computeVertexNormals();
   seatGeometryCache = merged ?? new THREE.BoxGeometry(0.44, 0.5, 0.4);
   return seatGeometryCache;
 }
@@ -1490,7 +1526,7 @@ function getSeatGeometry(): THREE.BufferGeometry {
 /** Shared seat material; instance colours carry the club palette. */
 let seatMaterialCache: THREE.MeshStandardMaterial | null = null;
 function getSeatMaterial(): THREE.MeshStandardMaterial {
-  seatMaterialCache ??= new THREE.MeshStandardMaterial({ roughness: 0.48, metalness: 0.02 });
+  seatMaterialCache ??= new THREE.MeshStandardMaterial({ roughness: 0.42, metalness: 0.02 });
   return seatMaterialCache;
 }
 
@@ -1513,7 +1549,7 @@ function buildSweepSeatInstances(opts: {
   primaryHex: string;
   secondaryHex: string;
   isHoleQuad?: (sliceIdx: number, profileSegIdx: number) => boolean;
-}): THREE.InstancedMesh | null {
+}): THREE.Group | null {
   const {
     ringCount,
     activeSegments,
@@ -1569,6 +1605,11 @@ function buildSweepSeatInstances(opts: {
   };
 
   const placements: { m: THREE.Matrix4; tier: number }[] = [];
+  // Centre of each aisle on each row, front to back, for the aisle handrails.
+  const aislePoints: { pos: THREE.Vector3; tier: number }[][] = Array.from(
+    { length: Math.max(0, aisleCount) },
+    () => []
+  );
   const up = new THREE.Vector3(0, 1, 0);
   for (const row of rows) {
     // Row length first, so aisles sit at the same fractions along every row.
@@ -1589,6 +1630,14 @@ function buildSweepSeatInstances(opts: {
     for (let s = 0; s < activeSegments; s++) {
       const len = segLens[s];
       const holeHere = isHoleQuad ? isHoleQuad(s, row.p) : false;
+      aisleAt.forEach((x, k) => {
+        if (!holeHere && len > 1e-4 && x >= run && x < run + len) {
+          aislePoints[k].push({
+            pos: new THREE.Vector3().lerpVectors(pointAt(s, row), pointAt(nextSlice(s), row), (x - run) / len),
+            tier: tierOfSegment[row.p],
+          });
+        }
+      });
       if (!holeHere && len > 1e-4) {
         const a = pointAt(s, row);
         const b = pointAt(nextSlice(s), row);
@@ -1624,8 +1673,61 @@ function buildSweepSeatInstances(opts: {
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   mesh.computeBoundingSphere();
+  // Each row's seat backs shade the tread behind them: that banding is what makes the rows read.
+  mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.name = 'Seats';
+
+  const group = new THREE.Group();
+  group.name = 'SeatingDressing';
+  group.add(mesh);
+  const rails = buildAisleHandrails(aislePoints);
+  if (rails) group.add(rails);
+  return group;
+}
+
+/** Galvanised steel shared by every aisle handrail. */
+let handrailMaterialCache: THREE.MeshStandardMaterial | null = null;
+
+/**
+ * Centre handrails down every aisle: a top rail 0.9 m above the steps on posts every second row,
+ * broken at each tier change and every six rows so spectators can cross into the rows.
+ */
+function buildAisleHandrails(aisles: { pos: THREE.Vector3; tier: number }[][]): THREE.InstancedMesh | null {
+  const matrices: THREE.Matrix4[] = [];
+  const yAxis = new THREE.Vector3(0, 1, 0);
+  const bar = (a: THREE.Vector3, b: THREE.Vector3, size: number) => {
+    const dir = new THREE.Vector3().subVectors(b, a);
+    const len = dir.length();
+    if (len < 1e-3) return;
+    matrices.push(
+      new THREE.Matrix4().compose(
+        new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5),
+        new THREE.Quaternion().setFromUnitVectors(yAxis, dir.normalize()),
+        new THREE.Vector3(size, len, size)
+      )
+    );
+  };
+  const railHeight = 0.9;
+  for (const points of aisles) {
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      const top = p.pos.clone().setY(p.pos.y + railHeight);
+      if (i % 2 === 0) bar(p.pos, top, 0.045);
+      const next = points[i + 1];
+      if (!next || next.tier !== p.tier || i % 6 === 5) continue;
+      if (next.pos.distanceTo(p.pos) > 2.5) continue;
+      bar(top, next.pos.clone().setY(next.pos.y + railHeight), 0.05);
+    }
+  }
+  if (matrices.length === 0) return null;
+  handrailMaterialCache ??= new THREE.MeshStandardMaterial({ color: 0xc4cad1, roughness: 0.32, metalness: 0.85 });
+  const mesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 6), handrailMaterialCache, matrices.length);
+  matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.computeBoundingSphere();
+  mesh.castShadow = true;
+  mesh.name = 'AisleHandrails';
   return mesh;
 }
 
