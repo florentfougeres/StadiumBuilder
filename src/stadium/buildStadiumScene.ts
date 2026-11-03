@@ -39,7 +39,9 @@ function applyScreenMount(doc: StadiumDocument, obj: PlacedObject, group: THREE.
   const isEnd = side === 'east' || side === 'west';
   const outward = side === 'south' || side === 'east' ? 1 : -1;
   const scale = obj.scale[0];
-  const hasRoof = resolveStandRoofStyle(doc, side) !== 'none';
+  const sideUncovered =
+    isContinuousBowlShape(doc.shape) && doc.roof.coveredSides !== undefined && !doc.roof.coveredSides.includes(side);
+  const hasRoof = resolveStandRoofStyle(doc, side) !== 'none' && !sideUncovered;
   const coverage = Math.min(1, doc.roof.coverageRatio);
 
   // Continuous bowls follow the same contour and roof edge as the whole-arena roofs;

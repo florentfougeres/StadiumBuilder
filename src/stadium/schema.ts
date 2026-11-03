@@ -96,6 +96,8 @@ export interface RoofConfig {
   coverageRatio: number;
   opacity: number;
   retractableClosed?: boolean;
+  /** Continuous bowls only: stands under the roof; absent means the whole bowl is covered. */
+  coveredSides?: StandSide[];
 }
 
 export interface StadiumColors {

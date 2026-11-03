@@ -879,10 +879,20 @@ const StandInspector: React.FC = () => {
   );
 };
 
+const COVERED_SIDE_ORDER: StandSide[] = ['north', 'south', 'east', 'west'];
+
 const RoofInspector: React.FC = () => {
   const roof = useStadiumStore((s) => s.doc.roof);
+  const shape = useStadiumStore((s) => s.doc.shape);
   const updateRoof = useStadiumStore((s) => s.updateRoof);
   const none = roof.style === 'none';
+  const covered = roof.coveredSides ?? COVERED_SIDE_ORDER;
+  const toggleSide = (side: StandSide) => {
+    const next = covered.includes(side) ? covered.filter((s) => s !== side) : [...covered, side];
+    // Keep at least one stand covered; "Découverte" is the way to remove the roof entirely.
+    if (next.length === 0) return;
+    updateRoof({ coveredSides: next.length === 4 ? undefined : COVERED_SIDE_ORDER.filter((s) => next.includes(s)) });
+  };
 
   return (
     <>
@@ -902,6 +912,31 @@ const RoofInspector: React.FC = () => {
           />
         )}
       </PanelSection>
+      {isContinuousBowlShape(shape) && !none && (
+        <PanelSection title="Tribunes couvertes">
+          <div className="grid grid-cols-4 gap-1" role="group" aria-label="Tribunes couvertes">
+            {COVERED_SIDE_ORDER.map((side) => {
+              const on = covered.includes(side);
+              return (
+                <button
+                  key={side}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggleSide(side)}
+                  className={`h-7 rounded text-xs transition-colors duration-100 ${
+                    on ? 'bg-accent-soft text-ink font-medium' : 'bg-canvas text-ink-muted hover:text-ink'
+                  }`}
+                >
+                  {STAND_LABELS[side]}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-2xs text-ink-faint">
+            Pour un toit seulement sur la tribune principale, ou sur les deux tribunes latérales.
+          </p>
+        </PanelSection>
+      )}
       <PanelSection title="Dimensions">
         <SliderField
           label="Hauteur au-dessus des gradins"

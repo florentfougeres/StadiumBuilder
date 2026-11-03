@@ -30,7 +30,7 @@ import {
   StandConfig,
   StandSide,
 } from './schema';
-import { getTierStartRows } from './sightlines';
+import { getTierStartRows, tierRiserHeight, UPPER_TIER_STEEPENING } from './sightlines';
 
 interface RowSample {
   d: number;
@@ -180,7 +180,7 @@ function buildStandProfilePoints(
       currentBandTier = safeTierIdx;
     }
 
-    const riser = stand.riserHeight * (1 + safeTierIdx * 0.08);
+    const riser = tierRiserHeight(stand.riserHeight, safeTierIdx);
 
     rowPositions.push({
       d: curD + stand.rowDepth * 0.52,
@@ -1307,13 +1307,13 @@ function buildCornerVirageQuadrant(
 
     const stepD = netTreadTotal / nSteps;
 
-    // Progressive upper-tier steepness matching `buildStandProfilePoints` (`1 + tierIdx * 0.08`)
+    // Progressive upper-tier steepness matching `buildStandProfilePoints` (see tierRiserHeight)
     const rawWeights: number[] = [];
     let wSum = 0;
     let curTier = 0;
     for (let k = 0; k < nSteps; k++) {
       if (breakRowSet.has(k)) curTier++;
-      const rw = 1 + curTier * 0.08;
+      const rw = 1 + curTier * UPPER_TIER_STEEPENING;
       rawWeights.push(rw);
       wSum += rw;
     }

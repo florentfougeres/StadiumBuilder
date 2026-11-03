@@ -10,6 +10,17 @@ export interface SightlinePoint {
 }
 
 /**
+ * Riser height of a row in tier `tierIdx` (0 = lowest). Upper tiers sit higher and further from
+ * the pitch, so each one is steeper to keep a positive C-value: with a 0.40 m riser and 0.80 m
+ * rows this gives roughly 27°, 30°, 32°, 35°, 37° from the lowest to the fifth tier. Shared by
+ * the 3D profile, the capacity heights and the sightline engine so all three agree.
+ */
+export const UPPER_TIER_STEEPENING = 0.12;
+export function tierRiserHeight(baseRiser: number, tierIdx: number): number {
+  return baseRiser * (1 + Math.max(0, tierIdx) * UPPER_TIER_STEEPENING);
+}
+
+/**
  * Splits total rows across 1..5 tiers (étages), returning the start row index of each tier.
  */
 export function getTierStartRows(totalRows: number, tiers: number): number[] {
@@ -39,7 +50,9 @@ export function getTierStartRows(totalRows: number, tiers: number): number[] {
 
 /**
  * Green Guide / FIFA standard C-value formula:
- * C = D_n * (N + R) / (D_n + T) - R
+ * C = D * (N + R) / (D + T) - R
+ * with D the horizontal eye-to-focal-point distance, N the riser height, R the eye height above
+ * the focal point and T the row depth.
  */
 export function computeRowCValueMm(
   distanceHorizontalM: number,
@@ -51,9 +64,9 @@ export function computeRowCValueMm(
     return 0;
   }
   const cMeters =
-    (distanceHorizontalM * (eyeHeightM + riserHeightM)) /
+    (distanceHorizontalM * (riserHeightM + eyeHeightM)) /
       (distanceHorizontalM + rowDepthM) -
-    riserHeightM;
+    eyeHeightM;
   return Math.round(cMeters * 1000);
 }
 
@@ -112,7 +125,7 @@ export function computeStandSightlines(
       curY += hasVipLoges ? 2.75 : 1.6;
     }
 
-    const effectiveRiser = stand.riserHeight * (1 + tierIdx * 0.085);
+    const effectiveRiser = tierRiserHeight(stand.riserHeight, tierIdx);
     const tierEyeOffset =
       isStandingKop && tierIdx === 0 ? 1.52 : eyeOffsetBase;
     const eyeHeight = curY + tierEyeOffset;

@@ -2452,10 +2452,72 @@ function buildSingleStandRoofGroup(
   return standRoofGroup;
 }
 
+/**
+ * Restricts a whole-bowl roof to some stands: each covered stand gets a copy of the roof (sharing
+ * geometry) clipped to its sector, bounded by vertical planes through the stadium diagonals.
+ * Needs `renderer.localClippingEnabled`.
+ */
+function clipRoofToSides(doc: StadiumDocument, roof: THREE.Group, sides: StandSide[]): THREE.Group {
+  const { innerHalfX, innerHalfZ } = computeStadiumRingBounds(doc);
+  const ax = 1 / innerHalfX;
+  const az = 1 / innerHalfZ;
+  // Each sector keeps points where its axis coordinate dominates: e.g. south is z/hz ≥ |x|/hx.
+  const sectorPlanes: Record<StandSide, THREE.Plane[]> = {
+    south: [new THREE.Vector3(-ax, 0, az), new THREE.Vector3(ax, 0, az)].map(
+      (n) => new THREE.Plane(n.normalize(), 0)
+    ),
+    north: [new THREE.Vector3(-ax, 0, -az), new THREE.Vector3(ax, 0, -az)].map(
+      (n) => new THREE.Plane(n.normalize(), 0)
+    ),
+    east: [new THREE.Vector3(ax, 0, -az), new THREE.Vector3(ax, 0, az)].map(
+      (n) => new THREE.Plane(n.normalize(), 0)
+    ),
+    west: [new THREE.Vector3(-ax, 0, -az), new THREE.Vector3(-ax, 0, az)].map(
+      (n) => new THREE.Plane(n.normalize(), 0)
+    ),
+  };
+
+  const result = new THREE.Group();
+  result.name = roof.name;
+  for (const side of sides) {
+    const sector = roof.clone(true);
+    const clones = new Map<THREE.Material, THREE.Material>();
+    sector.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const clipped = mats.map((m) => {
+        let c = clones.get(m);
+        if (!c) {
+          c = m.clone();
+          c.clippingPlanes = sectorPlanes[side];
+          c.clipShadows = true;
+          clones.set(m, c);
+        }
+        return c;
+      });
+      mesh.material = Array.isArray(mesh.material) ? clipped : clipped[0];
+    });
+    result.add(sector);
+  }
+  return result;
+}
+
 export function generateRoofGroup(
   doc: StadiumDocument,
   crossSectionClip: boolean = false,
   maxAnisotropy: number = 4
+): THREE.Group {
+  const roof = buildRoofAssembly(doc, crossSectionClip, maxAnisotropy);
+  const covered = doc.roof.coveredSides;
+  if (!isContinuousBowlShape(doc.shape) || !covered || covered.length >= 4) return roof;
+  return clipRoofToSides(doc, roof, covered);
+}
+
+function buildRoofAssembly(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
 ): THREE.Group {
   const root = new THREE.Group();
   root.name = 'RoofAssembly';

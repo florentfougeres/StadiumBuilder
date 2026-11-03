@@ -46,6 +46,7 @@ async function renderThumbnails(
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
+  renderer.localClippingEnabled = true;
 
   const pmrem = new THREE.PMREMGenerator(renderer);
   const room = new RoomEnvironment();

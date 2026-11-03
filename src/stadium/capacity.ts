@@ -11,7 +11,7 @@ import {
   StandMetrics,
   StandSide,
 } from './schema';
-import { computeStandSightlines, getTierStartRows } from './sightlines';
+import { computeStandSightlines, getTierStartRows, tierRiserHeight } from './sightlines';
 
 const STAND_SIDES: StandSide[] = ['north', 'south', 'east', 'west'];
 
@@ -226,8 +226,7 @@ export function calculateStandMetrics(
       idx === tierStarts.length - 1 ? r >= sr : r >= sr && r < tierStarts[idx + 1]
     );
     const cauldronBoost = doc.shape === 'steep_cauldron' ? 1.05 : 1.0;
-    cumulativeRiserHeight +=
-      stand.riserHeight * (1 + Math.max(0, tIdx) * 0.08) * cauldronBoost;
+    cumulativeRiserHeight += tierRiserHeight(stand.riserHeight, tIdx) * cauldronBoost;
   }
 
   const totalDepth = effectiveEnabled

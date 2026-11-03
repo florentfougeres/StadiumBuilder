@@ -19,15 +19,15 @@ la capacité, les lignes de vue et une estimation de coût se recalculent en tem
 - **15 systèmes de toiture** : porte-à-faux, poteaux, poutre-portique, charpente treillis,
   haubané sur mâts, arche géante, arches jumelles, bi-poutres lenticulaires, roue de vélo, résille
   tendue, coque enveloppante, couronne voûtée, toiture plissée, toit rétractable (panneaux ouverts /
-  fermés), dôme fixe. Les toitures globales suivent le contour du stade ; les styles par tribune
-  sont surchargeables.
+  fermés), dôme fixe. Les toitures globales suivent le contour du stade et peuvent ne couvrir que
+  certaines tribunes ; les styles par tribune sont surchargeables.
 - **Indicateurs en direct** : capacité, rangs moyens, emprise au sol, C-value (qualité des lignes
   de vue), hauteur maximale et coût estimé.
 - **Équipements 3D** déplaçables : écrans, projecteurs, bancs de touche, vestiaires, boutiques,
   parkings, parvis, clôtures. Les écrans géants se fixent sous le toit ou en haut d'une tribune.
 - **Caméras** : drone, bord terrain, vue siège, coupe 3D et plan 2D ; éclairage jour, crépuscule,
   nuit.
-- **Fenêtre d'exemples** au premier lancement (et via « Exemples ») : 14 stades types avec aperçu
+- **Fenêtre d'exemples** au premier lancement (et via « Exemples ») : 16 stades types avec aperçu
   3D, annuler / rétablir, sauvegarde automatique locale (IndexedDB).
 - **Exports** : PNG, plan PDF, projet JSON et maquette GLB.
 
