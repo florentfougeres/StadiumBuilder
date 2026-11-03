@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { EnvelopeStyle, FacadePatternId } from './schema';
+import { EnvelopeStyle, FacadeMaterialId, FacadePatternId } from './schema';
 
 export interface FacadeRailSample {
   /** World or local X coordinate on the exterior facade surface */
@@ -82,12 +82,23 @@ export function buildCurtainWallArticulation(params: {
   samples: FacadeRailSample[];
   closed: boolean;
   frameMat: THREE.Material;
+  facadeMaterial?: FacadeMaterialId;
   /** How far the frame stands proud of the facade surface (m). */
   offset?: number;
   /** Slab-edge bands at each storey; off for a screen with no floors behind it. */
   storeys?: boolean;
 }): THREE.Group | null {
-  const { samples, closed, frameMat, offset = 0.05, storeys = true } = params;
+  const {
+    samples,
+    closed,
+    frameMat,
+    facadeMaterial = 'glass_curtain',
+    offset = 0.05,
+    storeys = true,
+  } = params;
+  // Only glazed curtain-wall facades wear the dense 1.5 m × 4.5 m aluminum mullion/transom grid;
+  // masonry, concrete, stone, Corten, ETFE cushions, zinc, composite, timber & green walls read through their own material!
+  if (facadeMaterial !== 'glass_curtain') return null;
   const rail = createRailSampler(samples, closed);
   if (!rail) return null;
   const { totalLen, sampleAtArc } = rail;
@@ -182,11 +193,18 @@ export function buildEnvelopeDressing(params: {
   closed: boolean;
   style: EnvelopeStyle;
   frameMat: THREE.Material;
+  facadeMaterial?: FacadeMaterialId;
   storeys?: boolean;
 }): THREE.Group | null {
-  const { samples, closed, style, frameMat, storeys = true } = params;
+  const { samples, closed, style, frameMat, facadeMaterial, storeys = true } = params;
   if (style === 'enveloping_skin') {
-    return buildCurtainWallArticulation({ samples, closed, frameMat, storeys });
+    return buildCurtainWallArticulation({
+      samples,
+      closed,
+      frameMat,
+      facadeMaterial,
+      storeys,
+    });
   }
   const rail = createRailSampler(samples, closed);
   if (!rail) return null;

@@ -9,7 +9,8 @@ export type StadiumShape =
   | 'four_stands'
   | 'horseshoe'
   | 'circular_bowl'
-  | 'arc_stands';
+  | 'arc_stands'
+  | 'd_shape_vertical';
 
 export type StandSide = 'north' | 'south' | 'east' | 'west';
 
@@ -31,7 +32,11 @@ export type RoofStyle =
   | 'retractable'
   | 'vaulted_ring'
   | 'folded_plate'
-  | 'fixed_dome';
+  | 'fixed_dome'
+  | 'corner_pylons'
+  | 'wave_canopy'
+  | 'petal_iris'
+  | 'historic_gable';
 
 export type EnvelopeStyle =
   | 'enveloping_skin'
@@ -41,6 +46,7 @@ export type EnvelopeStyle =
 
 export type PlacedObjectType =
   | 'screen'
+  | 'halo_screen'
   | 'floodlight'
   | 'dugout'
   | 'locker_room'
@@ -61,6 +67,15 @@ export type LightingMode = 'day' | 'dusk' | 'night';
 
 export type TransformMode = 'translate' | 'rotate' | 'scale';
 
+export type AdBoardTheme =
+  | 'champions_league'
+  | 'world_cup'
+  | 'premier_league'
+  | 'ligue_1'
+  | 'europa_league'
+  | 'equipe_de_france'
+  | 'mls_usa';
+
 export interface PitchConfig {
   length: number;
   width: number;
@@ -70,11 +85,27 @@ export interface PitchConfig {
   trackLanes: number;
   grassPattern: 'stripes' | 'checker' | 'solid';
   adBoards: boolean;
+  /** Sponsor & competition visual theme for pitch LED boards and balcony ribbons. */
+  adBoardTheme?: AdBoardTheme;
+  /** Sunken concrete/water safety moat between the pitch apron and front parapets. */
+  hasMoat?: boolean;
 }
 
 export type CornerId = 'nw' | 'ne' | 'sw' | 'se';
 
-export type CornerMode = 'open' | 'filled' | 'building' | 'screen';
+export type CornerMode =
+  | 'open'
+  | 'filled'
+  | 'building'
+  | 'screen'
+  | 'spiral_tower'
+  | 'pavilion';
+
+export type StandCrestProfile = 'flat' | 'arch_crest' | 'saddle_dip';
+
+export type StandFasciaStyle = 'concrete' | 'led_ribbon' | 'criss_cross';
+
+export type StandTunnelStyle = 'center' | 'corner_twin' | 'none';
 
 export type SkylightMode = 'none' | 'pitch_ring' | 'radial_slots' | 'grid_oculi';
 
@@ -110,12 +141,24 @@ export interface StandConfig {
   tierOverhang?: number;
   /** Independent per-tier row counts, slopes, and cantilever overhangs. */
   tierConfigs?: StandTierConfig[];
-  /** Number of carved physical vomitory openings per tier (`0..12`). */
+  /** Number of carved physical vomitory openings per tier/level (`0..12`). */
   vomitoryCount?: number;
+  /** Vertical levels of vomitory entrances on a single-tier / Kop stand (`1..4`, applies when `tiers === 1`). */
+  vomitoryLevels?: 1 | 2 | 3 | 4;
+  /** Staggered ("quinconce") horizontal alternation across vomitory levels on single-tier stands. */
+  vomitoryStaggered?: boolean;
   /** Normalized vertical row position of vomitory openings inside each tier (`0.18..0.82`). */
   vomitoryRowRatio?: number;
   /** Normalized lateral shift of vomitories along the stand (`-0.25..0.25`). */
   vomitoryOffsetRatio?: number;
+  /** Upper crest silhouette along the stand (`flat`, parabolic `arch_crest`, or concave `saddle_dip`). */
+  crestProfile?: StandCrestProfile;
+  /** Balcony fascia finish (`concrete`, broadcast `led_ribbon`, or heritage `criss_cross` steel lattice). */
+  fasciaStyle?: StandFasciaStyle;
+  /** Suspended glazed press & TV camera commentary gantry centered at the upper crest. */
+  pressGantry?: boolean;
+  /** Players' & service tunnel layout at pitch level (`center`, `corner_twin`, or `none`). */
+  tunnelStyle?: StandTunnelStyle;
 }
 
 export interface RoofConfig {
@@ -463,7 +506,8 @@ export function isContinuousBowlShape(shape: StadiumShape): boolean {
     shape === 'octagonal_arena' ||
     shape === 'horseshoe' ||
     shape === 'circular_bowl' ||
-    shape === 'arc_stands'
+    shape === 'arc_stands' ||
+    shape === 'd_shape_vertical'
   );
 }
 
@@ -518,13 +562,18 @@ export function resolveFloodlightRig(doc: StadiumDocument): FloodlightRigMode {
 }
 
 /**
- * Resolves vomitory count and normalized positions in `(0.10 .. 0.90)` along a stand.
+ * Resolves vomitory count, multi-level Kop rows (`levels = 1..4` when `tiers === 1`),
+ * optional staggered ("quinconce") horizontal positions, and normalized positions in `[0.08, 0.92]`.
  */
 export function resolveStandVomitories(stand: StandConfig): {
   count: number;
+  levels: 1 | 2 | 3 | 4;
+  staggered: boolean;
   rowRatio: number;
+  rowRatios: number[];
   offsetRatio: number;
   positions: number[];
+  positionsByLevel: number[][];
 } {
   const defaultCount = Math.max(2, Math.min(8, Math.round(stand.aisleCount * 0.5)));
   const count =
@@ -534,16 +583,62 @@ export function resolveStandVomitories(stand: StandConfig): {
   const rowRatio = Math.max(0.18, Math.min(0.82, stand.vomitoryRowRatio ?? 0.44));
   const offsetRatio = Math.max(-0.25, Math.min(0.25, stand.vomitoryOffsetRatio ?? 0));
 
-  const positions: number[] = [];
-  if (count > 0) {
-    for (let i = 0; i < count; i++) {
-      const base = (i + 0.5) / count;
-      // Shift smoothly while keeping vomitories safely inside [0.08, 0.92] away from end walls
-      const shifted = Math.max(0.08, Math.min(0.92, base + offsetRatio * (1 - 1 / Math.max(2, count))));
-      positions.push(shifted);
+  const requestedLevels =
+    stand.tiers === 1 ? Math.max(1, Math.min(4, Math.round(stand.vomitoryLevels ?? 1))) : 1;
+  const maxPracticalLevels =
+    stand.tiers === 1 ? Math.max(1, Math.min(4, Math.floor(Math.max(5, stand.rows) / 5))) : 1;
+  const levels = Math.min(requestedLevels, maxPracticalLevels) as 1 | 2 | 3 | 4;
+  const staggered = levels > 1 && Boolean(stand.vomitoryStaggered);
+
+  const shift = (rowRatio - 0.44) * (levels > 1 ? 0.24 : 1.0);
+  const baseLevelRatios =
+    levels === 1
+      ? [rowRatio]
+      : levels === 2
+      ? [0.3, 0.7]
+      : levels === 3
+      ? [0.23, 0.51, 0.79]
+      : [0.19, 0.4, 0.61, 0.82];
+  const rowRatios =
+    levels === 1
+      ? [rowRatio]
+      : baseLevelRatios.map((b) => Math.max(0.15, Math.min(0.86, b + shift)));
+
+  const buildPositions = (phaseBias: number): number[] => {
+    const arr: number[] = [];
+    if (count > 0) {
+      for (let i = 0; i < count; i++) {
+        const base = (i + phaseBias) / count;
+        const shifted = Math.max(
+          0.08,
+          Math.min(0.92, base + offsetRatio * (1 - 1 / Math.max(2, count)))
+        );
+        arr.push(shifted);
+      }
+    }
+    return arr;
+  };
+
+  const positions = buildPositions(0.5);
+  const positionsByLevel: number[][] = [];
+  for (let lv = 0; lv < levels; lv++) {
+    if (!staggered) {
+      positionsByLevel.push(positions);
+    } else {
+      positionsByLevel.push(buildPositions(lv % 2 === 0 ? 0.34 : 0.66));
     }
   }
-  return { count, rowRatio, offsetRatio, positions };
+
+  return {
+    count,
+    levels,
+    staggered,
+    rowRatio,
+    rowRatios,
+    offsetRatio,
+    positions,
+    positionsByLevel,
+  };
 }
 
 /**
@@ -562,6 +657,7 @@ export const STADIUM_SHAPE_LABELS: Record<StadiumShape, string> = {
   english_rectangular: 'Rectangulaire modulable',
   modern_bowl: 'Bowl (cuvette) continu',
   steep_cauldron: 'Chaudron parabolique raide',
+  d_shape_vertical: 'Cuvette en D & loges verticales',
   olympic_oval: 'Stade avec piste d’athlétisme',
   horseshoe: 'Fer à cheval (en U)',
   sunken_bowl: 'Amphithéâtre semi-enterré',

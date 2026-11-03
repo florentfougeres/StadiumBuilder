@@ -877,21 +877,166 @@ export function generatePitchGroup(
   aoMesh.position.y = -0.025;
   root.add(aoMesh);
 
-  // Hollow Perimeter Technical Pit Apron (frames the bowl moat with ZERO triangles underneath the pitch!)
+  // Hollow Perimeter Technical Pit Apron & Optional Sunken Safety Moat (ZERO triangles underneath PitchTurf!)
   if (!track) {
-    const pitApronGeo = createHollowHorizontalFrameGeometry(
-      pitch.length + 56,
-      pitch.width + 56,
-      totalLength - 0.24,
-      totalWidth - 0.24,
-      'metric_004'
-    );
     const pitApronMat = createTrackPbrMaterial('anthracite_apron', maxAnisotropy);
-    const pitApron = new THREE.Mesh(pitApronGeo, pitApronMat);
-    pitApron.name = 'TechnicalPitApron';
-    pitApron.position.y = 0.015;
-    pitApron.receiveShadow = true;
-    root.add(pitApron);
+    if (pitch.hasMoat) {
+      const moatInL = totalLength + 0.56;
+      const moatInW = totalWidth + 0.56;
+      const moatOutL = totalLength + 4.36;
+      const moatOutW = totalWidth + 4.36;
+      const moatDepth = 1.65;
+
+      const innerApron = new THREE.Mesh(
+        createHollowHorizontalFrameGeometry(
+          moatInL,
+          moatInW,
+          totalLength - 0.24,
+          totalWidth - 0.24,
+          'metric_004'
+        ),
+        pitApronMat
+      );
+      innerApron.name = 'TechnicalPitApronInner';
+      innerApron.position.y = 0.015;
+      innerApron.receiveShadow = true;
+      root.add(innerApron);
+
+      const outerApron = new THREE.Mesh(
+        createHollowHorizontalFrameGeometry(
+          pitch.length + 56,
+          pitch.width + 56,
+          moatOutL,
+          moatOutW,
+          'metric_004'
+        ),
+        pitApronMat
+      );
+      outerApron.name = 'TechnicalPitApron';
+      outerApron.position.y = 0.015;
+      outerApron.receiveShadow = true;
+      root.add(outerApron);
+
+      const moatGroup = new THREE.Group();
+      moatGroup.name = 'PerimeterSafetyMoat';
+
+      const moatWaterMat = new THREE.MeshPhysicalMaterial({
+        color: 0x0c2438,
+        roughness: 0.12,
+        metalness: 0.18,
+        clearcoat: 0.92,
+        clearcoatRoughness: 0.08,
+      });
+      const moatFloor = new THREE.Mesh(
+        createHollowHorizontalFrameGeometry(
+          moatOutL + 0.1,
+          moatOutW + 0.1,
+          moatInL - 0.1,
+          moatInW - 0.1,
+          'normalized'
+        ),
+        moatWaterMat
+      );
+      moatFloor.position.y = -moatDepth;
+      moatFloor.receiveShadow = true;
+      moatGroup.add(moatFloor);
+
+      const moatWallMat = new THREE.MeshStandardMaterial({
+        color: 0x64748b,
+        roughness: 0.86,
+        metalness: 0.05,
+      });
+      const moatRailMat = new THREE.MeshPhysicalMaterial({
+        color: 0xcbd5e1,
+        roughness: 0.15,
+        metalness: 0.35,
+        clearcoat: 0.85,
+        transparent: true,
+        opacity: 0.62,
+        side: THREE.DoubleSide,
+      });
+
+      // Inner & outer vertical concrete retaining walls + low pitch-side protective balustrade
+      for (const [fL, fW, isInner] of [
+        [moatInL, moatInW, true],
+        [moatOutL, moatOutW, false],
+      ] as const) {
+        for (const zSign of [-1, 1] as const) {
+          const wMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(fL + 0.24, moatDepth + 0.14, 0.22),
+            moatWallMat
+          );
+          wMesh.position.set(0, -moatDepth * 0.5 + 0.05, zSign * (fW * 0.5));
+          wMesh.receiveShadow = true;
+          moatGroup.add(wMesh);
+
+          if (isInner) {
+            const rail = new THREE.Mesh(
+              new THREE.BoxGeometry(fL - 8.5, 0.68, 0.06),
+              moatRailMat
+            );
+            rail.position.set(0, 0.46, zSign * (fW * 0.5));
+            moatGroup.add(rail);
+          }
+        }
+        for (const xSign of [-1, 1] as const) {
+          const wMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(0.22, moatDepth + 0.14, fW + 0.24),
+            moatWallMat
+          );
+          wMesh.position.set(xSign * (fL * 0.5), -moatDepth * 0.5 + 0.05, 0);
+          wMesh.receiveShadow = true;
+          moatGroup.add(wMesh);
+
+          if (isInner) {
+            const rail = new THREE.Mesh(
+              new THREE.BoxGeometry(0.06, 0.68, fW - 7.5),
+              moatRailMat
+            );
+            rail.position.set(xSign * (fL * 0.5), 0.46, 0);
+            moatGroup.add(rail);
+          }
+        }
+      }
+
+      // 4 Players' & Steward Access Bridges spanning the moat on main axes
+      const moatSpan = (moatOutW - moatInW) * 0.5 + 0.45;
+      for (const zSign of [-1, 1] as const) {
+        const bridge = new THREE.Mesh(
+          new THREE.BoxGeometry(6.8, 0.24, moatSpan),
+          moatWallMat
+        );
+        bridge.position.set(0, 0.02, zSign * ((moatInW + moatOutW) * 0.25));
+        bridge.castShadow = true;
+        bridge.receiveShadow = true;
+        moatGroup.add(bridge);
+      }
+      for (const xSign of [-1, 1] as const) {
+        const bridge = new THREE.Mesh(
+          new THREE.BoxGeometry(moatSpan, 0.24, 5.4),
+          moatWallMat
+        );
+        bridge.position.set(xSign * ((moatInL + moatOutL) * 0.25), 0.02, 0);
+        bridge.castShadow = true;
+        bridge.receiveShadow = true;
+        moatGroup.add(bridge);
+      }
+
+      root.add(moatGroup);
+    } else {
+      const pitApronGeo = createHollowHorizontalFrameGeometry(
+        pitch.length + 56,
+        pitch.width + 56,
+        totalLength - 0.24,
+        totalWidth - 0.24,
+        'metric_004'
+      );
+      const pitApron = new THREE.Mesh(pitApronGeo, pitApronMat);
+      pitApron.name = 'TechnicalPitApron';
+      pitApron.position.y = 0.015;
+      pitApron.receiveShadow = true;
+      root.add(pitApron);
+    }
   }
 
   // 2. Main Turf Plane — the SOLE horizontal surface across the playing field & D-zones (100% immune to Z-fighting!)

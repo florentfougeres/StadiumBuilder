@@ -196,6 +196,106 @@ export function generatePlacedObjectGroup(
       break;
     }
 
+    case 'halo_screen': {
+      // Giant 360° dual-sided elliptical Halo LED scoreboard ring suspended over the center circle!
+      const scoreTex = createScoreboardTexture();
+      scoreTex.wrapS = THREE.RepeatWrapping;
+      scoreTex.repeat.set(4, 1);
+
+      const rx = 22.5;
+      const rz = 15.8;
+      const ringH = 4.6;
+      const segs = 64;
+
+      const buildEllipticalBand = (
+        radX: number,
+        radZ: number,
+        height: number,
+        mat: THREE.Material
+      ) => {
+        const pos = new Float32Array((segs + 1) * 2 * 3);
+        const uvs = new Float32Array((segs + 1) * 2 * 2);
+        const idx: number[] = [];
+        for (let i = 0; i <= segs; i++) {
+          const th = (i / segs) * Math.PI * 2;
+          const x = Math.cos(th) * radX;
+          const z = Math.sin(th) * radZ;
+          const b = i * 6;
+          pos[b] = x;
+          pos[b + 1] = -height * 0.5;
+          pos[b + 2] = z;
+          pos[b + 3] = x;
+          pos[b + 4] = height * 0.5;
+          pos[b + 5] = z;
+
+          const u = i / segs;
+          uvs[i * 4] = u;
+          uvs[i * 4 + 1] = 0;
+          uvs[i * 4 + 2] = u;
+          uvs[i * 4 + 3] = 1;
+        }
+        for (let i = 0; i < segs; i++) {
+          const a = i * 2;
+          const b = (i + 1) * 2;
+          idx.push(a, b, a + 1, b, b + 1, a + 1);
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+        geo.setIndex(idx);
+        geo.computeVertexNormals();
+        return new THREE.Mesh(geo, mat);
+      };
+
+      const ledMat = new THREE.MeshStandardMaterial({
+        map: scoreTex,
+        emissive: new THREE.Color(0xffffff),
+        emissiveMap: scoreTex,
+        emissiveIntensity: lighting === 'night' ? 1.25 : 0.72,
+        roughness: 0.18,
+        side: THREE.DoubleSide,
+      });
+
+      const outerScreen = buildEllipticalBand(rx, rz, ringH, ledMat);
+      const innerScreen = buildEllipticalBand(rx - 1.15, rz - 1.15, ringH * 0.92, ledMat);
+      outerScreen.castShadow = true;
+      group.add(outerScreen, innerScreen);
+
+      // Top & bottom anodized steel catwalk trusses + 12 roof suspension cables
+      for (const yOff of [-ringH * 0.5 - 0.18, ringH * 0.5 + 0.18]) {
+        const ringPts = Array.from({ length: 48 }, (_, k) => {
+          const th = (k / 48) * Math.PI * 2;
+          return new THREE.Vector3(Math.cos(th) * (rx - 0.55), yOff, Math.sin(th) * (rz - 0.55));
+        });
+        const trussRing = new THREE.Mesh(
+          new THREE.TubeGeometry(new THREE.CatmullRomCurve3(ringPts, true), 64, 0.36, 6, true),
+          darkSteel
+        );
+        group.add(trussRing);
+      }
+
+      const cableMat = new THREE.MeshStandardMaterial({
+        color: 0x94a3b8,
+        roughness: 0.25,
+        metalness: 0.88,
+      });
+      for (let c = 0; c < 12; c++) {
+        const th = (c / 12) * Math.PI * 2;
+        const cx = Math.cos(th) * (rx - 0.5);
+        const cz = Math.sin(th) * (rz - 0.5);
+        const hanger = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 11, 5), cableMat);
+        hanger.position.set(cx, ringH * 0.5 + 5.6, cz);
+        group.add(hanger);
+
+        if (c % 2 === 0) {
+          const speaker = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.8, 0.85), darkSteel);
+          speaker.position.set(cx * 0.94, -ringH * 0.5 - 1.1, cz * 0.94);
+          group.add(speaker);
+        }
+      }
+      break;
+    }
+
     case 'dugout': {
       const seatMat = new THREE.MeshPhysicalMaterial({
         color: obj.color ? new THREE.Color(obj.color) : 0x1e293b,

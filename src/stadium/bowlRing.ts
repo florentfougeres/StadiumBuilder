@@ -1,5 +1,25 @@
 import * as THREE from 'three';
-import { CornerMode, StadiumShape, TRACK_STRAIGHT_LENGTH_M } from './schema';
+import { CornerMode, StadiumShape, StandCrestProfile, TRACK_STRAIGHT_LENGTH_M } from './schema';
+
+/**
+ * Evaluates the normalized vertical crest height multiplier along a stand span for `u` in `[-1, 1]`
+ * (`0` = center of the stand, `±1` = outer ends near the corners):
+ * - `'flat'`: constant `1.0`
+ * - `'arch_crest'`: parabolic crown (`+18%` taller at center, `-8%` lower at ends — classic arched main stand / sweeping wave crest)
+ * - `'saddle_dip'`: concave saddle (`-11%` lower at center, `+12%` higher toward the corners)
+ */
+export function evaluateCrestHeightFactor(
+  profile: StandCrestProfile | undefined,
+  uCentered: number
+): number {
+  if (!profile || profile === 'flat') return 1.0;
+  const u = Math.max(-1, Math.min(1, uCentered));
+  const parabola = 1 - u * u; // 1 at center, 0 at ends
+  if (profile === 'arch_crest') {
+    return 0.92 + 0.26 * parabola;
+  }
+  return 1.12 - 0.23 * parabola;
+}
 
 /**
  * Computes an exact rounded or 8-faceted polygonal stadium perimeter point and outward normal.
@@ -105,6 +125,14 @@ export function getBowlArcRange(
       return { tStart: 0.5, tEnd: 0.875, closed: false };
     }
     return { tStart: 0.125, tEnd: 0.875, closed: false };
+  }
+
+  if (shape === 'd_shape_vertical') {
+    // 3-sided curved cauldron (SW -> West -> North -> East -> SE), open on +Z South for the vertical VIP balcony wall!
+    if (crossSectionClip) {
+      return { tStart: 0.5, tEnd: 1.0, closed: false };
+    }
+    return { tStart: 0.37, tEnd: 1.13, closed: false };
   }
 
   if (crossSectionClip) {
@@ -403,7 +431,7 @@ export function buildShapeBowlRing(
   }
 
   const octPush = shape === 'octagonal_arena' ? 6.2 : 0;
-  const cauldronPull = shape === 'steep_cauldron' ? -0.6 : 0;
+  const cauldronPull = shape === 'steep_cauldron' || shape === 'd_shape_vertical' ? -0.6 : 0;
   // With a track the stand setback is measured from the track's outer edge and may be zero.
   const olympicPush = shape === 'olympic_oval' && !hasTrack ? 1.8 : 0;
   const sunkenPush = shape === 'sunken_bowl' ? 0.6 : 0;
@@ -428,15 +456,15 @@ export function buildShapeBowlRing(
       ? hasTrack
         ? innerHalfZ * 0.9
         : 19
-      : shape === 'steep_cauldron'
+      : shape === 'steep_cauldron' || shape === 'd_shape_vertical'
       ? hasTrack
         ? innerHalfZ * 0.85
-        : 12.5
+        : 13.5
       : shape === 'compact_urban'
       ? hasTrack
         ? innerHalfZ * 0.78
         : 8.6
-      : shape === 'english_rectangular'
+      : shape === 'english_rectangular' || shape === 'four_stands'
       ? hasTrack
         ? innerHalfZ * 0.8
         : 10.2
@@ -634,7 +662,7 @@ export function computeRectangularCornerLayout(params: {
         seamlessVirage: bothLive,
       };
     }
-    if (mode === 'building') {
+    if (mode === 'building' || mode === 'pavilion' || mode === 'spiral_tower') {
       return {
         active: anyLive,
         trimsStand: anyLive,

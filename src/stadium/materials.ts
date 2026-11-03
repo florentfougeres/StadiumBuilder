@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {
+  AdBoardTheme,
   CornerMode,
   DEFAULT_STADIUM_MATERIALS,
   EnvelopeStyle,
@@ -14,9 +15,17 @@ import {
   SkylightMode,
   StadiumDocument,
   StadiumMaterialsConfig,
+  StandCrestProfile,
+  StandFasciaStyle,
+  StandTunnelStyle,
   StructureMaterialId,
   TrackMaterialId,
 } from './schema';
+
+/** World-space metric tile size (m) for exterior facade UVs (512 px / 8 m = 64 px/m). */
+export const FACADE_UV_TILE_M = 8;
+/** World-space metric tile size (m) for structural concrete bowl UVs (512 px / 6 m = 85 px/m). */
+export const CONCRETE_UV_TILE_M = 6;
 
 export interface MaterialCatalogEntry<T extends string> {
   id: T;
@@ -559,13 +568,77 @@ export const CORNER_MODE_CATALOG: SimpleCatalogEntry<CornerMode>[] = [
   },
   {
     id: 'building',
-    label: 'Bâtiment',
-    subtitle: 'Pavillon d’angle vitré pour salons, loges et bureaux',
+    label: 'Bâtiment vitré',
+    subtitle: 'Pavillon contemporain vitré pour salons, loges et bureaux',
+  },
+  {
+    id: 'pavilion',
+    label: 'Pavillon brique',
+    subtitle: 'Clubhouse historique à toit d’ardoise, véranda et balcon',
+  },
+  {
+    id: 'spiral_tower',
+    label: 'Tour hélicoïdale',
+    subtitle: 'Tour cylindrique nervurée à rampe piétonne hélicoïdale',
   },
   {
     id: 'screen',
     label: 'Écran géant',
     subtitle: 'Portique d’angle portant un écran LED haute visibilité',
+  },
+];
+
+export const CREST_PROFILE_CATALOG: SimpleCatalogEntry<StandCrestProfile>[] = [
+  {
+    id: 'flat',
+    label: 'Crête horizontale',
+    subtitle: 'Ligne de couronnement droite classique sur toute la longueur',
+  },
+  {
+    id: 'arch_crest',
+    label: 'Crête bombée en arc',
+    subtitle: 'Courbe parabolique plus haute au centre et effilée vers les coins',
+  },
+  {
+    id: 'saddle_dip',
+    label: 'Crête en selle',
+    subtitle: 'Profil incurvé plongeant au centre et relevé vers les angles',
+  },
+];
+
+export const FASCIA_STYLE_CATALOG: SimpleCatalogEntry<StandFasciaStyle>[] = [
+  {
+    id: 'led_ribbon',
+    label: 'Bandeau LED 360°',
+    subtitle: 'Ruban lumineux dynamique sur le nez des balcons',
+  },
+  {
+    id: 'concrete',
+    label: 'Béton architectural',
+    subtitle: 'Nez de dalle minéral épuré sans écran lumineux',
+  },
+  {
+    id: 'criss_cross',
+    label: 'Croisillons métalliques',
+    subtitle: 'Treillis en losanges historiques rivetés sur les balcons',
+  },
+];
+
+export const TUNNEL_STYLE_CATALOG: SimpleCatalogEntry<StandTunnelStyle>[] = [
+  {
+    id: 'center',
+    label: 'Tunnel central',
+    subtitle: 'Sortie des joueurs axiale au droit de la ligne médiane',
+  },
+  {
+    id: 'corner_twin',
+    label: 'Double tunnel latéral',
+    subtitle: 'Deux bouches d’accès symétriques vers les extrémités de tribune',
+  },
+  {
+    id: 'none',
+    label: 'Sans tunnel',
+    subtitle: 'Parapet continu sans bouche d’accès sur cette tribune',
   },
 ];
 
@@ -589,6 +662,44 @@ export const FLOODLIGHT_RIG_CATALOG: SimpleCatalogEntry<FloodlightRigMode>[] = [
     id: 'none',
     label: 'Aucun éclairage',
     subtitle: 'Stade de jour sans mâts ni passerelle lumineuse',
+  },
+];
+
+export const AD_BOARD_THEME_CATALOG: SimpleCatalogEntry<AdBoardTheme>[] = [
+  {
+    id: 'champions_league',
+    label: 'Bandeau LDC (Coupes d’Europe)',
+    subtitle: 'Bleu nuit étoilé · Heineken, PS5, Mastercard, FedEx, Qatar Airways, Lay’s',
+  },
+  {
+    id: 'world_cup',
+    label: 'Sponsors Coupe du Monde',
+    subtitle: 'FIFA · adidas, Coca-Cola, Visa, Hyundai, Qatar Airways, McDonald’s',
+  },
+  {
+    id: 'ligue_1',
+    label: 'Sponsors Ligue 1',
+    subtitle: 'McDonald’s, Uber Eats, Kipsta, beIN SPORTS, Betclic, Orange, Point.P',
+  },
+  {
+    id: 'premier_league',
+    label: 'Bandeau Premier League',
+    subtitle: 'EA SPORTS FC, Barclays, Guinness, Nike, Hublot, Castrol, Oracle',
+  },
+  {
+    id: 'europa_league',
+    label: 'Bandeau Ligue Europa',
+    subtitle: 'Noir & ambre · Hankook, Swissquote, Just Eat, Enterprise, Strauss',
+  },
+  {
+    id: 'equipe_de_france',
+    label: 'Sponsors Équipe de France',
+    subtitle: 'Tricolore FFF · Nike, Crédit Agricole, EDF, Orange, Volkswagen, Uber Eats',
+  },
+  {
+    id: 'mls_usa',
+    label: 'MLS & Marques américaines',
+    subtitle: 'Apple TV, Coca-Cola, adidas, Target, Continental, Audi, AT&T',
   },
 ];
 
@@ -802,132 +913,144 @@ function wrapDataTextures(
 }
 
 // ============================================================================
-// 1. ARCHITECTURAL PRECAST / BOARD-FORMED CONCRETE BOWL MATERIAL
+// 1. ARCHITECTURAL PRECAST / BOARD-FORMED CONCRETE BOWL MATERIAL (512x512, 6m TILE)
 // ============================================================================
 
 export function createConcreteBowlMaterial(
-  maxAnisotropy: number = 4
+  maxAnisotropy: number = 8
 ): THREE.MeshStandardMaterial {
   const buffers = synthesizeCachedPbrBuffers(
-    'concrete_bowl_v2',
-    256,
-    256,
-    3.4,
+    'concrete_bowl_v5',
+    512,
+    512,
+    2.4,
     false,
     (u, v) => {
-      const fbm = periodicFbm2D(u, v, 12, 4, 101);
-      const fine = periodicNoise2D(u, v, 64, 64, 202);
+      // 1 UV tile = 6.0 m x 6.0 m -> 3 x 6 architectural shuttering panels (2.0 m wide x 1.0 m tall)
+      const macro = periodicFbm2D(u, v, 6, 4, 101);
+      const med = periodicFbm2D(u, v, 24, 3, 107);
+      const fine = periodicNoise2D(u, v, 128, 128, 202);
+      const pourGrain = periodicNoise2D(u, v, 96, 16, 209);
 
-      // Formwork shutter panels (4x8 panels per tile)
-      const panelU = (u * 4) % 1;
-      const panelV = (v * 8) % 1;
-      const seamU = panelU < 0.018 || panelU > 0.982;
-      const seamV = panelV < 0.025 || panelV > 0.975;
+      const cols = 3;
+      const rows = 6;
+      const colIdx = Math.floor(u * cols);
+      const rowIdx = Math.floor(v * rows);
+      const panelU = (u * cols) % 1;
+      const panelV = (v * rows) % 1;
+
+      // Hairline 1.4 cm recessed formwork shutter joint (never a coarse dark grid)
+      const seamU = panelU < 0.007 || panelU > 0.993;
+      const seamV = panelV < 0.011 || panelV > 0.989;
       const isSeam = seamU || seamV;
 
-      // Formwork tie-rod cone holes (2 per shutter panel)
-      const hole1 = Math.hypot(panelU - 0.22, (panelV - 0.5) * 0.55) < 0.032;
-      const hole2 = Math.hypot(panelU - 0.78, (panelV - 0.5) * 0.55) < 0.032;
-      const isTieHole = hole1 || hole2;
+      // Exact metric circular 2.2 cm tie-rod cone plugs (2 per 2.0m x 1.0m panel)
+      const dx1 = (panelU - 0.22) * 2.0;
+      const dx2 = (panelU - 0.78) * 2.0;
+      const dy = (panelV - 0.5) * 1.0;
+      const d1 = Math.hypot(dx1, dy);
+      const d2 = Math.hypot(dx2, dy);
+      const isTieHole = d1 < 0.024 || d2 < 0.024;
+      const isTieRim = !isTieHole && (d1 < 0.036 || d2 < 0.036);
 
-      // Subtle panel-to-panel tone shift like real poured concrete
-      const panelIdHash = hash2Periodic(
-        Math.floor(u * 4),
-        Math.floor(v * 8),
-        4,
-        8,
-        303
-      );
-      let base = 132 + (fbm - 0.5) * 28 + (fine - 0.5) * 14 + (panelIdHash - 0.5) * 10;
-      let height = 0.55 + fbm * 0.22 + fine * 0.1;
-      let rough = 0.84 + (fbm - 0.5) * 0.12;
+      const panelTone = hash2Periodic(colIdx, rowIdx, cols, rows, 303);
+      let base =
+        166 +
+        (macro - 0.5) * 15 +
+        (med - 0.5) * 10 +
+        (pourGrain - 0.5) * 7 +
+        (fine - 0.5) * 11 +
+        (panelTone - 0.5) * 7;
+      let height = 0.56 + macro * 0.14 + med * 0.1 + fine * 0.08;
+      let rough = 0.85 + (med - 0.5) * 0.1;
 
       if (isSeam) {
-        base -= 26;
+        base -= 16;
+        height = 0.28;
+        rough = 0.94;
+      } else if (isTieHole) {
+        base -= 20;
         height = 0.18;
         rough = 0.95;
-      } else if (isTieHole) {
-        base -= 38;
-        height = 0.08;
-        rough = 0.96;
+      } else if (isTieRim) {
+        base += 4;
+        height = 0.62;
       }
 
       return {
-        r: base * 0.96,
-        g: base * 0.99,
-        b: base * 1.04,
+        r: base * 1.0,
+        g: base * 0.995,
+        b: base * 0.975,
         height,
         roughness: rough,
       };
     }
   );
 
-  const maps = wrapDataTextures(buffers, 4, 3, maxAnisotropy);
+  // 1x1 repeat: geometry supplies real-world metric UVs (`meters / CONCRETE_UV_TILE_M`)
+  const maps = wrapDataTextures(buffers, 1, 1, maxAnisotropy);
   return new THREE.MeshStandardMaterial({
     map: maps.map,
     normalMap: maps.normalMap,
-    normalScale: new THREE.Vector2(0.85, 0.85),
+    normalScale: new THREE.Vector2(0.55, 0.55),
     roughnessMap: maps.roughnessMap,
     roughness: 0.92,
-    metalness: 0.04,
+    metalness: 0.03,
   });
 }
 
 // ============================================================================
-// 2. EXTERIOR FACADE PBR MATERIALS (7 ARCHITECTURAL MATERIALS)
+// 2. EXTERIOR FACADE PBR MATERIALS (14 ARCHITECTURAL MATERIALS @ 512x512, 8m TILE)
 // ============================================================================
 
 export function createFacadePbrMaterial(
   facadeId: FacadeMaterialId,
   lighting: LightingMode,
   flatShading: boolean = false,
-  maxAnisotropy: number = 4
+  maxAnisotropy: number = 8
 ): THREE.MeshPhysicalMaterial {
   const isNight = lighting !== 'day';
-  const key = `facade_${facadeId}_${isNight ? 'lit' : 'day'}_v3`;
+  const key = `facade_${facadeId}_${isNight ? 'lit' : 'day'}_v6`;
 
-  const buffers = synthesizeCachedPbrBuffers(key, 256, 256, 4.2, true, (u, v) => {
-    const fbm = periodicFbm2D(u, v, 10, 3, 401);
-    const fine = periodicNoise2D(u, v, 48, 48, 505);
-
-    // Concourse horizontal glazed vision bands on floors
-    const floorBand = (v * 4) % 1;
-    const winBay = (u * 12) % 1;
-    const inVisionBand = floorBand > 0.28 && floorBand < 0.74 && winBay > 0.09 && winBay < 0.91;
-    const roomLitHash = hash2Periodic(Math.floor(u * 12), Math.floor(v * 4), 12, 4, 707);
+  const buffers = synthesizeCachedPbrBuffers(key, 512, 512, 3.2, true, (u, v) => {
+    // 1 UV tile = 8.0 m x 8.0 m (64 pixels per meter -> 1.56 cm/px)
+    const fbm = periodicFbm2D(u, v, 8, 4, 401);
+    const med = periodicFbm2D(u, v, 24, 3, 409);
+    const fine = periodicNoise2D(u, v, 128, 128, 505);
 
     if (facadeId === 'etfe_cushions_facade') {
-      const du = (u * 7 + v * 5) % 1;
-      const dv = (u * 7 - v * 5 + 10) % 1;
-      const seam = du < 0.06 || du > 0.94 || dv < 0.06 || dv > 0.94;
+      // 4x4 diamond pneumatic pillows per 8 m tile (~2.0 m cushions)
+      const du = (u * 4 + v * 4) % 1;
+      const dv = (u * 4 - v * 4 + 8) % 1;
+      const seam = du < 0.038 || du > 0.962 || dv < 0.038 || dv > 0.962;
       if (seam) {
         return {
-          r: 30,
-          g: 41,
-          b: 59,
-          height: 0.08,
-          roughness: 0.44,
+          r: 44,
+          g: 56,
+          b: 72,
+          height: 0.1,
+          roughness: 0.38,
         };
       }
       const pillowDome = Math.sin(du * Math.PI) * Math.sin(dv * Math.PI);
       const cellTint = hash2Periodic(
-        Math.floor(u * 7 + v * 5),
-        Math.floor(u * 7 - v * 5 + 10),
-        14,
-        14,
+        Math.floor(u * 4 + v * 4),
+        Math.floor(u * 4 - v * 4 + 8),
+        8,
+        8,
         603
       );
       const glowStrength = isNight ? 0.65 + pillowDome * 0.35 : 0;
       const warmRedAccent = cellTint > 0.72;
       return {
         r: isNight
-          ? (warmRedAccent ? 235 : 145) + pillowDome * 40
-          : 215 + pillowDome * 35,
+          ? (warmRedAccent ? 235 : 152) + pillowDome * 38
+          : 218 + pillowDome * 32,
         g: isNight
-          ? (warmRedAccent ? 95 : 210) + pillowDome * 38
-          : 232 + pillowDome * 20,
-        b: isNight ? 248 : 248 + pillowDome * 7,
-        height: 0.22 + pillowDome * 0.76,
+          ? (warmRedAccent ? 98 : 212) + pillowDome * 36
+          : 235 + pillowDome * 18,
+        b: isNight ? 248 : 249 + pillowDome * 6,
+        height: 0.2 + pillowDome * 0.78,
         roughness: 0.14 + (1 - pillowDome) * 0.14,
         emissiveR: isNight ? (warmRedAccent ? 239 : 56) * glowStrength : 0,
         emissiveG: isNight ? (warmRedAccent ? 68 : 189) * glowStrength : 0,
@@ -936,34 +1059,39 @@ export function createFacadePbrMaterial(
     }
 
     if (facadeId === 'glass_curtain') {
-      const mullionX = ((u * 16) % 1) < 0.065;
-      const transomY = ((v * 8) % 1) < 0.075;
-      const spandrel = ((v * 4) % 1) < 0.24;
+      // 6x4 structural curtain-wall bays per 8 m tile (1.33 m wide x 2.0 m tall modules)
+      const bayU = (u * 6) % 1;
+      const bayV = (v * 4) % 1;
+      const mullionX = bayU < 0.032 || bayU > 0.968;
+      const transomY = bayV < 0.035 || bayV > 0.965;
+      const slabSpandrel = ((v * 2) % 1) < 0.18;
+      const roomLitHash = hash2Periodic(Math.floor(u * 6), Math.floor(v * 2), 6, 2, 707);
       if (mullionX || transomY) {
         return {
-          r: 38,
-          g: 46,
-          b: 58,
+          r: 68,
+          g: 78,
+          b: 92,
           height: 0.88,
-          roughness: 0.36,
+          roughness: 0.28,
         };
       }
-      if (spandrel) {
+      if (slabSpandrel) {
         return {
-          r: 18,
-          g: 28,
-          b: 44,
+          r: 32,
+          g: 46,
+          b: 66,
           height: 0.48,
-          roughness: 0.22,
+          roughness: 0.18,
         };
       }
-      const lit = isNight && roomLitHash > 0.22;
+      const lit = isNight && roomLitHash > 0.26;
+      const skyGrad = 0.86 + bayV * 0.24;
       return {
-        r: lit ? 210 : 58 + fbm * 16,
-        g: lit ? 176 : 82 + fbm * 18,
-        b: lit ? 115 : 104 + fbm * 20,
+        r: lit ? 222 : (64 + fbm * 22) * skyGrad,
+        g: lit ? 188 : (104 + fbm * 24) * skyGrad,
+        b: lit ? 126 : (142 + fbm * 26) * skyGrad,
         height: 0.5,
-        roughness: 0.07 + fine * 0.03,
+        roughness: 0.06 + fine * 0.03,
         emissiveR: lit ? 245 : 0,
         emissiveG: lit ? 195 : 0,
         emissiveB: lit ? 115 : 0,
@@ -971,296 +1099,362 @@ export function createFacadePbrMaterial(
     }
 
     if (facadeId === 'brushed_steel_mesh') {
-      const louver = Math.sin(v * Math.PI * 48) * 0.5 + 0.5;
-      const ribU = ((u * 8) % 1) < 0.05;
-      const perf = !ribU && louver < 0.28 && inVisionBand;
-      if (perf && isNight) {
+      // 64 horizontal stainless louvers per 8 m (12.5 cm pitch) + tension rods every 1.33 m
+      const louver = Math.sin(v * Math.PI * 64) * 0.5 + 0.5;
+      const hangerU = ((u * 6) % 1) < 0.022;
+      const concourseGlow =
+        !hangerU &&
+        louver < 0.32 &&
+        ((v * 2) % 1) > 0.24 &&
+        ((v * 2) % 1) < 0.82 &&
+        periodicNoise2D(u, v, 6, 6, 619) > 0.36;
+      if (concourseGlow && isNight) {
         return {
-          r: 235,
-          g: 196,
-          b: 125,
+          r: 236,
+          g: 198,
+          b: 128,
           height: 0.15,
-          roughness: 0.5,
-          emissiveR: 235,
-          emissiveG: 185,
-          emissiveB: 105,
+          roughness: 0.42,
+          emissiveR: 225,
+          emissiveG: 178,
+          emissiveB: 98,
         };
       }
-      const brush = periodicNoise2D(u, v, 8, 96, 612);
-      const val = ribU ? 145 : 178 + louver * 36 + (brush - 0.5) * 18;
+      const brush = periodicNoise2D(u, v, 12, 160, 612);
+      const val = hangerU ? 142 : 186 + louver * 38 + (brush - 0.5) * 14 + (fbm - 0.5) * 8;
       return {
-        r: val * 0.96,
+        r: val * 0.97,
         g: val * 0.99,
         b: val * 1.04,
-        height: ribU ? 0.92 : 0.35 + louver * 0.45,
-        roughness: ribU ? 0.28 : 0.24 + (1 - louver) * 0.22,
+        height: hangerU ? 0.92 : 0.34 + louver * 0.46,
+        roughness: hangerU ? 0.26 : 0.2 + (1 - louver) * 0.18,
       };
     }
 
     if (facadeId === 'weathered_corten') {
-      if (inVisionBand && ((v * 4) % 1) > 0.36 && ((v * 4) % 1) < 0.64) {
-        const lit = isNight && roomLitHash > 0.25;
+      // 4x10 staggered Corten cassettes per 8 m tile (2.0 m x 0.8 m cassettes)
+      const rowIdx = Math.floor(v * 10);
+      const rowFrac = (v * 10) % 1;
+      const stagger = (rowIdx % 2) * 0.5;
+      const colIdx = Math.floor(u * 4 + stagger);
+      const colFrac = (u * 4 + stagger) % 1;
+      const joint = rowFrac < 0.032 || colFrac < 0.018;
+      if (joint) {
+        const slitGlow = isNight && colFrac < 0.018 && rowIdx % 3 === 1;
         return {
-          r: lit ? 235 : 22,
-          g: lit ? 182 : 32,
-          b: lit ? 105 : 46,
-          height: 0.2,
-          roughness: 0.1,
-          emissiveR: lit ? 235 : 0,
-          emissiveG: lit ? 175 : 0,
-          emissiveB: lit ? 92 : 0,
+          r: slitGlow ? 238 : 44,
+          g: slitGlow ? 166 : 22,
+          b: slitGlow ? 82 : 14,
+          height: 0.12,
+          roughness: 0.88,
+          emissiveR: slitGlow ? 224 : 0,
+          emissiveG: slitGlow ? 142 : 0,
+          emissiveB: slitGlow ? 58 : 0,
         };
       }
-      const cassetteU = ((u * 8) % 1) < 0.04;
-      const cassetteV = ((v * 8) % 1) < 0.04;
-      const patina = periodicFbm2D(u, v, 8, 4, 811);
-      const streak = periodicNoise2D(u, v, 32, 6, 812);
-      if (cassetteU || cassetteV) {
-        return { r: 42, g: 20, b: 14, height: 0.12, roughness: 0.92 };
-      }
-      const rustMix = clamp01(patina * 0.7 + streak * 0.3);
+      const patina = periodicFbm2D(u, v, 10, 4, 811);
+      const streak = periodicNoise2D(u, v, 48, 6, 812);
+      const panelBias = hash2Periodic(colIdx, rowIdx, 8, 10, 815);
+      const rustMix = clamp01(patina * 0.52 + streak * 0.26 + panelBias * 0.24);
       return {
-        r: 112 + rustMix * 84,
-        g: 42 + rustMix * 42,
-        b: 20 + rustMix * 16,
-        height: 0.45 + patina * 0.35 + fine * 0.15,
-        roughness: 0.62 + (1 - rustMix) * 0.26,
+        r: 124 + rustMix * 84 + (fine - 0.5) * 10,
+        g: 48 + rustMix * 44 + (fine - 0.5) * 6,
+        b: 22 + rustMix * 16,
+        height: 0.48 + patina * 0.3 + fine * 0.12,
+        roughness: 0.62 + (1 - rustMix) * 0.24,
       };
     }
 
     if (facadeId === 'heritage_brick') {
-      if (inVisionBand && ((u * 12) % 1) > 0.22 && ((u * 12) % 1) < 0.78) {
-        const lit = isNight && roomLitHash > 0.28;
+      // True metric clay brickwork: 32 x 96 bricks per 8 m tile (25 cm x 8.3 cm bricks) + limestone stringcourse
+      const beltCourse = Math.abs(v - 0.5) < 0.018 || v > 0.968;
+      if (beltCourse) {
         return {
-          r: lit ? 238 : 24,
-          g: lit ? 195 : 36,
-          b: lit ? 120 : 52,
-          height: 0.15,
-          roughness: 0.12,
-          emissiveR: lit ? 230 : 0,
-          emissiveG: lit ? 180 : 0,
-          emissiveB: lit ? 98 : 0,
+          r: 220 + (med - 0.5) * 14,
+          g: 214 + (med - 0.5) * 14,
+          b: 200 + (med - 0.5) * 14,
+          height: 0.86,
+          roughness: 0.72,
         };
       }
-      // Stone string-course cornice every floor
-      if (floorBand < 0.08) {
-        return {
-          r: 214 + (fbm - 0.5) * 16,
-          g: 208 + (fbm - 0.5) * 16,
-          b: 196 + (fbm - 0.5) * 16,
-          height: 0.85,
-          roughness: 0.74,
-        };
-      }
-      const rowIdx = Math.floor(v * 32);
-      const rowFrac = (v * 32) % 1;
+      const bayFrac = (u * 2) % 1;
+      const pierRaised = bayFrac < 0.14 || bayFrac > 0.86 ? 0.14 : 0;
+      const rowIdx = Math.floor(v * 96);
+      const rowFrac = (v * 96) % 1;
       const stagger = (rowIdx % 2) * 0.5;
-      const colIdx = Math.floor(u * 16 + stagger);
-      const colFrac = (u * 16 + stagger) % 1;
-      const isMortar = rowFrac < 0.14 || colFrac < 0.08;
+      const colIdx = Math.floor(u * 32 + stagger);
+      const colFrac = (u * 32 + stagger) % 1;
+      const isMortar = rowFrac < 0.14 || colFrac < 0.055;
       if (isMortar) {
         return {
-          r: 186 + (fine - 0.5) * 18,
-          g: 180 + (fine - 0.5) * 18,
-          b: 170 + (fine - 0.5) * 18,
-          height: 0.14,
-          roughness: 0.94,
+          r: 196 + (fine - 0.5) * 14,
+          g: 189 + (fine - 0.5) * 14,
+          b: 178 + (fine - 0.5) * 14,
+          height: 0.2 + pierRaised,
+          roughness: 0.93,
         };
       }
-      const brickTint = hash2Periodic(colIdx, rowIdx, 16, 32, 909);
+      const brickTint = hash2Periodic(colIdx, rowIdx, 32, 96, 909);
+      const clinkerDark = brickTint < 0.1 ? -24 : 0;
       return {
-        r: 132 + brickTint * 46 + (fine - 0.5) * 14,
-        g: 46 + brickTint * 22 + (fine - 0.5) * 10,
-        b: 34 + brickTint * 16,
-        height: 0.68 + fine * 0.2,
-        roughness: 0.72 + (1 - brickTint) * 0.16,
+        r: 144 + brickTint * 48 + clinkerDark + (fine - 0.5) * 12,
+        g: 50 + brickTint * 24 + clinkerDark * 0.4 + (fine - 0.5) * 8,
+        b: 36 + brickTint * 16,
+        height: 0.64 + pierRaised + fine * 0.14,
+        roughness: 0.74 + (1 - brickTint) * 0.15,
       };
     }
 
     if (facadeId === 'limestone_travertine') {
-      if (inVisionBand && ((v * 4) % 1) > 0.34 && ((v * 4) % 1) < 0.68) {
-        const lit = isNight && roomLitHash > 0.25;
-        return {
-          r: lit ? 242 : 28,
-          g: lit ? 202 : 44,
-          b: lit ? 132 : 62,
-          height: 0.18,
-          roughness: 0.1,
-          emissiveR: lit ? 235 : 0,
-          emissiveG: lit ? 190 : 0,
-          emissiveB: lit ? 112 : 0,
-        };
-      }
-      const rowIdx = Math.floor(v * 12);
-      const rowFrac = (v * 12) % 1;
+      // 8x16 cut ashlar Roman travertine blocks per 8 m tile (1.0 m x 0.5 m blocks)
+      const rowIdx = Math.floor(v * 16);
+      const rowFrac = (v * 16) % 1;
       const colIdx = Math.floor(u * 8 + (rowIdx % 2) * 0.5);
       const colFrac = (u * 8 + (rowIdx % 2) * 0.5) % 1;
-      const joint = rowFrac < 0.06 || colFrac < 0.04;
-      const vein = periodicNoise2D(u, v, 6, 32, 933);
-      const blockTone = hash2Periodic(colIdx, rowIdx, 8, 12, 934);
+      const joint = rowFrac < 0.032 || colFrac < 0.018;
+      const vein = periodicNoise2D(u, v, 8, 64, 933);
+      const blockTone = hash2Periodic(colIdx, rowIdx, 16, 16, 934);
       if (joint) {
-        return { r: 158, g: 151, b: 140, height: 0.16, roughness: 0.92 };
+        return { r: 168, g: 160, b: 148, height: 0.22, roughness: 0.9 };
       }
-      const base = 212 + (blockTone - 0.5) * 16 + (vein - 0.5) * 18;
+      const base = 218 + (blockTone - 0.5) * 14 + (vein - 0.5) * 16 + (fine - 0.5) * 6;
       return {
         r: base * 1.02,
-        g: base * 0.98,
+        g: base * 0.985,
         b: base * 0.9,
-        height: 0.62 + vein * 0.22 - (fine > 0.82 ? 0.18 : 0),
-        roughness: 0.58 + (fine > 0.82 ? 0.28 : 0.08),
+        height: 0.66 + vein * 0.18 - (fine > 0.88 ? 0.14 : 0),
+        roughness: 0.54 + (fine > 0.88 ? 0.24 : 0.08),
       };
     }
 
     if (facadeId === 'timber_diagrid') {
-      const slat = ((u * 36) % 1);
+      // 40 vertical larch slats per 8 m (20 cm pitch) + 4 m glulam diagrid members
+      const slat = (u * 40) % 1;
       const isGap = slat < 0.26;
-      const diagA = Math.abs(((u * 4 + v * 2) % 1) - 0.5) < 0.045;
-      const diagB = Math.abs(((u * 4 - v * 2 + 4) % 1) - 0.5) < 0.045;
+      const diagA = Math.abs(((u * 2 + v * 2) % 1) - 0.5) < 0.038;
+      const diagB = Math.abs(((u * 2 - v * 2 + 4) % 1) - 0.5) < 0.038;
       if (diagA || diagB) {
         return {
-          r: 188,
-          g: 118,
-          b: 52,
+          r: 198,
+          g: 128,
+          b: 58,
           height: 0.94,
-          roughness: 0.52,
+          roughness: 0.46,
         };
       }
       if (isGap) {
-        const lit = isNight && inVisionBand && roomLitHash > 0.2;
+        const warmGlow =
+          isNight && ((v * 2) % 1) > 0.2 && ((v * 2) % 1) < 0.84 && periodicNoise2D(u, v, 6, 6, 956) > 0.4;
         return {
-          r: lit ? 242 : 24,
-          g: lit ? 192 : 30,
-          b: lit ? 110 : 38,
-          height: 0.15,
-          roughness: 0.16,
-          emissiveR: lit ? 238 : 0,
-          emissiveG: lit ? 182 : 0,
-          emissiveB: lit ? 96 : 0,
+          r: warmGlow ? 240 : 36,
+          g: warmGlow ? 190 : 30,
+          b: warmGlow ? 108 : 28,
+          height: 0.18,
+          roughness: 0.24,
+          emissiveR: warmGlow ? 228 : 0,
+          emissiveG: warmGlow ? 176 : 0,
+          emissiveB: warmGlow ? 92 : 0,
         };
       }
-      const grain = periodicNoise2D(u, v, 48, 8, 955);
+      const grain = periodicNoise2D(u, v, 80, 10, 955);
       return {
-        r: 162 + grain * 42,
-        g: 98 + grain * 28,
-        b: 44 + grain * 14,
+        r: 168 + grain * 42,
+        g: 104 + grain * 28,
+        b: 48 + grain * 14,
         height: 0.68 + grain * 0.16,
-        roughness: 0.56 + (1 - grain) * 0.18,
+        roughness: 0.52 + (1 - grain) * 0.18,
       };
     }
-
-    // Glazed window behind any open or slatted cladding, lit at night in occupied rooms.
-    const windowTexel = (lit: boolean) => ({
-      r: lit ? 240 : 24,
-      g: lit ? 194 : 34,
-      b: lit ? 118 : 48,
-      height: 0.15,
-      roughness: 0.12,
-      emissiveR: lit ? 232 : 0,
-      emissiveG: lit ? 182 : 0,
-      emissiveB: lit ? 100 : 0,
-    });
-    const roomLit = isNight && roomLitHash > 0.27;
 
     if (facadeId === 'terracotta_baguettes') {
+      // 48 vertical ceramic baguettes per 8 m (16.6 cm spacing) + horizontal aluminum carriers every 2 m
+      const carrierV = ((v * 4) % 1) < 0.024;
+      if (carrierV) {
+        return { r: 72, g: 76, b: 84, height: 0.82, roughness: 0.34 };
+      }
       const rod = (u * 48) % 1;
-      if (rod < 0.3) return windowTexel(roomLit && inVisionBand);
-      const profile = Math.sin(((rod - 0.3) / 0.7) * Math.PI);
-      const tone = hash2Periodic(Math.floor(u * 48), Math.floor(v * 6), 48, 6, 1501);
+      if (rod < 0.25) {
+        const warmGlow =
+          isNight && ((v * 2) % 1) > 0.22 && ((v * 2) % 1) < 0.8 && periodicNoise2D(u, v, 6, 6, 1500) > 0.42;
+        return {
+          r: warmGlow ? 238 : 42,
+          g: warmGlow ? 186 : 32,
+          b: warmGlow ? 104 : 28,
+          height: 0.16,
+          roughness: 0.28,
+          emissiveR: warmGlow ? 220 : 0,
+          emissiveG: warmGlow ? 168 : 0,
+          emissiveB: warmGlow ? 88 : 0,
+        };
+      }
+      const profile = Math.sin(((rod - 0.25) / 0.75) * Math.PI);
+      const tone = hash2Periodic(Math.floor(u * 48), Math.floor(v * 4), 48, 4, 1501);
       return {
-        r: 150 + tone * 40 + profile * 30,
-        g: 72 + tone * 20 + profile * 18,
-        b: 44 + tone * 10 + profile * 10,
-        height: 0.35 + profile * 0.6,
-        roughness: 0.7 + (1 - profile) * 0.15,
+        r: 164 + tone * 36 + profile * 28,
+        g: 78 + tone * 20 + profile * 16,
+        b: 48 + tone * 10 + profile * 10,
+        height: 0.36 + profile * 0.58,
+        roughness: 0.64 + (1 - profile) * 0.16,
       };
     }
 
-    if (facadeId === 'gold_anodized_panels' || facadeId === 'white_composite_panels' || facadeId === 'black_zinc_cladding') {
-      const gold = facadeId === 'gold_anodized_panels';
-      const zinc = facadeId === 'black_zinc_cladding';
-      if (inVisionBand && ((v * 4) % 1) > 0.38 && ((v * 4) % 1) < 0.64) return windowTexel(roomLit);
-      const cols = zinc ? 24 : gold ? 8 : 4;
-      const rows = zinc ? 2 : gold ? 8 : 6;
-      const jointU = ((u * cols) % 1) < (zinc ? 0.08 : 0.025);
-      const jointV = ((v * rows) % 1) < 0.03;
-      if (jointU || jointV) {
-        return zinc
-          ? { r: 70, g: 74, b: 80, height: 0.95, roughness: 0.35 }
-          : { r: 40, g: 40, b: 42, height: 0.1, roughness: 0.9 };
+    if (facadeId === 'black_zinc_cladding') {
+      // 16 standing-seam pre-weathered anthracite zinc bays per 8 m (50 cm standing-seam pitch)
+      const batten = (u * 16) % 1;
+      const crossWelt = ((v * 4) % 1) < 0.016;
+      if (batten < 0.065) {
+        return { r: 92, g: 98, b: 108, height: 0.95, roughness: 0.3 };
       }
-      const tone = hash2Periodic(Math.floor(u * cols), Math.floor(v * rows), cols, rows, 1502);
-      const base = gold
-        ? [196 + tone * 30, 158 + tone * 24, 82 + tone * 14]
-        : zinc
-        ? [44 + fbm * 10, 47 + fbm * 10, 52 + fbm * 10]
-        : [234 + tone * 8, 233 + tone * 8, 229 + tone * 8];
+      if (batten < 0.105 || crossWelt) {
+        return { r: 34, g: 38, b: 44, height: 0.28, roughness: 0.56 };
+      }
+      const stripTone = hash2Periodic(Math.floor(u * 16), Math.floor(v * 4), 16, 4, 1508);
+      const val = 54 + stripTone * 11 + (fbm - 0.5) * 8 + (fine - 0.5) * 5;
       return {
-        r: base[0],
-        g: base[1],
-        b: base[2],
-        height: 0.6 + fine * 0.08,
-        roughness: gold ? 0.28 + tone * 0.1 : zinc ? 0.48 + fbm * 0.1 : 0.32 + fine * 0.08,
+        r: val * 0.96,
+        g: val,
+        b: val * 1.06,
+        height: 0.55 + fine * 0.05,
+        roughness: 0.38 + (fbm - 0.5) * 0.09,
+      };
+    }
+
+    if (facadeId === 'gold_anodized_panels') {
+      // 4x8 staggered champagne-gold anodized aluminum cassettes per 8 m (2.0 m x 1.0 m)
+      const rowIdx = Math.floor(v * 8);
+      const rowFrac = (v * 8) % 1;
+      const stagger = (rowIdx % 2) * 0.5;
+      const colIdx = Math.floor(u * 4 + stagger);
+      const colFrac = (u * 4 + stagger) % 1;
+      if (rowFrac < 0.024 || colFrac < 0.016) {
+        return { r: 68, g: 52, b: 24, height: 0.16, roughness: 0.68 };
+      }
+      const tone = hash2Periodic(colIdx, rowIdx, 8, 8, 1502);
+      const brush = periodicNoise2D(u, v, 96, 12, 1509);
+      return {
+        r: 206 + tone * 28 + (brush - 0.5) * 12,
+        g: 170 + tone * 24 + (brush - 0.5) * 10,
+        b: 92 + tone * 16 + (brush - 0.5) * 8,
+        height: 0.64 + brush * 0.08,
+        roughness: 0.22 + tone * 0.09,
+      };
+    }
+
+    if (facadeId === 'white_composite_panels') {
+      // 4x4 monumental satin white Alucobond composite panels per 8 m (2.0 m x 2.0 m)
+      const jointU = ((u * 4) % 1) < 0.014;
+      const jointV = ((v * 4) % 1) < 0.014;
+      if (jointU || jointV) {
+        return { r: 158, g: 164, b: 172, height: 0.22, roughness: 0.62 };
+      }
+      const tone = hash2Periodic(Math.floor(u * 4), Math.floor(v * 4), 4, 4, 1512);
+      const base = 240 + tone * 8 + (fine - 0.5) * 4;
+      return {
+        r: base,
+        g: base,
+        b: base * 0.99,
+        height: 0.68 + fine * 0.04,
+        roughness: 0.24 + fine * 0.05,
       };
     }
 
     if (facadeId === 'perforated_red_metal') {
+      // 4x8 crimson lacquered perforated aluminum cassettes per 8 m
+      const seam = ((u * 4) % 1) < 0.016 || ((v * 8) % 1) < 0.02;
+      if (seam) {
+        return { r: 108, g: 20, b: 22, height: 0.88, roughness: 0.34 };
+      }
       const hu = (u * 64) % 1;
       const hv = (v * 64) % 1;
-      const hole = (hu - 0.5) ** 2 + (hv - 0.5) ** 2 < 0.06;
-      if (hole) return windowTexel(roomLit && inVisionBand);
-      const seam = ((u * 6) % 1) < 0.02;
+      const hole = (hu - 0.5) ** 2 + (hv - 0.5) ** 2 < 0.075;
+      if (hole) {
+        const backLit =
+          isNight && ((v * 2) % 1) > 0.2 && ((v * 2) % 1) < 0.82 && periodicNoise2D(u, v, 6, 6, 1520) > 0.35;
+        return {
+          r: backLit ? 245 : 42,
+          g: backLit ? 190 : 16,
+          b: backLit ? 105 : 18,
+          height: 0.14,
+          roughness: 0.32,
+          emissiveR: backLit ? 235 : 0,
+          emissiveG: backLit ? 168 : 0,
+          emissiveB: backLit ? 82 : 0,
+        };
+      }
       return {
-        r: seam ? 90 : 176 + fbm * 22,
-        g: seam ? 18 : 30 + fbm * 8,
-        b: seam ? 20 : 34 + fbm * 8,
-        height: seam ? 0.9 : 0.6,
-        roughness: 0.36 + fine * 0.1,
+        r: 192 + fbm * 24,
+        g: 32 + fbm * 8,
+        b: 36 + fbm * 8,
+        height: 0.64,
+        roughness: 0.32 + fine * 0.08,
       };
     }
 
     if (facadeId === 'living_green_wall') {
-      if (floorBand < 0.07) {
-        return { r: 150, g: 146, b: 138, height: 0.9, roughness: 0.8 };
+      // Botanical vertical garden with irrigation planter channels every 2.0 m
+      const planterRail = ((v * 4) % 1) < 0.022;
+      if (planterRail) {
+        return { r: 58, g: 64, b: 56, height: 0.78, roughness: 0.52 };
       }
       const leaf = periodicFbm2D(u, v, 24, 4, 1503);
-      const clump = periodicNoise2D(u, v, 64, 64, 1504);
-      const flower = clump > 0.93;
+      const macro = periodicFbm2D(u, v, 6, 3, 1525);
+      const clump = periodicNoise2D(u, v, 96, 96, 1504);
+      const flower = clump > 0.945 && macro > 0.48;
+      const fernTint = macro > 0.55 ? 20 : -8;
       return {
-        r: flower ? 214 : 52 + leaf * 50,
-        g: flower ? 190 : 92 + leaf * 70,
-        b: flower ? 120 : 36 + leaf * 26,
-        height: 0.3 + leaf * 0.65,
-        roughness: 0.82,
+        r: flower ? 224 : 46 + leaf * 48 + fernTint * 0.4,
+        g: flower ? 202 : 94 + leaf * 78 + fernTint,
+        b: flower ? 128 : 38 + leaf * 28,
+        height: 0.25 + leaf * 0.52 + clump * 0.22,
+        roughness: 0.84,
       };
     }
 
-    // Default: `architectural_concrete` facade
-    if (inVisionBand && ((v * 4) % 1) > 0.36 && ((v * 4) % 1) < 0.66) {
-      const lit = isNight && roomLitHash > 0.25;
-      return {
-        r: lit ? 236 : 26,
-        g: lit ? 196 : 38,
-        b: lit ? 124 : 52,
-        height: 0.18,
-        roughness: 0.12,
-        emissiveR: lit ? 228 : 0,
-        emissiveG: lit ? 182 : 0,
-        emissiveB: lit ? 102 : 0,
-      };
-    }
-    const seamU = ((u * 8) % 1) < 0.03;
-    const seamV = ((v * 8) % 1) < 0.04;
-    const val = (seamU || seamV ? 105 : 156) + (fbm - 0.5) * 26 + (fine - 0.5) * 12;
+    // Default: `architectural_concrete` — fine architectural board-formed concrete (4 x 8 panels = 2.0m x 1.0m)
+    const cols = 4;
+    const rows = 8;
+    const colIdx = Math.floor(u * cols);
+    const rowIdx = Math.floor(v * rows);
+    const panelU = (u * cols) % 1;
+    const panelV = (v * rows) % 1;
+
+    // Hairline 1.3 cm V-groove shutter joint
+    const seamU = panelU < 0.0065 || panelU > 0.9935;
+    const seamV = panelV < 0.011 || panelV > 0.989;
+    const isSeam = seamU || seamV;
+
+    // Exact metric circular 2.2 cm tie-rod cone plugs (never stretched into coarse ovals)
+    const dxA = (panelU - 0.22) * 2.0;
+    const dxB = (panelU - 0.78) * 2.0;
+    const dyP = (panelV - 0.5) * 1.0;
+    const coneA = Math.hypot(dxA, dyP) < 0.023;
+    const coneB = Math.hypot(dxB, dyP) < 0.023;
+
+    const boardGrain = periodicNoise2D(u, v, 16, 128, 1530);
+    const panelTone = hash2Periodic(colIdx, rowIdx, cols, rows, 1531);
+    const base =
+      (isSeam ? 150 : coneA || coneB ? 142 : 172) +
+      (fbm - 0.5) * 15 +
+      (med - 0.5) * 10 +
+      (boardGrain - 0.5) * 9 +
+      (fine - 0.5) * 9 +
+      (panelTone - 0.5) * 7;
+
     return {
-      r: val * 0.97,
-      g: val * 0.99,
-      b: val * 1.02,
-      height: seamU || seamV ? 0.18 : 0.64 + fbm * 0.2,
-      roughness: seamU || seamV ? 0.95 : 0.78 + (fbm - 0.5) * 0.14,
+      r: base * 1.0,
+      g: base * 0.995,
+      b: base * 0.975,
+      height: isSeam
+        ? 0.28
+        : coneA || coneB
+        ? 0.18
+        : 0.6 + fbm * 0.14 + boardGrain * 0.08 + fine * 0.06,
+      roughness: isSeam ? 0.94 : 0.82 + (med - 0.5) * 0.1,
     };
   });
 
-  const maps = wrapDataTextures(buffers, 7, 2, maxAnisotropy);
+  // 1x1 repeat: geometry supplies real-world metric UVs (`meters / FACADE_UV_TILE_M`)
+  const maps = wrapDataTextures(buffers, 1, 1, maxAnisotropy);
 
   const isMetallic = facadeId === 'brushed_steel_mesh' || facadeId === 'gold_anodized_panels';
   const isPaintedMetal = facadeId === 'perforated_red_metal' || facadeId === 'black_zinc_cladding';
@@ -1271,13 +1465,14 @@ export function createFacadePbrMaterial(
   return new THREE.MeshPhysicalMaterial({
     map: maps.map,
     normalMap: maps.normalMap,
-    normalScale: new THREE.Vector2(isEtfe ? 1.35 : 1.0, isEtfe ? 1.35 : 1.0),
+    normalScale: new THREE.Vector2(isEtfe ? 1.25 : 0.72, isEtfe ? 1.25 : 0.72),
     roughnessMap: maps.roughnessMap,
     roughness: 1.0,
-    metalness: isMetallic ? 0.82 : isPaintedMetal ? 0.55 : isGlass ? 0.35 : isCorten ? 0.42 : 0.06,
-    clearcoat: isGlass || isEtfe ? 0.92 : isMetallic ? 0.35 : facadeId === 'white_composite_panels' ? 0.4 : 0.0,
+    metalness: isMetallic ? 0.78 : isPaintedMetal ? 0.5 : isGlass ? 0.32 : isCorten ? 0.38 : 0.04,
+    clearcoat:
+      isGlass || isEtfe ? 0.9 : isMetallic ? 0.32 : facadeId === 'white_composite_panels' ? 0.36 : 0.0,
     clearcoatRoughness: isGlass ? 0.08 : isEtfe ? 0.14 : 0.25,
-    envMapIntensity: isGlass ? 1.45 : isMetallic ? 1.25 : isEtfe ? 1.15 : 0.85,
+    envMapIntensity: isGlass ? 1.4 : isMetallic ? 1.2 : isEtfe ? 1.15 : 0.85,
     emissive: new THREE.Color(isNight ? 0xffffff : 0x000000),
     emissiveMap: maps.emissiveMap,
     emissiveIntensity: isNight ? (isEtfe ? 1.15 : 0.82) : 0,
@@ -2377,36 +2572,676 @@ normal = normalize(normal + (viewMatrix * vec4(turfSlope.x, 0.0, -turfSlope.y, 0
   };
 }
 
+// ============================================================================
+// 9. SHADED PBR MATERIAL SWATCH GENERATOR (ZERO BLACK SQUARES IN UI)
+// ============================================================================
+
+const swatchDataUrlCache = new Map<string, string | null>();
+
+const FACADE_IDS = new Set<string>(FACADE_MATERIAL_CATALOG.map((m) => m.id));
+const ROOF_IDS = new Set<string>(ROOF_MATERIAL_CATALOG.map((m) => m.id));
+const STRUCTURE_IDS = new Set<string>(STRUCTURE_MATERIAL_CATALOG.map((m) => m.id));
+const SEAT_IDS = new Set<string>(SEAT_MATERIAL_CATALOG.map((m) => m.id));
+const TURF_IDS = new Set<string>(TURF_MATERIAL_CATALOG.map((m) => m.id));
+const TRACK_IDS = new Set<string>(TRACK_MATERIAL_CATALOG.map((m) => m.id));
+const PLAZA_IDS = new Set<string>(PLAZA_MATERIAL_CATALOG.map((m) => m.id));
+
 /**
- * Generates vibrant stadium LED perimeter advertising ribbon texture.
+ * Shades an `80 x 52` RGBA pixel buffer directly from the procedural PBR material buffers
+ * (`albedo`, `normal`, `roughness`, `metalness`) under a bright daylight studio lighting rig
+ * with curved-cylinder specular sheen so every material (including dark metals, zinc & glass)
+ * is crisp, colorful, and never renders as a dark/black square.
  */
-export function createLedSponsorRibbonTexture(): THREE.CanvasTexture {
+export function renderMaterialSwatchPixels(
+  materialId: string,
+  width: number = 80,
+  height: number = 52
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(width * height * 4);
+
+  // Turf & Plaza specialized crisp studio swatches
+  if (TURF_IDS.has(materialId)) {
+    const preset = getTurfPresetColors(materialId as PitchTurfMaterialId);
+    const c1 = new THREE.Color(preset.primary);
+    const c2 = new THREE.Color(preset.secondary);
+    for (let y = 0; y < height; y++) {
+      const vf = y / height;
+      for (let x = 0; x < width; x++) {
+        const uf = x / width;
+        const stripe = Math.floor(uf * 5) % 2 === 0 ? c1 : c2;
+        const blade = periodicNoise2D(uf, vf, 48, 32, 1881);
+        const worn =
+          materialId === 'winter_worn'
+            ? Math.max(0, 1 - Math.hypot((uf - 0.5) * 2.2, (vf - 0.5) * 2.2)) * 0.38
+            : 0;
+        const chalkLine = Math.abs(vf - 0.52) < 0.032;
+        const shade = 0.88 + blade * 0.28 + (1 - vf) * 0.08;
+        const r = chalkLine
+          ? 246
+          : clampByte((stripe.r * 255 * (1 - worn) + 124 * worn) * shade);
+        const g = chalkLine
+          ? 248
+          : clampByte((stripe.g * 255 * (1 - worn) + 92 * worn) * shade);
+        const b = chalkLine
+          ? 250
+          : clampByte((stripe.b * 255 * (1 - worn) + 52 * worn) * shade);
+        const i = (y * width + x) * 4;
+        out[i] = r;
+        out[i + 1] = g;
+        out[i + 2] = b;
+        out[i + 3] = 255;
+      }
+    }
+    return out;
+  }
+
+  let buffers: CachedPbrBuffers | null = null;
+  let uScale = 0.42;
+  let vScale = 0.28;
+  let metalness = 0.08;
+  let clearcoat = 0.1;
+  let tint: [number, number, number] | null = null;
+
+  if (FACADE_IDS.has(materialId)) {
+    const mat = createFacadePbrMaterial(materialId as FacadeMaterialId, 'day', false, 1);
+    buffers = pbrBufferCache.get(`facade_${materialId}_day_v6`) ?? null;
+    metalness = mat.metalness;
+    clearcoat = mat.clearcoat;
+    uScale = materialId === 'heritage_brick' ? 0.28 : 0.5;
+    vScale = materialId === 'heritage_brick' ? 0.18 : 0.34;
+    mat.dispose();
+  } else if (ROOF_IDS.has(materialId)) {
+    const mat = createRoofPbrMaterial(materialId as RoofMaterialId, 1.0, 'day', false, 1);
+    buffers = pbrBufferCache.get(`roof_${materialId}_v2`) ?? null;
+    metalness = mat.metalness;
+    clearcoat = mat.clearcoat;
+    uScale = 0.45;
+    vScale = 0.45;
+    mat.dispose();
+  } else if (STRUCTURE_IDS.has(materialId)) {
+    const mat = createStructurePbrMaterial(materialId as StructureMaterialId, 1);
+    buffers = pbrBufferCache.get(`struct_${materialId}_v2`) ?? null;
+    metalness = mat.metalness;
+    clearcoat = mat.clearcoat;
+    uScale = 0.75;
+    vScale = 0.5;
+    mat.dispose();
+  } else if (SEAT_IDS.has(materialId)) {
+    const pri =
+      materialId === 'ribbed_stadium_shell'
+        ? '#2563eb'
+        : materialId === 'padded_club_velvet'
+        ? '#334155'
+        : '#dc2626';
+    const mat = createSeatTerracePbrMaterial(
+      materialId as SeatMaterialId,
+      pri,
+      '#f8fafc',
+      6,
+      1
+    );
+    buffers = pbrBufferCache.get(`seats_${materialId}_${pri}_#f8fafc_6_v3`) ?? null;
+    metalness = 0.06;
+    clearcoat = 0.35;
+    uScale = 0.16;
+    vScale = 0.22;
+    mat.dispose();
+  } else if (TRACK_IDS.has(materialId)) {
+    const mat = createTrackPbrMaterial(materialId as TrackMaterialId, 1);
+    buffers = pbrBufferCache.get(`track_${materialId}_v2`) ?? null;
+    uScale = 0.8;
+    vScale = 0.55;
+    mat.dispose();
+  } else if (PLAZA_IDS.has(materialId)) {
+    createPlazaDetailNormalAndRoughness(materialId as PlazaMaterialId, 1);
+    buffers = pbrBufferCache.get(`plaza_detail_${materialId}_v2`) ?? null;
+    tint =
+      materialId === 'sandstone_esplanade'
+        ? [214, 206, 192]
+        : materialId === 'urban_asphalt'
+        ? [74, 82, 96]
+        : [138, 148, 160];
+    uScale = 0.7;
+    vScale = 0.48;
+  }
+
+  // Sun + sky studio vectors
+  const lx = -0.42;
+  const ly = 0.48;
+  const lz = 0.77;
+  // Half-vector between sun and viewer `(0, 0, 1)`
+  const hLen = Math.hypot(lx, ly, lz + 1);
+  const hx = lx / hLen;
+  const hy = ly / hLen;
+  const hz = (lz + 1) / hLen;
+
+  for (let y = 0; y < height; y++) {
+    const yn = y / Math.max(1, height - 1);
+    for (let x = 0; x < width; x++) {
+      const xn = x / Math.max(1, width - 1);
+      const u = (0.18 + xn * uScale) % 1;
+      const v = (0.28 + (1 - yn) * vScale) % 1;
+
+      let ar = 148;
+      let ag = 156;
+      let ab = 168;
+      let nx = 0;
+      let ny = 0;
+      let nz = 1;
+      let rough = 0.55;
+
+      if (buffers) {
+        const px = Math.min(buffers.sizeW - 1, Math.floor(u * buffers.sizeW));
+        const py = Math.min(buffers.sizeH - 1, Math.floor(v * buffers.sizeH));
+        const bIdx = (py * buffers.sizeW + px) * 4;
+        if (tint) {
+          const lum = 0.82 + (buffers.roughness[bIdx] / 255 - 0.5) * -0.35;
+          ar = tint[0] * lum;
+          ag = tint[1] * lum;
+          ab = tint[2] * lum;
+        } else {
+          ar = buffers.albedo[bIdx];
+          ag = buffers.albedo[bIdx + 1];
+          ab = buffers.albedo[bIdx + 2];
+        }
+        nx = (buffers.normal[bIdx] / 255) * 2 - 1;
+        ny = (buffers.normal[bIdx + 1] / 255) * 2 - 1;
+        nz = Math.max(0.2, (buffers.normal[bIdx + 2] / 255) * 2 - 1);
+        rough = buffers.roughness[bIdx] / 255;
+      }
+
+      // Gently curved architectural sample tile so flat metals & dark glass catch sky reflection
+      const curveNx = (xn - 0.5) * 0.52;
+      const curveNy = (0.5 - yn) * 0.36;
+      let fnx = nx * 0.8 + curveNx;
+      let fny = ny * 0.8 + curveNy;
+      let fnz = nz;
+      const nLen = Math.hypot(fnx, fny, fnz) || 1;
+      fnx /= nLen;
+      fny /= nLen;
+      fnz /= nLen;
+
+      const ndotl = Math.max(0, fnx * lx + fny * ly + fnz * lz);
+      const ndoth = Math.max(0, fnx * hx + fny * hy + fnz * hz);
+      const skyFill = 0.52 + 0.22 * (fny * 0.5 + 0.5);
+      const diffuse = skyFill + ndotl * (0.78 - metalness * 0.28);
+
+      const shininess = Math.max(6, (1 - rough) * 68 + clearcoat * 42);
+      const specStrength = (0.18 + metalness * 0.65 + clearcoat * 0.45) * (1.05 - rough * 0.55);
+      const spec = Math.pow(ndoth, shininess) * specStrength;
+
+      // Sky reflection lift so dark anthracite / zinc / glass / velvet never crush to black
+      const envReflect = (metalness * 0.26 + clearcoat * 0.22) * (0.65 + 0.35 * (1 - yn));
+
+      let r = ar * diffuse + (ar * metalness + 255 * (1 - metalness * 0.65)) * spec + 210 * envReflect;
+      let g = ag * diffuse + (ag * metalness + 255 * (1 - metalness * 0.65)) * spec + 225 * envReflect;
+      let b = ab * diffuse + (ab * metalness + 255 * (1 - metalness * 0.65)) * spec + 245 * envReflect;
+
+      // White lane lines overlay on athletics tracks
+      if (TRACK_IDS.has(materialId) && (Math.abs(yn - 0.34) < 0.035 || Math.abs(yn - 0.72) < 0.035)) {
+        r = 246;
+        g = 248;
+        b = 250;
+      }
+
+      const oIdx = (y * width + x) * 4;
+      out[oIdx] = clampByte(r);
+      out[oIdx + 1] = clampByte(g);
+      out[oIdx + 2] = clampByte(b);
+      out[oIdx + 3] = 255;
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Returns a cached PNG data-URL showing the lit 3D PBR material surface for UI buttons.
+ * Returns `null` only in non-DOM/mock environments where 2D Canvas `createImageData` is absent.
+ */
+export function getMaterialPreviewDataUrl(materialId: string): string | null {
+  if (swatchDataUrlCache.has(materialId)) {
+    return swatchDataUrlCache.get(materialId) ?? null;
+  }
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  try {
+    const w = 80;
+    const h = 52;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (
+      !ctx ||
+      typeof ctx.createImageData !== 'function' ||
+      typeof ctx.putImageData !== 'function' ||
+      typeof canvas.toDataURL !== 'function'
+    ) {
+      swatchDataUrlCache.set(materialId, null);
+      return null;
+    }
+    const pixels = renderMaterialSwatchPixels(materialId, w, h);
+    const imgData = ctx.createImageData(w, h);
+    imgData.data.set(pixels);
+    ctx.putImageData(imgData, 0, 0);
+    const url = canvas.toDataURL('image/png');
+    const valid = typeof url === 'string' && url.startsWith('data:image/') ? url : null;
+    swatchDataUrlCache.set(materialId, valid);
+    return valid;
+  } catch {
+    swatchDataUrlCache.set(materialId, null);
+    return null;
+  }
+}
+
+// ============================================================================
+// 10. THEMED STADIUM SPONSOR & COMPETITION LED RIBBON TEXTURES
+// ============================================================================
+
+type BrandLogoId =
+  | 'adidas'
+  | 'nike'
+  | 'coca_cola'
+  | 'visa'
+  | 'qatar_airways'
+  | 'mcdonalds'
+  | 'hyundai'
+  | 'fifa'
+  | 'heineken'
+  | 'ps5'
+  | 'mastercard'
+  | 'fedex'
+  | 'lays'
+  | 'ucl'
+  | 'uber_eats'
+  | 'kipsta'
+  | 'bein'
+  | 'betclic'
+  | 'orange'
+  | 'ea_sports'
+  | 'barclays'
+  | 'guinness'
+  | 'hublot'
+  | 'castrol'
+  | 'hankook'
+  | 'swissquote'
+  | 'just_eat'
+  | 'enterprise'
+  | 'strauss'
+  | 'credit_agricole'
+  | 'edf'
+  | 'vw'
+  | 'fff'
+  | 'apple_tv'
+  | 'target'
+  | 'continental'
+  | 'audi'
+  | 'att'
+  | 'mls';
+
+interface SponsorSlotSpec {
+  bg: string;
+  fg: string;
+  accent: string;
+  logo: BrandLogoId;
+}
+
+const SPONSOR_THEMES: Record<AdBoardTheme, SponsorSlotSpec[]> = {
+  champions_league: [
+    { bg: '#09143c', fg: '#ffffff', accent: '#38bdf8', logo: 'ucl' },
+    { bg: '#064e3b', fg: '#ffffff', accent: '#ef4444', logo: 'heineken' },
+    { bg: '#003791', fg: '#ffffff', accent: '#60a5fa', logo: 'ps5' },
+    { bg: '#111827', fg: '#ffffff', accent: '#f59e0b', logo: 'mastercard' },
+    { bg: '#2e1065', fg: '#ffffff', accent: '#f97316', logo: 'fedex' },
+    { bg: '#5c0632', fg: '#ffffff', accent: '#f8fafc', logo: 'qatar_airways' },
+    { bg: '#eab308', fg: '#7f1d1d', accent: '#dc2626', logo: 'lays' },
+    { bg: '#09143c', fg: '#ffffff', accent: '#38bdf8', logo: 'ps5' },
+  ],
+  world_cup: [
+    { bg: '#0c2340', fg: '#ffffff', accent: '#facc15', logo: 'fifa' },
+    { bg: '#09090b', fg: '#ffffff', accent: '#f8fafc', logo: 'adidas' },
+    { bg: '#dc2626', fg: '#ffffff', accent: '#fef2f2', logo: 'coca_cola' },
+    { bg: '#1a1f71', fg: '#ffffff', accent: '#f7b600', logo: 'visa' },
+    { bg: '#5c0632', fg: '#ffffff', accent: '#f1f5f9', logo: 'qatar_airways' },
+    { bg: '#002c5f', fg: '#ffffff', accent: '#93c5fd', logo: 'hyundai' },
+    { bg: '#b91c1c', fg: '#facc15', accent: '#facc15', logo: 'mcdonalds' },
+    { bg: '#dc2626', fg: '#ffffff', accent: '#ffffff', logo: 'coca_cola' },
+  ],
+  ligue_1: [
+    { bg: '#da291c', fg: '#ffc72c', accent: '#ffc72c', logo: 'mcdonalds' },
+    { bg: '#06c167', fg: '#09090b', accent: '#ffffff', logo: 'uber_eats' },
+    { bg: '#0f172a', fg: '#ffffff', accent: '#38bdf8', logo: 'kipsta' },
+    { bg: '#5b21b6', fg: '#ffffff', accent: '#e9d5ff', logo: 'bein' },
+    { bg: '#dc2626', fg: '#ffffff', accent: '#fde047', logo: 'betclic' },
+    { bg: '#111827', fg: '#ffffff', accent: '#ff7900', logo: 'orange' },
+    { bg: '#5c0632', fg: '#ffffff', accent: '#f8fafc', logo: 'qatar_airways' },
+    { bg: '#da291c', fg: '#ffc72c', accent: '#ffc72c', logo: 'mcdonalds' },
+  ],
+  premier_league: [
+    { bg: '#37003c', fg: '#ffffff', accent: '#00ff85', logo: 'ea_sports' },
+    { bg: '#00aeef', fg: '#ffffff', accent: '#0c4a6e', logo: 'barclays' },
+    { bg: '#09090b', fg: '#f59e0b', accent: '#fef3c7', logo: 'guinness' },
+    { bg: '#f8fafc', fg: '#09090b', accent: '#dc2626', logo: 'nike' },
+    { bg: '#18181b', fg: '#ffffff', accent: '#ef4444', logo: 'hublot' },
+    { bg: '#00843d', fg: '#ffffff', accent: '#ef4444', logo: 'castrol' },
+    { bg: '#37003c', fg: '#00ff85', accent: '#ffffff', logo: 'ea_sports' },
+    { bg: '#00aeef', fg: '#ffffff', accent: '#f8fafc', logo: 'barclays' },
+  ],
+  europa_league: [
+    { bg: '#111111', fg: '#ff6900', accent: '#ffffff', logo: 'hankook' },
+    { bg: '#ff6900', fg: '#111111', accent: '#ffffff', logo: 'just_eat' },
+    { bg: '#18181b', fg: '#ffffff', accent: '#ff6900', logo: 'swissquote' },
+    { bg: '#007a33', fg: '#ffffff', accent: '#ecfdf5', logo: 'enterprise' },
+    { bg: '#b91c1c', fg: '#ffffff', accent: '#fca5a5', logo: 'strauss' },
+    { bg: '#111111', fg: '#ffffff', accent: '#ff6900', logo: 'hankook' },
+    { bg: '#ff6900', fg: '#ffffff', accent: '#111111', logo: 'just_eat' },
+    { bg: '#18181b', fg: '#ff6900', accent: '#ffffff', logo: 'swissquote' },
+  ],
+  equipe_de_france: [
+    { bg: '#002395', fg: '#ffffff', accent: '#ed2939', logo: 'fff' },
+    { bg: '#09090b', fg: '#ffffff', accent: '#38bdf8', logo: 'nike' },
+    { bg: '#006a4e', fg: '#ffffff', accent: '#ef4444', logo: 'credit_agricole' },
+    { bg: '#003896', fg: '#ffffff', accent: '#ff6600', logo: 'edf' },
+    { bg: '#111827', fg: '#ffffff', accent: '#ff7900', logo: 'orange' },
+    { bg: '#001e50', fg: '#ffffff', accent: '#93c5fd', logo: 'vw' },
+    { bg: '#06c167', fg: '#09090b', accent: '#ffffff', logo: 'uber_eats' },
+    { bg: '#002395', fg: '#ffffff', accent: '#ed2939', logo: 'fff' },
+  ],
+  mls_usa: [
+    { bg: '#09090b', fg: '#ffffff', accent: '#a1a1aa', logo: 'apple_tv' },
+    { bg: '#e11d24', fg: '#ffffff', accent: '#ffffff', logo: 'coca_cola' },
+    { bg: '#0f172a', fg: '#ffffff', accent: '#ef4444', logo: 'mls' },
+    { bg: '#111111', fg: '#ffffff', accent: '#f8fafc', logo: 'adidas' },
+    { bg: '#cc0000', fg: '#ffffff', accent: '#ffffff', logo: 'target' },
+    { bg: '#f59e0b', fg: '#09090b', accent: '#09090b', logo: 'continental' },
+    { bg: '#18181b', fg: '#ffffff', accent: '#e4e4e7', logo: 'audi' },
+    { bg: '#009fdb', fg: '#ffffff', accent: '#e0f2fe', logo: 'att' },
+  ],
+};
+
+function drawBrandSlot(
+  ctx: CanvasRenderingContext2D,
+  slot: SponsorSlotSpec,
+  x: number,
+  w: number,
+  h: number
+): void {
+  ctx.save();
+  ctx.fillStyle = slot.bg;
+  ctx.fillRect(x, 0, w - 3, h);
+
+  // Subtle LED cabinet top/bottom bezel rim
+  ctx.fillStyle = 'rgba(255,255,255,0.14)';
+  ctx.fillRect(x, 0, w - 3, 4);
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.fillRect(x, h - 5, w - 3, 5);
+
+  const cx = x + w * 0.5;
+  const cy = h * 0.5;
+  ctx.fillStyle = slot.fg;
+  ctx.strokeStyle = slot.fg;
+  ctx.textAlign = 'center';
+
+  switch (slot.logo) {
+    case 'adidas': {
+      // Iconic 3-stripes mountain + bold lowercase wordmark
+      const bx = x + 48;
+      for (let s = 0; s < 3; s++) {
+        const barH = 16 + s * 10;
+        ctx.save();
+        ctx.translate(bx + s * 13, cy + 12);
+        ctx.rotate(-0.46);
+        ctx.fillRect(0, -barH, 8, barH);
+        ctx.restore();
+      }
+      ctx.font = '900 34px Inter, Arial, sans-serif';
+      ctx.fillText('adidas', cx + 28, cy + 12);
+      break;
+    }
+    case 'nike': {
+      // Crisp Swoosh + NIKE
+      ctx.beginPath();
+      ctx.moveTo(x + 36, cy + 2);
+      ctx.quadraticCurveTo(x + 28, cy + 22, x + 52, cy + 16);
+      ctx.lineTo(x + 104, cy - 12);
+      ctx.quadraticCurveTo(x + 56, cy + 8, x + 44, cy + 4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.font = 'italic 900 34px Inter, Arial, sans-serif';
+      ctx.fillText('NIKE', cx + 34, cy + 12);
+      break;
+    }
+    case 'coca_cola': {
+      ctx.font = 'italic 900 36px Georgia, serif';
+      ctx.fillText('Coca-Cola', cx, cy + 8);
+      // Dynamic white ribbon wave underneath
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(x + 28, cy + 22);
+      ctx.bezierCurveTo(x + 90, cy + 10, x + w - 90, cy + 32, x + w - 28, cy + 18);
+      ctx.stroke();
+      break;
+    }
+    case 'mcdonalds': {
+      // Golden Arches M + wordmark
+      ctx.strokeStyle = slot.accent;
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.moveTo(x + 32, cy + 20);
+      ctx.quadraticCurveTo(x + 43, cy - 28, x + 54, cy + 18);
+      ctx.quadraticCurveTo(x + 65, cy - 28, x + 76, cy + 20);
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '800 28px Inter, Arial, sans-serif';
+      ctx.fillText("McDonald's", cx + 28, cy + 10);
+      break;
+    }
+    case 'mastercard': {
+      ctx.fillStyle = '#eb001b';
+      ctx.beginPath();
+      ctx.arc(x + 52, cy, 20, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#f79e1b';
+      ctx.globalAlpha = 0.88;
+      ctx.beginPath();
+      ctx.arc(x + 76, cy, 20, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 26px Inter, Arial, sans-serif';
+      ctx.fillText('mastercard', cx + 36, cy + 9);
+      break;
+    }
+    case 'heineken': {
+      // Red 5-point star + Heineken
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 === 0 ? 18 : 7;
+        const a = (i * Math.PI) / 5 - Math.PI / 2;
+        const px = x + 44 + Math.cos(a) * r;
+        const py = cy + Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '800 31px Inter, Arial, sans-serif';
+      ctx.fillText('Heineken', cx + 22, cy + 11);
+      break;
+    }
+    case 'apple_tv': {
+      // Crisp Apple silhouette + tv+
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(x + 56, cy + 3, 14, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = slot.bg;
+      ctx.beginPath();
+      ctx.arc(x + 71, cy + 1, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.ellipse(x + 58, cy - 15, 6, 3, -0.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = '700 36px Inter, Arial, sans-serif';
+      ctx.fillText('tv+', cx + 24, cy + 13);
+      break;
+    }
+    case 'audi': {
+      ctx.lineWidth = 4.5;
+      for (let r = 0; r < 4; r++) {
+        ctx.beginPath();
+        ctx.arc(cx - 51 + r * 34, cy, 20, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'target': {
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(x + 48, cy, 21, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#cc0000';
+      ctx.beginPath();
+      ctx.arc(x + 48, cy, 13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(x + 48, cy, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = '900 30px Inter, Arial, sans-serif';
+      ctx.fillText('TARGET', cx + 28, cy + 11);
+      break;
+    }
+    case 'visa': {
+      ctx.fillStyle = '#f7b600';
+      ctx.fillRect(x + 24, 14, 18, 8);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'italic 900 40px Inter, Arial, sans-serif';
+      ctx.fillText('VISA', cx, cy + 15);
+      break;
+    }
+    case 'orange': {
+      ctx.fillStyle = '#ff7900';
+      ctx.fillRect(x + 28, cy - 22, 44, 44);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 13px Inter, Arial, sans-serif';
+      ctx.fillText('orange', x + 50, cy + 16);
+      ctx.font = '800 30px Inter, Arial, sans-serif';
+      ctx.fillText('Orange 5G', cx + 30, cy + 11);
+      break;
+    }
+    case 'fedex': {
+      ctx.font = '900 38px Inter, Arial, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('Fed', cx - 24, cy + 13);
+      ctx.fillStyle = '#ff6600';
+      ctx.fillText('Ex', cx + 32, cy + 13);
+      break;
+    }
+    case 'ps5': {
+      ctx.font = '800 36px Inter, Arial, sans-serif';
+      ctx.fillText('PS5', cx, cy + 13);
+      ctx.strokeStyle = slot.accent;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(x + 18, 16, w - 39, h - 32);
+      break;
+    }
+    case 'ucl': {
+      ctx.strokeStyle = slot.accent;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(x + 44, cy, 19, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.font = '800 24px Inter, Arial, sans-serif';
+      ctx.fillText('CHAMPIONS', cx + 22, cy - 2);
+      ctx.font = '700 18px Inter, Arial, sans-serif';
+      ctx.fillStyle = slot.accent;
+      ctx.fillText('LEAGUE', cx + 22, cy + 20);
+      break;
+    }
+    case 'fff': {
+      ctx.fillStyle = '#002395';
+      ctx.fillRect(x + 20, 18, 12, h - 36);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(x + 32, 18, 12, h - 36);
+      ctx.fillStyle = '#ed2939';
+      ctx.fillRect(x + 44, 18, 12, h - 36);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '800 24px Inter, Arial, sans-serif';
+      ctx.fillText('ÉQUIPE DE FRANCE', cx + 20, cy + 9);
+      break;
+    }
+    default: {
+      const labelMap: Record<string, string> = {
+        qatar_airways: 'QATAR AIRWAYS',
+        hyundai: 'HYUNDAI',
+        fifa: 'FIFA WORLD CUP',
+        lays: "Lay's",
+        uber_eats: 'Uber Eats',
+        kipsta: 'KIPSTA',
+        bein: 'beIN SPORTS',
+        betclic: 'Betclic',
+        ea_sports: 'EA SPORTS FC',
+        barclays: 'BARCLAYS',
+        guinness: 'GUINNESS',
+        hublot: 'HUBLOT',
+        castrol: 'Castrol',
+        hankook: 'HANKOOK',
+        swissquote: 'Swissquote',
+        just_eat: 'JUST EAT',
+        enterprise: 'enterprise',
+        strauss: 'STRAUSS',
+        credit_agricole: 'CRÉDIT AGRICOLE',
+        edf: 'EDF',
+        vw: 'VOLKSWAGEN',
+        continental: 'Continental',
+        att: 'AT&T',
+        mls: 'MLS · APPLE TV',
+      };
+      const text = labelMap[slot.logo] ?? slot.logo.toUpperCase();
+      ctx.fillStyle = slot.accent;
+      ctx.beginPath();
+      ctx.arc(x + 32, cy, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = slot.fg;
+      ctx.font = text.length > 12 ? '800 23px Inter, Arial, sans-serif' : '900 30px Inter, Arial, sans-serif';
+      ctx.fillText(text, cx + 14, cy + 10);
+      break;
+    }
+  }
+
+  ctx.restore();
+}
+
+const ledSponsorCache = new Map<AdBoardTheme, THREE.CanvasTexture>();
+
+/**
+ * Generates vibrant 2048x128 stadium LED perimeter & balcony advertising ribbon texture
+ * with authentic sponsor logos & competition branding for the chosen `theme`.
+ */
+export function createLedSponsorRibbonTexture(
+  theme: AdBoardTheme = 'champions_league'
+): THREE.CanvasTexture {
+  const safeTheme: AdBoardTheme = SPONSOR_THEMES[theme] ? theme : 'champions_league';
+  const cached = ledSponsorCache.get(safeTheme);
+  if (cached) {
+    return cached.clone();
+  }
+
   const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 64;
+  canvas.width = 2048;
+  canvas.height = 128;
   const ctx = canvas.getContext('2d')!;
 
-  const panels = [
-    { bg: '#0284c7', accent: '#f8fafc' },
-    { bg: '#0f172a', accent: '#38bdf8' },
-    { bg: '#dc2626', accent: '#ffffff' },
-    { bg: '#059669', accent: '#ecfdf5' },
-    { bg: '#1e1b4b', accent: '#facc15' },
-  ];
-
-  const segW = 1024 / 8;
-  for (let i = 0; i < 8; i++) {
-    const p = panels[i % panels.length];
-    ctx.fillStyle = p.bg;
-    ctx.fillRect(i * segW, 0, segW - 2, 64);
-
-    ctx.fillStyle = p.accent;
-    ctx.fillRect(i * segW + 18, 20, segW - 52, 10);
-    ctx.fillRect(i * segW + 18, 36, (segW - 52) * 0.65, 7);
-
-    ctx.beginPath();
-    ctx.arc(i * segW + segW - 22, 32, 11, 0, Math.PI * 2);
-    ctx.fill();
+  const slots = SPONSOR_THEMES[safeTheme];
+  const segW = canvas.width / slots.length;
+  for (let i = 0; i < slots.length; i++) {
+    drawBrandSlot(ctx, slots[i], i * segW, segW, canvas.height);
   }
 
   const tex = new THREE.CanvasTexture(canvas);
@@ -2414,6 +3249,8 @@ export function createLedSponsorRibbonTexture(): THREE.CanvasTexture {
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.repeat.set(3, 1);
+  tex.anisotropy = 8;
   tex.needsUpdate = true;
-  return tex;
+  ledSponsorCache.set(safeTheme, tex);
+  return tex.clone();
 }

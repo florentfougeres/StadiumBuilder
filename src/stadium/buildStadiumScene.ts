@@ -174,6 +174,10 @@ export function buildStadiumSceneGraph(
       doc.materials,
       aniso
     );
+    if (obj.type === 'halo_screen' && obj.position[1] <= 5) {
+      const bounds = computeStadiumRingBounds(doc);
+      objGroup.position.y = bounds.maxStandH + Math.max(2.5, doc.roof.heightOffset * 0.58);
+    }
     applyScreenMount(doc, obj, objGroup);
     objectsContainer.add(objGroup);
     placedObjectMap.set(obj.id, objGroup);
