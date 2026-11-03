@@ -6,13 +6,14 @@ import {
   FolderOpen,
   Paintbrush,
   Tent,
+  Trees,
 } from 'lucide-react';
 import { calculateStadiumMetrics } from '../stadium/capacity';
-import { StandSide } from '../stadium/schema';
+import { resolveSite, StandSide } from '../stadium/schema';
 import { useStadiumStore } from '../state/useStadiumStore';
-import { ROOF_OPTIONS, SHAPE_OPTIONS } from './Inspector';
+import { ROOF_OPTIONS, SHAPE_OPTIONS, SITE_OPTIONS } from './Inspector';
 
-export type EditorNode = 'bowl' | 'stand' | 'roof' | 'materials' | 'objects' | 'projects';
+export type EditorNode = 'bowl' | 'stand' | 'roof' | 'materials' | 'site' | 'objects' | 'projects';
 
 const STAND_ORDER: { id: StandSide; label: string }[] = [
   { id: 'north', label: 'Nord' },
@@ -114,6 +115,13 @@ export const StructureTree: React.FC<{
       />
 
       <GroupLabel>Abords</GroupLabel>
+      <TreeRow
+        active={node === 'site'}
+        icon={<Trees className="w-3.5 h-3.5" />}
+        label="Environnement"
+        meta={SITE_OPTIONS.find((o) => o.id === resolveSite(doc).setting)?.label}
+        onClick={() => onSelect('site')}
+      />
       <TreeRow
         active={node === 'objects' && !selectedObjectId}
         icon={<Box className="w-3.5 h-3.5" />}

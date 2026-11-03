@@ -351,6 +351,27 @@ export interface ConcourseConfig {
   heightRatio: number;
 }
 
+/** Character of the land around the stadium (see generateSite). */
+export type SiteSetting = 'urban' | 'esplanade' | 'park' | 'parking';
+
+export interface SiteConfig {
+  setting: SiteSetting;
+  /** Steel security fence ringing the forecourt, opened at each entrance. */
+  perimeterFence: boolean;
+  /** Turnstile entrance pavilions on the stadium axes. */
+  entrances: boolean;
+}
+
+export const DEFAULT_SITE: SiteConfig = {
+  setting: 'esplanade',
+  perimeterFence: false,
+  entrances: true,
+};
+
+export function resolveSite(doc: StadiumDocument): SiteConfig {
+  return { ...DEFAULT_SITE, ...(doc.site ?? {}) };
+}
+
 export interface StadiumDocument {
   id: string;
   name: string;
@@ -369,6 +390,8 @@ export interface StadiumDocument {
   colors: StadiumColors;
   materials?: StadiumMaterialsConfig;
   concourse?: ConcourseConfig;
+  /** Surroundings outside the facade; absent means DEFAULT_SITE. */
+  site?: Partial<SiteConfig>;
   objects: PlacedObject[];
   lighting: LightingMode;
 }

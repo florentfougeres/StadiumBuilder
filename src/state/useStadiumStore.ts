@@ -25,6 +25,7 @@ import {
   resolveAllCorners,
   riserFromSlopeDeg,
   RoofConfig,
+  SiteConfig,
   StadiumColors,
   StadiumDocument,
   StadiumMaterialsConfig,
@@ -108,6 +109,7 @@ export interface StadiumStoreState {
   applyTargetCapacity: (targetCapacity: number) => void;
   updateRoof: (patch: Partial<RoofConfig>) => void;
   updateConcourse: (patch: Partial<ConcourseConfig>) => void;
+  updateSite: (patch: Partial<SiteConfig>) => void;
   updateColors: (patch: Partial<StadiumColors>) => void;
   updateMaterials: (patch: Partial<StadiumMaterialsConfig>) => void;
 
@@ -610,6 +612,11 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     updateConcourse: (patch) =>
       commitChange((d) => {
         d.concourse = { width: 0, heightRatio: 0.5, ...d.concourse, ...patch };
+      }),
+
+    updateSite: (patch) =>
+      commitChange((d) => {
+        d.site = { ...d.site, ...patch };
       }),
 
     updateColors: (patch) =>

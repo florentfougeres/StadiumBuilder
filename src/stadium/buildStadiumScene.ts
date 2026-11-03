@@ -13,6 +13,7 @@ import {
 } from './generateLights';
 import { generatePitchGroup } from './generatePitch';
 import { computeStadiumRingBounds, generateRoofGroup } from './generateRoof';
+import { generateSiteGroup, SiteFootprint } from './generateSite';
 import { generateStandsGroup } from './generateStand';
 import {
   clampPitchToTrack,
@@ -113,6 +114,20 @@ export interface BuiltStadiumScene {
 }
 
 /**
+ * Outer footprint of the built stadium (stands, concourse and envelope, not the roof's masts and
+ * backstays), as the superellipse the surroundings are laid out around.
+ */
+function measureSiteFootprint(doc: StadiumDocument, built: THREE.Object3D[]): SiteFootprint {
+  const box = new THREE.Box3();
+  for (const obj of built) box.expandByObject(obj);
+  const pitch = clampPitchToTrack(doc.pitch);
+  const halfX = box.isEmpty() ? pitch.length / 2 + 20 : Math.max(-box.min.x, box.max.x);
+  const halfZ = box.isEmpty() ? pitch.width / 2 + 20 : Math.max(-box.min.z, box.max.z);
+  const exponent = doc.shape === 'circular_bowl' ? 2.2 : isContinuousBowlShape(doc.shape) ? 2.8 : 6;
+  return { halfX, halfZ, exponent };
+}
+
+/**
  * Pure top-level 3D stadium builder: transforms a JSON StadiumDocument into a complete
  * hierarchical THREE.Group (Pitch, Stands, Roof, and Interactive Placed Objects).
  */
@@ -172,8 +187,14 @@ export function buildStadiumSceneGraph(
   );
 
   const skirtGroup = generateEnvelopeSkirt(doc, roofGroup, Boolean(options.crossSectionClip), aniso);
+  const siteGroup = generateSiteGroup(
+    doc,
+    measureSiteFootprint(doc, [standsGroup, concourseGroup, skirtGroup]),
+    aniso
+  );
 
   rootGroup.add(
+    siteGroup,
     pitchGroup,
     standsGroup,
     concourseGroup,

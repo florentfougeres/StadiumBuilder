@@ -18,6 +18,7 @@ const NODE_LABELS: Record<EditorNode, string> = {
   stand: 'Tribunes',
   roof: 'Toiture',
   materials: 'Façade et matériaux',
+  site: 'Environnement',
   objects: 'Équipements',
   projects: 'Mes projets',
 };

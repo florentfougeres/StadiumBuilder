@@ -3,7 +3,6 @@ import {
   applyTurfCloseUpDetail,
   createGrassBladeNormalMap,
   createLedSponsorRibbonTexture,
-  createPlazaDetailNormalAndRoughness,
   createTrackPbrMaterial,
   getTurfPresetColors,
 } from './materials';
@@ -14,7 +13,6 @@ import {
   LightingMode,
   PitchConfig,
   PitchTurfMaterialId,
-  PlazaMaterialId,
   StadiumColors,
   StadiumMaterialsConfig,
 } from './schema';
@@ -354,111 +352,6 @@ function createGoalNetTexture(): THREE.CanvasTexture {
 }
 
 /**
- * Generates realistic urban site ground texture calibrated to `plazaId`
- * (`granite_pavers`, `sandstone_esplanade`, `urban_asphalt`).
- */
-function createUrbanSiteGroundTexture(
-  plazaId: PlazaMaterialId,
-  maxAnisotropy: number
-): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 1024;
-  const ctx = canvas.getContext('2d')!;
-
-  // Landscaped outer green-slate urban parklands
-  ctx.fillStyle = '#182821';
-  ctx.fillRect(0, 0, 1024, 1024);
-
-  for (let i = 0; i < 3200; i++) {
-    const x = Math.abs((Math.sin(i * 23.1) * 41231.9) % 1) * 1024;
-    const y = Math.abs((Math.cos(i * 67.4) * 17392.3) % 1) * 1024;
-    ctx.fillStyle =
-      i % 2 === 0 ? 'rgba(34, 197, 94, 0.045)' : 'rgba(15, 23, 42, 0.08)';
-    ctx.fillRect(x, y, 4, 4);
-  }
-
-  // Perimeter asphalt ring avenues
-  ctx.strokeStyle = '#111827';
-  ctx.lineWidth = 24;
-  for (const pos of [96, 928]) {
-    ctx.beginPath();
-    ctx.moveTo(pos, 0);
-    ctx.lineTo(pos, 1024);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(0, pos);
-    ctx.lineTo(1024, pos);
-    ctx.stroke();
-  }
-
-  ctx.save();
-  ctx.strokeStyle = 'rgba(226, 232, 240, 0.45)';
-  ctx.lineWidth = 1.6;
-  ctx.setLineDash([12, 10]);
-  for (const pos of [96, 928]) {
-    ctx.beginPath();
-    ctx.moveTo(pos, 0);
-    ctx.lineTo(pos, 1024);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, pos);
-    ctx.lineTo(1024, pos);
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  // Grand pedestrian stadium podium / parvis around stadium footprint
-  const grad = ctx.createRadialGradient(512, 512, 130, 512, 512, 405);
-  if (plazaId === 'sandstone_esplanade') {
-    grad.addColorStop(0, '#c7bfb3');
-    grad.addColorStop(0.68, '#a89f91');
-    grad.addColorStop(0.94, '#57534e');
-    grad.addColorStop(1, '#182821');
-  } else if (plazaId === 'urban_asphalt') {
-    grad.addColorStop(0, '#334155');
-    grad.addColorStop(0.68, '#1e293b');
-    grad.addColorStop(0.94, '#0f172a');
-    grad.addColorStop(1, '#182821');
-  } else {
-    grad.addColorStop(0, '#64748b');
-    grad.addColorStop(0.68, '#475569');
-    grad.addColorStop(0.94, '#1e293b');
-    grad.addColorStop(1, '#182821');
-  }
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.ellipse(512, 512, 412, 372, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Architectural concentric & radial paving joints on plaza
-  ctx.strokeStyle =
-    plazaId === 'sandstone_esplanade'
-      ? 'rgba(68, 64, 60, 0.16)'
-      : 'rgba(255, 255, 255, 0.09)';
-  ctx.lineWidth = 1.3;
-  for (const r of [245, 298, 352, 398]) {
-    ctx.beginPath();
-    ctx.ellipse(512, 512, r, r * 0.9, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  for (let a = 0; a < 28; a++) {
-    const phi = (a / 28) * Math.PI * 2;
-    ctx.beginPath();
-    ctx.moveTo(512 + Math.cos(phi) * 205, 512 + Math.sin(phi) * 185);
-    ctx.lineTo(512 + Math.cos(phi) * 408, 512 + Math.sin(phi) * 368);
-    ctx.stroke();
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = maxAnisotropy;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-/**
  * Sloped broadcast FIFA Goal with hexagonal woven net, curved top D-brackets & rear ground frame.
  */
 function createGoalGroup(sideSign: -1 | 1, netTex: THREE.CanvasTexture): THREE.Group {
@@ -764,108 +657,34 @@ function createRunningTrackGroup(
   return group;
 }
 
+/** Extent of the turf plane: the pitch plus its run-offs, or the infield inside a track. */
+function pitchSurfaceExtent(pitch: PitchConfig) {
+  const track = pitch.hasTrack ? getTrackGeometry(pitch) : null;
+  const effectiveMarginEnd = track
+    ? Math.max(2.0, track.infieldHalfLengthX - pitch.length * 0.5)
+    : pitch.marginEnd;
+  const effectiveMarginSide = track
+    ? Math.max(1.2, track.infieldHalfWidthZ - pitch.width * 0.5)
+    : pitch.marginSide;
+  return {
+    track,
+    effectiveMarginEnd,
+    effectiveMarginSide,
+    totalLength: pitch.length + effectiveMarginEnd * 2,
+    totalWidth: pitch.width + effectiveMarginSide * 2,
+  };
+}
+
 /**
- * Adds multi-species landscaped perimeter boulevard trees (varied tint & organic multi-lobe crowns)
- * and illuminated architectural promenade light columns around the plaza.
+ * Square site ground of `size` m with the pitch (or the whole track) cut out, so the site never
+ * covers the turf. UVs are normalized over the square: u runs with +x, v against +z.
  */
-function createUrbanLandscapingContext(lighting: LightingMode): THREE.Group {
-  const group = new THREE.Group();
-  const treeCount = 52;
-
-  const trunkGeo = new THREE.CylinderGeometry(0.28, 0.46, 3.8, 7);
-  const trunkMat = new THREE.MeshStandardMaterial({
-    color: 0x4a3222,
-    roughness: 0.94,
-  });
-
-  const canopyGeo = new THREE.IcosahedronGeometry(3.5, 1);
-  const canopyMat = new THREE.MeshStandardMaterial({
-    color: lighting === 'night' ? 0x1a3f28 : 0x2f683b,
-    roughness: 0.88,
-    metalness: 0.01,
-  });
-
-  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCount);
-  const canopies = new THREE.InstancedMesh(canopyGeo, canopyMat, treeCount);
-  trunks.castShadow = true;
-  canopies.castShadow = true;
-  canopies.receiveShadow = true;
-
-  const dummy = new THREE.Object3D();
-  const tint = new THREE.Color();
-  for (let i = 0; i < treeCount; i++) {
-    const angle = (i / treeCount) * Math.PI * 2 + 0.05;
-    const rx = 178 + (i % 3) * 6;
-    const rz = 156 + ((i + 1) % 3) * 6;
-    const tx = Math.cos(angle) * rx;
-    const tz = Math.sin(angle) * rz;
-    const scaleJitter = 0.82 + ((i * 19) % 11) * 0.036;
-
-    dummy.position.set(tx, 1.9 * scaleJitter, tz);
-    dummy.scale.set(scaleJitter, scaleJitter, scaleJitter);
-    dummy.rotation.set(0, angle, 0);
-    dummy.updateMatrix();
-    trunks.setMatrixAt(i, dummy.matrix);
-
-    dummy.position.set(tx, 5.3 * scaleJitter, tz);
-    dummy.scale.set(scaleJitter * 1.18, scaleJitter * 0.92, scaleJitter * 1.12);
-    dummy.rotation.set(0.18 * (i % 3), angle * 1.7, 0);
-    dummy.updateMatrix();
-    canopies.setMatrixAt(i, dummy.matrix);
-
-    // Subtle botanical foliage hue variation per tree
-    const hueShift = ((i * 7) % 10) * 0.008 - 0.04;
-    tint.setHSL(0.35 + hueShift, 0.42, lighting === 'night' ? 0.22 : 0.34);
-    canopies.setColorAt(i, tint);
-  }
-  trunks.instanceMatrix.needsUpdate = true;
-  canopies.instanceMatrix.needsUpdate = true;
-  if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
-  trunks.computeBoundingSphere();
-  canopies.computeBoundingSphere();
-  group.add(trunks, canopies);
-
-  // Warm pedestrian promenade light columns around outer plaza
-  const poleCount = 32;
-  const poleGeo = new THREE.CylinderGeometry(0.11, 0.16, 5.2, 8);
-  const poleMat = new THREE.MeshStandardMaterial({
-    color: 0x334155,
-    roughness: 0.36,
-    metalness: 0.8,
-  });
-  const lanternGeo = new THREE.CylinderGeometry(0.28, 0.18, 0.55, 10);
-  const isLit = lighting !== 'day';
-  const lanternMat = new THREE.MeshStandardMaterial({
-    color: 0xfef3c7,
-    emissive: new THREE.Color(isLit ? 0xfbbf24 : 0x000000),
-    emissiveIntensity: isLit ? 2.2 : 0,
-    roughness: 0.18,
-  });
-
-  const poles = new THREE.InstancedMesh(poleGeo, poleMat, poleCount);
-  const lanterns = new THREE.InstancedMesh(lanternGeo, lanternMat, poleCount);
-  for (let i = 0; i < poleCount; i++) {
-    const angle = (i / poleCount) * Math.PI * 2;
-    const px = Math.cos(angle) * 149;
-    const pz = Math.sin(angle) * 129;
-
-    dummy.position.set(px, 2.6, pz);
-    dummy.scale.set(1, 1, 1);
-    dummy.rotation.set(0, 0, 0);
-    dummy.updateMatrix();
-    poles.setMatrixAt(i, dummy.matrix);
-
-    dummy.position.set(px, 5.35, pz);
-    dummy.updateMatrix();
-    lanterns.setMatrixAt(i, dummy.matrix);
-  }
-  poles.instanceMatrix.needsUpdate = true;
-  lanterns.instanceMatrix.needsUpdate = true;
-  poles.computeBoundingSphere();
-  lanterns.computeBoundingSphere();
-  group.add(poles, lanterns);
-
-  return group;
+export function createSiteGroundGeometry(rawPitch: PitchConfig, size: number): THREE.ShapeGeometry {
+  const pitch = clampPitchToTrack(rawPitch);
+  const { track, totalLength, totalWidth } = pitchSurfaceExtent(pitch);
+  return track
+    ? createHollowStadiumFrameGeometry(size, size, track.straightHalfLength, track.outerRadius - 0.15, 'normalized')
+    : createHollowHorizontalFrameGeometry(size, size, totalLength - 0.24, totalWidth - 0.24, 'normalized');
 }
 
 export function generatePitchGroup(
@@ -876,7 +695,8 @@ export function generatePitchGroup(
   materials?: StadiumMaterialsConfig
 ): THREE.Group {
   const pitch = clampPitchToTrack(rawPitch);
-  const track = pitch.hasTrack ? getTrackGeometry(pitch) : null;
+  const { track, effectiveMarginEnd, effectiveMarginSide, totalLength, totalWidth } =
+    pitchSurfaceExtent(pitch);
   const mats: StadiumMaterialsConfig = {
     ...DEFAULT_STADIUM_MATERIALS,
     ...(materials ?? {}),
@@ -884,53 +704,6 @@ export function generatePitchGroup(
 
   const root = new THREE.Group();
   root.name = 'PitchAssembly';
-
-  const effectiveMarginEnd = track
-    ? Math.max(2.0, track.infieldHalfLengthX - pitch.length * 0.5)
-    : pitch.marginEnd;
-  const effectiveMarginSide = track
-    ? Math.max(1.2, track.infieldHalfWidthZ - pitch.width * 0.5)
-    : pitch.marginSide;
-  const totalLength = pitch.length + effectiveMarginEnd * 2;
-  const totalWidth = pitch.width + effectiveMarginSide * 2;
-
-  // 1. Mineral Esplanade / Granite Pavers / Urban Asphalt Site Ground (hollow cutout under pitch & track!)
-  const surroundGeo = track
-    ? createHollowStadiumFrameGeometry(
-        620,
-        560,
-        track.straightHalfLength,
-        track.outerRadius - 0.15,
-        'normalized'
-      )
-    : createHollowHorizontalFrameGeometry(
-        620,
-        560,
-        totalLength - 0.24,
-        totalWidth - 0.24,
-        'normalized'
-      );
-  const siteTex = createUrbanSiteGroundTexture(mats.plazaSurface, maxAnisotropy);
-  const plazaDetail = createPlazaDetailNormalAndRoughness(
-    mats.plazaSurface,
-    maxAnisotropy
-  );
-  const surroundMat = new THREE.MeshStandardMaterial({
-    map: siteTex,
-    normalMap: plazaDetail.normalMap,
-    normalScale: new THREE.Vector2(0.55, 0.55),
-    roughnessMap: plazaDetail.roughnessMap,
-    roughness: lighting === 'night' ? 0.72 : 0.88,
-    metalness: 0.05,
-  });
-  const surroundMesh = new THREE.Mesh(surroundGeo, surroundMat);
-  surroundMesh.name = 'SiteSurroundGround';
-  surroundMesh.position.y = -0.05;
-  surroundMesh.receiveShadow = true;
-  root.add(surroundMesh);
-
-  // Landscaped boulevard trees & warm plaza lighting columns
-  root.add(createUrbanLandscapingContext(lighting));
 
   // Exterior-Only Annular Ground Contact-Shadow Apron (strictly outside the stadium bowl, zero geometry over pitch!)
   const aoCanvas = document.createElement('canvas');

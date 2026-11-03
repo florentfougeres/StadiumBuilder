@@ -30,9 +30,11 @@ import {
   isContinuousBowlShape,
   resolveAllCorners,
   resolveFloodlightRig,
+  resolveSite,
   resolveStandVomitories,
   RoofStyle,
   SeatingType,
+  SiteSetting,
   slopeDegFromRiser,
   StadiumShape,
   StandSide,
@@ -1559,6 +1561,46 @@ const MaterialsInspector: React.FC = () => {
   );
 };
 
+export const SITE_OPTIONS: { id: SiteSetting; label: string; detail: string }[] = [
+  { id: 'urban', label: 'Quartier urbain', detail: 'Îlots d’immeubles à toits de tuiles, rues arborées et boulevard circulaire' },
+  { id: 'esplanade', label: 'Esplanade', detail: 'Grand parvis minéral planté, allées axiales et pelouses' },
+  { id: 'park', label: 'Parc arboré', detail: 'Bosquets, chemins sinueux, étang et promenade sous les arbres' },
+  { id: 'parking', label: 'Parkings', detail: 'Nappes de stationnement plantées, voie de ceinture et allées piétonnes' },
+];
+
+const SiteInspector: React.FC = () => {
+  const doc = useStadiumStore((s) => s.doc);
+  const updateSite = useStadiumStore((s) => s.updateSite);
+  const site = resolveSite(doc);
+  return (
+    <>
+      <PanelHeader title="Environnement" meta={SITE_OPTIONS.find((o) => o.id === site.setting)?.label} />
+      <PanelSection title="Cadre autour du stade">
+        <OptionList
+          label="Cadre autour du stade"
+          value={site.setting}
+          onChange={(setting) => updateSite({ setting })}
+          options={SITE_OPTIONS}
+        />
+      </PanelSection>
+      <PanelSection title="Accès et sécurité">
+        <ToggleField
+          label="Entrées à tourniquets"
+          hint="Pavillons d’accès lettrés sur les axes du stade, avec billetterie"
+          checked={site.entrances}
+          onChange={(entrances) => updateSite({ entrances })}
+        />
+        <ToggleField
+          label="Périmètre clôturé"
+          hint="Grille anti-intrusion autour du parvis, ouverte à chaque entrée"
+          checked={site.perimeterFence}
+          onChange={(perimeterFence) => updateSite({ perimeterFence })}
+        />
+      </PanelSection>
+    </>
+  );
+};
+
 export const Inspector: React.FC<{ node: EditorNode }> = ({ node }) => {
   switch (node) {
     case 'bowl':
@@ -1569,6 +1611,8 @@ export const Inspector: React.FC<{ node: EditorNode }> = ({ node }) => {
       return <RoofInspector />;
     case 'materials':
       return <MaterialsInspector />;
+    case 'site':
+      return <SiteInspector />;
     case 'objects':
       return <ObjectList />;
     case 'projects':
