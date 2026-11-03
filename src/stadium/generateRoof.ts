@@ -28,6 +28,7 @@ import {
   LightingMode,
   resolveAllCorners,
   resolveCornerPylonFrame,
+  resolveCounterweightTrusses,
   resolveFloodlightRig,
   RoofStyle,
   StadiumDocument,
@@ -1459,6 +1460,93 @@ function buildCornerPylonsRoof(
   ];
   for (const [parts, name] of named) {
     const mesh = mergedMesh(parts, primaryStructMat, name);
+    if (mesh) group.add(mesh);
+  }
+  return group;
+}
+
+/**
+ * COUNTERWEIGHTED CANTILEVER (`counterweighted_cantilever`), after the Groupama Stadium: radial
+ * steel trusses pivot on a post at the stand crest; the front arm carries the canopy over the
+ * seats, and the shorter back-span is tied down to a pier behind the stands.
+ */
+function buildCounterweightedCantileverRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const { group, bounds, innerOffset, outerOffsetFn, primaryStructMat, surface } =
+    buildPerimeterCanopyCrown(doc, crossSectionClip, maxAnisotropy);
+  const { ring, standDepthAtNormal, standHeightAtNormal } = bounds;
+  const { trussCount, backspanRatio } = resolveCounterweightTrusses(doc.roof);
+  const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
+  const stations = Math.max(4, Math.round(trussCount * Math.max(0.25, tEnd - tStart)));
+
+  const trussParts: THREE.BufferGeometry[] = [];
+  const tieParts: THREE.BufferGeometry[] = [];
+  const pierParts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < stations; i++) {
+    const t = tStart + ((closed ? i : i + 0.5) / stations) * (tEnd - tStart);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const outer = outerOffsetFn(n.nx, n.nz);
+    const pivotOff = Math.max(innerOffset + 4, standDepthAtNormal(n.nx, n.nz) - 0.5);
+    const frontLen = pivotOff - innerOffset;
+    const backOff = pivotOff + frontLen * backspanRatio;
+    const maxDepth = Math.max(3, Math.min(8, frontLen * 0.12));
+    // Bottom chord follows the canopy (held flat past its rear edge); the top chord peaks at the pivot.
+    const deckY = (off: number) => {
+      const f = Math.max(0, Math.min(1, (off - innerOffset) / Math.max(1, outer - innerOffset)));
+      return surface(t, f) + 0.35;
+    };
+    const depthAt = (off: number) =>
+      off <= pivotOff
+        ? 0.8 + (maxDepth - 0.8) * ((off - innerOffset) / frontLen)
+        : maxDepth - (maxDepth - 1.2) * ((off - pivotOff) / (backOff - pivotOff));
+    const nodes = Math.max(6, Math.round((backOff - innerOffset) / 4));
+    const bottom: THREE.Vector3[] = [];
+    const top: THREE.Vector3[] = [];
+    for (let k = 0; k <= nodes; k++) {
+      const off = innerOffset + ((backOff - innerOffset) * k) / nodes;
+      const p = sampleRoundedBowlRing(ring, t, off);
+      const y = deckY(Math.min(off, outer));
+      bottom.push(new THREE.Vector3(p.x, y, p.z));
+      top.push(new THREE.Vector3(p.x, y + depthAt(off), p.z));
+    }
+    for (let k = 0; k < nodes; k++) {
+      trussParts.push(beamGeometry(bottom[k], bottom[k + 1], 0.55, 0.55));
+      trussParts.push(beamGeometry(top[k], top[k + 1], 0.6, 0.6));
+      const [d0, d1] = k % 2 === 0 ? [bottom[k], top[k + 1]] : [top[k], bottom[k + 1]];
+      trussParts.push(beamGeometry(d0, d1, 0.28, 0.28));
+      trussParts.push(beamGeometry(bottom[k + 1], top[k + 1], 0.24, 0.24));
+    }
+
+    // Fulcrum post from the stand crest up to the truss.
+    const pivot = sampleRoundedBowlRing(ring, t, pivotOff);
+    trussParts.push(
+      beamGeometry(
+        new THREE.Vector3(pivot.x, standHeightAtNormal(n.nx, n.nz) - 0.5, pivot.z),
+        new THREE.Vector3(pivot.x, deckY(pivotOff), pivot.z),
+        1.1,
+        1.1
+      )
+    );
+
+    // Vertical tie rod from the back-span end down to a concrete pier behind the stands.
+    const tail = bottom[nodes];
+    const anchor = sampleRoundedBowlRing(ring, t, backOff);
+    tieParts.push(beamGeometry(tail, new THREE.Vector3(anchor.x, 1.6, anchor.z), 0.3, 0.3));
+    const pier = new THREE.BoxGeometry(2.4, 1.6, 2.4);
+    pier.translate(anchor.x, 0.8, anchor.z);
+    pierParts.push(pier);
+  }
+
+  const named: [THREE.BufferGeometry[], string, THREE.Material][] = [
+    [trussParts, 'CounterweightTrusses', primaryStructMat],
+    [tieParts, 'CounterweightTieRods', primaryStructMat],
+    [pierParts, 'CounterweightPiers', createConcreteBowlMaterial(maxAnisotropy)],
+  ];
+  for (const [parts, name, mat] of named) {
+    const mesh = mergedMesh(parts, mat, name);
     if (mesh) group.add(mesh);
   }
   return group;
@@ -3169,6 +3257,11 @@ function buildRoofAssembly(
 
     if (doc.roof.style === 'retractable' || doc.roof.style === 'petal_iris') {
       root.add(buildRetractableRoof(doc, crossSectionClip, maxAnisotropy));
+      return root;
+    }
+
+    if (doc.roof.style === 'counterweighted_cantilever') {
+      root.add(buildCounterweightedCantileverRoof(doc, crossSectionClip, maxAnisotropy));
       return root;
     }
 

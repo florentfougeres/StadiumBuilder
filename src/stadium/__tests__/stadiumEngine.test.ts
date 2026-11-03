@@ -214,6 +214,7 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
       'retractable',
       'petal_iris',
       'corner_pylons',
+      'counterweighted_cantilever',
       'fixed_dome',
     ];
 

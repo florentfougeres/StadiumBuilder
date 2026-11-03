@@ -34,6 +34,7 @@ export type RoofStyle =
   | 'folded_plate'
   | 'fixed_dome'
   | 'corner_pylons'
+  | 'counterweighted_cantilever'
   | 'wave_canopy'
   | 'petal_iris'
   | 'historic_gable';
@@ -263,6 +264,17 @@ export function resolveCornerPylonFrame(
   return { canopyY, crownRise, girderBotY, girderTopY, pylonTopY };
 }
 
+/**
+ * Radial truss layout of a `counterweighted_cantilever` roof (Groupama Stadium: 32 trusses,
+ * 60 m front arm, 32 m back-span tied down behind the stands).
+ */
+export function resolveCounterweightTrusses(roof: RoofConfig): { trussCount: number; backspanRatio: number } {
+  return {
+    trussCount: Math.max(12, Math.min(48, Math.round(roof.trussCount ?? 32))),
+    backspanRatio: Math.max(0.3, Math.min(0.7, roof.backspanRatio ?? 0.53)),
+  };
+}
+
 export interface RoofConfig {
   style: RoofStyle;
   heightOffset: number;
@@ -278,6 +290,10 @@ export interface RoofConfig {
   spaceFrame?: boolean;
   /** `corner_pylons`: rise (m) of the canopy toward its front edge, for a domed crown. */
   crownRise?: number;
+  /** `counterweighted_cantilever`: number of radial trusses around the bowl. */
+  trussCount?: number;
+  /** `counterweighted_cantilever`: back-span length as a share of the front arm. */
+  backspanRatio?: number;
   /** Continuous bowls only: stands under the roof; absent means the whole bowl is covered. */
   coveredSides?: StandSide[];
   /** Extends the outer edge of all roofs across the outer concourse up to the facade (enabled by default). */

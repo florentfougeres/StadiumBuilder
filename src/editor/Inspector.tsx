@@ -33,6 +33,7 @@ import {
   CORNER_PYLON_MAX_HEIGHT,
   resolveAllCorners,
   resolveCornerPylonFrame,
+  resolveCounterweightTrusses,
   resolveFloodlightRig,
   resolveSite,
   resolveRetractable,
@@ -159,6 +160,11 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
     id: 'giant_arch',
     label: 'Arche géante porteuse',
     desc: 'Grand arc métallique franchissant le stade & câbles suspente',
+  },
+  {
+    id: 'counterweighted_cantilever',
+    label: 'Fermes à contre-poids',
+    desc: 'Fermes rayonnantes en porte-à-faux, ancrées par tirants derrière les tribunes (Lyon)',
   },
   {
     id: 'corner_pylons',
@@ -1282,6 +1288,7 @@ const RoofInspector: React.FC = () => {
   const covered = roof.coveredSides ?? COVERED_SIDE_ORDER;
   const skyMode = roof.skylightMode ?? 'none';
   const skyRatio = roof.skylightRatio ?? 0.35;
+  const trusses = resolveCounterweightTrusses(roof);
   const cornerFrame = useMemo(() => {
     const m = calculateStadiumMetrics(doc);
     // Same floor as the roof builder's ring bounds.
@@ -1329,6 +1336,30 @@ const RoofInspector: React.FC = () => {
           options={ROOF_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
         />
       </PanelSection>
+      {roof.style === 'counterweighted_cantilever' && (
+        <PanelSection title="Fermes à contre-poids">
+          <SliderField
+            label="Nombre de fermes"
+            min={12}
+            max={48}
+            step={1}
+            value={trusses.trussCount}
+            display={String(trusses.trussCount)}
+            onChange={(v) => updateRoof({ trussCount: v })}
+          />
+          <SliderField
+            label="Longueur du contre-fléau"
+            hint="Bras arrière ancré au sol, en part du bras côté terrain"
+            min={0.3}
+            max={0.7}
+            step={0.01}
+            value={trusses.backspanRatio}
+            display={`${Math.round(trusses.backspanRatio * 100)} %`}
+            scale={100}
+            onChange={(v) => updateRoof({ backspanRatio: v })}
+          />
+        </PanelSection>
+      )}
       {roof.style === 'corner_pylons' && (
         <PanelSection title="Pylônes et méga-poutres">
           <SliderField
