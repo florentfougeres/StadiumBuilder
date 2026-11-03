@@ -2796,6 +2796,7 @@ export function createGrassBladeNormalMap(maxAnisotropy: number = 4): THREE.Data
 }
 
 const TURF_DETAIL_SIZE = 512;
+const TURF_DETAIL_CACHE_KEY = 'turf_close_detail_v1';
 
 /**
  * Rasterises a tileable field of individual grass blades (bright tips, dark gaps,
@@ -2803,6 +2804,9 @@ const TURF_DETAIL_SIZE = 512;
  * 128 = ×1 (mean-normalised), alpha carries a slow macro-patch noise.
  */
 function createTurfDetailBuffers(): CachedPbrBuffers {
+  // The blade field below is costly; skip it when the buffers are already cached.
+  const cached = pbrBufferCache.get(TURF_DETAIL_CACHE_KEY);
+  if (cached) return cached;
   const n = TURF_DETAIL_SIZE;
   const height = new Float32Array(n * n);
   const tone = new Float32Array(n * n);
@@ -2858,7 +2862,7 @@ function createTurfDetailBuffers(): CachedPbrBuffers {
   }
   const mean = sum.map((s) => s / (n * n));
 
-  return synthesizeCachedPbrBuffers('turf_close_detail_v1', n, n, 2.2, false, (u, v, px, py) => {
+  return synthesizeCachedPbrBuffers(TURF_DETAIL_CACHE_KEY, n, n, 2.2, false, (u, v, px, py) => {
     const i = py * n + px;
     return {
       r: (mult[i * 3] / mean[0]) * 128,

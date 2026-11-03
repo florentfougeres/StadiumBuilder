@@ -74,19 +74,8 @@ export function generateEnvelopeSkirt(
       ? 'south'
       : 'north';
 
-  // Only the cladding counts as the roof underside: arches, masts and cables pass over the
-  // facade line without closing it.
-  const isCanopy = (obj: THREE.Object3D | null): boolean => {
-    for (let o = obj; o; o = o.parent) {
-      if (CANOPY_NAMES.has(o.name)) return true;
-    }
-    return false;
-  };
-
   roofGroup.updateMatrixWorld(true);
-  const raycaster = new THREE.Raycaster();
-  raycaster.far = MAX_SKIRT;
-  const up = new THREE.Vector3(0, 1, 0);
+  const probeRoofUnderside = createCanopyProbe(roofGroup);
   const origin = new THREE.Vector3();
 
   const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
@@ -112,8 +101,7 @@ export function generateEnvelopeSkirt(
       // The roof edge may stop just short of the facade line: probe a little inward too.
       for (const inset of ROOF_EDGE_PROBES) {
         origin.set(p.x - p.nx * inset, baseY + 0.2, p.z - p.nz * inset);
-        raycaster.set(origin, up);
-        const hit = raycaster.intersectObject(roofGroup, true).find((h) => isCanopy(h.object));
+        const hit = probeRoofUnderside(origin);
         if (hit && hit.distance > MIN_SKIRT) {
           topY = hit.point.y;
           break;
@@ -207,6 +195,83 @@ export function generateEnvelopeSkirt(
     if (dressing) group.add(dressing);
   }
   return group;
+}
+
+/**
+ * Nearest roof-cladding hit straight above a point, within `MAX_SKIRT`. Only the cladding counts
+ * as the roof underside: arches, masts and cables pass over the facade line without closing it.
+ * Every cladding mesh and instance is boxed once in world space, so each ray only intersects the
+ * few pieces above it instead of every truss instance of the roof.
+ */
+function createCanopyProbe(
+  roofGroup: THREE.Object3D
+): (origin: THREE.Vector3) => THREE.Intersection | null {
+  const raycaster = new THREE.Raycaster();
+  raycaster.far = MAX_SKIRT;
+  const up = new THREE.Vector3(0, 1, 0);
+  // Lines and points hit within their threshold of the ray, so their boxes are widened by it.
+  const margin = Math.max(raycaster.params.Line.threshold, raycaster.params.Points.threshold);
+
+  const boxes: THREE.Box3[] = [];
+  const tests: ((hits: THREE.Intersection[]) => void)[] = [];
+  const instanceMesh = new THREE.Mesh();
+  const instanceMatrix = new THREE.Matrix4();
+
+  const isCanopy = (obj: THREE.Object3D | null): boolean => {
+    for (let o = obj; o; o = o.parent) {
+      if (CANOPY_NAMES.has(o.name)) return true;
+    }
+    return false;
+  };
+
+  roofGroup.traverse((obj) => {
+    const geometry = (obj as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
+    if (geometry?.attributes?.position && isCanopy(obj)) {
+      if (!geometry.boundingBox) geometry.computeBoundingBox();
+      const local = geometry.boundingBox!;
+      if (obj instanceof THREE.InstancedMesh) {
+        for (let i = 0; i < obj.count; i++) {
+          const world = new THREE.Matrix4().multiplyMatrices(
+            obj.matrixWorld,
+            obj.getMatrixAt(i, instanceMatrix)
+          );
+          boxes.push(local.clone().applyMatrix4(world).expandByScalar(margin));
+          // Same per-instance test as InstancedMesh.raycast, reported against the instanced mesh.
+          tests.push((hits) => {
+            instanceMesh.geometry = obj.geometry;
+            instanceMesh.material = obj.material;
+            instanceMesh.matrixWorld = world;
+            const found: THREE.Intersection[] = [];
+            instanceMesh.raycast(raycaster, found);
+            for (const h of found) hits.push({ ...h, instanceId: i, object: obj });
+          });
+        }
+      } else {
+        boxes.push(local.clone().applyMatrix4(obj.matrixWorld).expandByScalar(margin));
+        tests.push((hits) => obj.raycast(raycaster, hits));
+      }
+    }
+  });
+
+  return (origin) => {
+    raycaster.set(origin, up);
+    const top = origin.y + MAX_SKIRT;
+    const hits: THREE.Intersection[] = [];
+    boxes.forEach((b, i) => {
+      if (
+        origin.x >= b.min.x &&
+        origin.x <= b.max.x &&
+        origin.z >= b.min.z &&
+        origin.z <= b.max.z &&
+        b.max.y >= origin.y &&
+        b.min.y <= top
+      ) {
+        tests[i](hits);
+      }
+    });
+    if (hits.length === 0) return null;
+    return hits.reduce((a, b) => (b.distance < a.distance ? b : a));
+  };
 }
 
 /** Glazing pitch (m) between the mullions of a glass windbreak. */

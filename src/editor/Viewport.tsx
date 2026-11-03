@@ -239,8 +239,10 @@ export const Viewport: React.FC = () => {
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
+    // No canvas MSAA: the post-processing pipeline renders into its own 4x multisampled target and
+    // only blits a full-screen quad to the canvas, so a multisampled canvas would be pure overhead.
     const renderer = new THREE.WebGLRenderer({
-      antialias: !isSoftwareGl,
+      antialias: false,
       powerPreference: 'high-performance',
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -252,6 +254,9 @@ export const Viewport: React.FC = () => {
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = !isSoftwareGl;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // The sun's shadow camera is fixed and the stadium only changes on rebuilds or gizmo drags, so
+    // the shadow map is redrawn then (shadowMap.needsUpdate) instead of on every orbit frame.
+    renderer.shadowMap.autoUpdate = false;
 
     container.appendChild(renderer.domElement);
 
@@ -484,6 +489,7 @@ export const Viewport: React.FC = () => {
     });
 
     transform.addEventListener('change', () => {
+      if (isDraggingGizmo) renderer.shadowMap.needsUpdate = true;
       requestRender();
     });
 
@@ -535,6 +541,7 @@ export const Viewport: React.FC = () => {
     };
     const handleContextRestored = () => {
       setWebglLost(false);
+      renderer.shadowMap.needsUpdate = true;
       requestRender();
     };
     renderer.domElement.addEventListener('webglcontextlost', handleContextLost);
@@ -739,11 +746,13 @@ export const Viewport: React.FC = () => {
     if (selectedObjectId && placedObjectMap.has(selectedObjectId)) {
       const targetGroup = placedObjectMap.get(selectedObjectId)!;
       engine.transform.attach(targetGroup);
-      engine.transform.setMode(transformMode);
+      // Effect 3 owns mode changes; reading the store here keeps them from rebuilding the stadium.
+      engine.transform.setMode(useStadiumStore.getState().transformMode);
     }
 
+    engine.renderer.shadowMap.needsUpdate = true;
     engine.requestRender();
-  }, [doc, selectedObjectId, cameraMode, transformMode]);
+  }, [doc, selectedObjectId, cameraMode]);
 
   // 3. Update TransformControls mode immediately when user toggles G / R / S
   useEffect(() => {
