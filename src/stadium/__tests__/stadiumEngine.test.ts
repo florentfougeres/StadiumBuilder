@@ -497,5 +497,65 @@ describe('StadiumForge 9 Morphologies, 13 Roofs, 4 Envelopes & Full-Height Kop W
       disposeObject3D(roofGroup);
     }
   });
+
+  it('guarantees PitchTurf is unobstructed with zero overlapping dark ground/apron planes across all 14 presets', () => {
+    ensureCanvasMock();
+    const raycaster = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, -1, 0);
+    const samplePoints: [number, number][] = [
+      [0, 0],
+      [-35, -20],
+      [35, 20],
+      [-35, 20],
+      [35, -20],
+      [0, -28],
+      [0, 28],
+      [-45, 0],
+      [45, 0],
+    ];
+
+    for (const preset of STADIUM_PRESETS) {
+      const doc = preset.createDocument();
+      const { rootGroup } = buildStadiumSceneGraph(doc, {
+        selectedObjectId: null,
+        crossSectionClip: false,
+        maxAnisotropy: 4,
+      });
+      rootGroup.updateMatrixWorld(true);
+
+      // Verify no ground/apron material uses negative polygonOffsetFactor that could bleed over the turf
+      rootGroup.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.material) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const m of mats) {
+          if (m.polygonOffset) {
+            expect(m.polygonOffsetFactor).toBeGreaterThanOrEqual(0);
+          }
+        }
+      });
+
+      // Cast vertical rays from Y = 10m straight down through Y = -5m across 9 field coordinates:
+      // ONLY `PitchTurf` may exist in that column — zero `TechnicalPitApron`, `SiteSurroundGround`, or `ExteriorContactShadow`!
+      for (const [px, pz] of samplePoints) {
+        raycaster.set(new THREE.Vector3(px, 10, pz), down);
+        raycaster.near = 0.1;
+        raycaster.far = 15;
+        const hits = raycaster.intersectObject(rootGroup, true);
+        expect(hits.length).toBeGreaterThanOrEqual(1);
+        for (const h of hits) {
+          expect(
+            h.object.name,
+            `Unexpected mesh "${h.object.name}" (parent="${h.object.parent?.name}") at (${px}, ${h.point.y.toFixed(3)}, ${pz}) in preset "${preset.id}"`
+          ).toBe('PitchTurf');
+          const hitNormalY = h.face?.normal.y ?? 0;
+          expect(hitNormalY).toBeGreaterThan(0.95);
+        }
+      }
+
+      disposeObject3D(rootGroup);
+    }
+  });
 });
+
 

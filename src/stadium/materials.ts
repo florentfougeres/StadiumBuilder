@@ -1460,9 +1460,6 @@ export function createTrackPbrMaterial(
     roughnessMap: maps.roughnessMap,
     roughness: 0.95,
     metalness: 0.03,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
   });
 }
 
@@ -1535,32 +1532,32 @@ export function getTurfPresetColors(turfId: PitchTurfMaterialId): {
   switch (turfId) {
     case 'natural_ryegrass':
       return {
-        primary: '#237435',
-        secondary: '#308f45',
-        surround: '#1b5429',
-        wearOpacity: 0.14,
+        primary: '#2b8a3e',
+        secondary: '#37a14c',
+        surround: '#236e33',
+        wearOpacity: 0.12,
       };
     case 'winter_worn':
       return {
-        primary: '#22562d',
-        secondary: '#2a6837',
-        surround: '#183f22',
-        wearOpacity: 0.34,
+        primary: '#2b6a38',
+        secondary: '#347d43',
+        surround: '#21542c',
+        wearOpacity: 0.3,
       };
     case 'pro_synthetic':
       return {
-        primary: '#166534',
-        secondary: '#1b773e',
-        surround: '#14532d',
+        primary: '#1f7a3f',
+        secondary: '#268e4b',
+        surround: '#196434',
         wearOpacity: 0.02,
       };
     case 'hybrid_emerald':
     default:
       return {
-        primary: '#1b6630',
-        secondary: '#247c3d',
-        surround: '#164e26',
-        wearOpacity: 0.12,
+        primary: '#237d3b',
+        secondary: '#2e9448',
+        surround: '#1d6631',
+        wearOpacity: 0.1,
       };
   }
 }
