@@ -3163,6 +3163,16 @@ function buildCornerBuildingPavilion(
 
   const segs = corner.facetedThreeBay ? 15 : 22;
   const frontOff = 1.45;
+  // The pitch-facing glass front runs as one straight chamfer across the corner: swept around
+  // the tight corner radius it pinched into a thin, warped cylinder.
+  const frontZone = frontOff + 1.5;
+  const at = (u: number, r: number) => {
+    if (r > frontZone) return sampleCornerQuadrantPoint(corner, u, r);
+    const p0 = sampleCornerQuadrantPoint(corner, 0, r);
+    const p1 = sampleCornerQuadrantPoint(corner, 1, r);
+    const mid = sampleCornerQuadrantPoint(corner, 0.5, r);
+    return { x: p0.x + (p1.x - p0.x) * u, z: p0.z + (p1.z - p0.z) * u, nx: mid.nx, nz: mid.nz };
+  };
   const sliceSpecs: { outerD: number; topH: number; gradeY: number }[] = [];
 
   for (let s = 0; s <= segs; s++) {
@@ -3190,7 +3200,7 @@ function buildCornerBuildingPavilion(
     const uvs = new Float32Array((segs + 1) * 2 * 2);
     const idx: number[] = [];
     for (let s = 0; s <= segs; s++) {
-      const pt = sampleCornerQuadrantPoint(corner, s / segs, radFn(s));
+      const pt = at(s / segs, radFn(s));
       const b = s * 6;
       pos[b] = pt.x;
       pos[b + 1] = yBotFn(s);
@@ -3233,8 +3243,8 @@ function buildCornerBuildingPavilion(
     const uvs = new Float32Array((segs + 1) * 2 * 2);
     const idx: number[] = [];
     for (let s = 0; s <= segs; s++) {
-      const pIn = sampleCornerQuadrantPoint(corner, s / segs, radInFn(s));
-      const pOut = sampleCornerQuadrantPoint(corner, s / segs, radOutFn(s));
+      const pIn = at(s / segs, radInFn(s));
+      const pOut = at(s / segs, radOutFn(s));
       const py = yFn(s);
       const b = s * 6;
       pos[b] = pIn.x;
@@ -3397,7 +3407,7 @@ function buildCornerBuildingPavilion(
   for (let m = 0; m <= mullionCount; m++) {
     const u = m / mullionCount;
     const sIdx = Math.min(segs, Math.round(u * segs));
-    const pt = sampleCornerQuadrantPoint(corner, u, frontOff + 1.05);
+    const pt = at(u, frontOff + 1.05);
     group.add(
       createStrut(
         new THREE.Vector3(pt.x, 0, pt.z),
@@ -3440,7 +3450,7 @@ function buildCornerBuildingPavilion(
     const rail: FacadeRailSample[] = [];
     for (let s = 0; s <= segs; s++) {
       const sp = sliceSpecs[s];
-      const pt = sampleCornerQuadrantPoint(corner, s / segs, sp.outerD + 0.15);
+      const pt = at(s / segs, sp.outerD + 0.15);
       rail.push({
         x: pt.x,
         z: pt.z,

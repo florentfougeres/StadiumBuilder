@@ -3772,9 +3772,34 @@ function buildFacetedShellRoof(
   const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
   // An even number of facets so the alternation closes around the bowl.
   const facets = 2 * Math.max(6, Math.round(ring.perimeter / 70));
-  const shell: RingProfile = (_t, nx, nz, s) => {
+  // Ring step between facet vertices, as `buildRingLoft` spaces them.
+  const { tStart, tEnd } = getBowlArcRange(doc.shape, crossSectionClip);
+  const span = tEnd - tStart;
+  const dt = span / Math.max(8, Math.round(facets * Math.max(0.25, span)));
+  const radialAt = (t: number, r: number) => {
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    return { ...sampleRoundedBowlRing(ring, t, r), nx: n.nx, nz: n.nz };
+  };
+  // Long straight facets cut the corners: take the widest stand footprint between the facet
+  // midpoints and push the vertex out by the chord sag, so the shell always clears the bowl.
+  const shellOuterAt = (t: number) => {
+    let outer = 0;
+    for (let k = -4; k <= 4; k++) {
+      const n = sampleRoundedBowlRing(ring, t + (k / 8) * dt, 0);
+      outer = Math.max(outer, canopyOuterOffsetAt(n.nx, n.nz, 3.8));
+    }
+    let sag = 0;
+    for (const side of [-1, 1]) {
+      const a = radialAt(t, outer);
+      const b = radialAt(t + side * dt, outer);
+      const m = radialAt(t + side * dt * 0.5, outer);
+      sag = Math.max(sag, (m.x - (a.x + b.x) / 2) * m.nx + (m.z - (a.z + b.z) / 2) * m.nz);
+    }
+    return outer + Math.max(0, sag) * 1.1;
+  };
+  const shell: RingProfile = (t, _nx, _nz, s) => {
     const odd = s % 2 === 1;
-    const outer = canopyOuterOffsetAt(nx, nz, 3.8);
+    const outer = shellOuterAt(t);
     return [
       { r: outer + (odd ? 8 : 4.5), y: 0 },
       { r: outer + (odd ? 4.5 : 9), y: roofY * 0.55 },
