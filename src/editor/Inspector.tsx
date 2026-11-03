@@ -134,9 +134,14 @@ const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
     desc: 'Continuité fluide entre façade et couverture',
   },
   {
-    id: 'retractable_arch',
+    id: 'twin_arch',
+    label: 'Arches jumelles',
+    desc: '2 arcs treillis parallèles portant l’anneau de couverture',
+  },
+  {
+    id: 'retractable',
     label: 'Toit rétractable motorisé',
-    desc: 'Panneaux mobiles coulissants sur rails porteurs',
+    desc: 'Panneaux coulissants épousant l’ouverture centrale',
   },
   {
     id: 'fixed_dome',
@@ -1156,7 +1161,7 @@ export const Inspector: React.FC<InspectorProps> = ({ section, layout = 'sidebar
             ))}
           </div>
 
-          {doc.roof.style === 'retractable_arch' && (
+          {doc.roof.style === 'retractable' && (
             <label className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-slate-950 border border-emerald-500/40 cursor-pointer hover:border-emerald-400 text-xs">
               <span className="text-slate-100 font-medium">
                 Fermer les panneaux du toit rétractable

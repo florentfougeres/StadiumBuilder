@@ -390,6 +390,8 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       ? Number((maxStandHeight + doc.roof.heightOffset + 22).toFixed(1))
       : doc.roof.style === 'giant_arch'
       ? Number((maxStandHeight + doc.roof.heightOffset + 38).toFixed(1))
+      : doc.roof.style === 'twin_arch'
+      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 29).toFixed(1))
       : Number((maxStandHeight + doc.roof.heightOffset).toFixed(1));
 
   const standsFootprint = activeStands.reduce(
@@ -476,7 +478,10 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
     case 'giant_arch':
       baseCostPerSeat += 1180 * doc.roof.coverageRatio;
       break;
-    case 'retractable_arch':
+    case 'twin_arch':
+      baseCostPerSeat += 1100 * doc.roof.coverageRatio;
+      break;
+    case 'retractable':
       baseCostPerSeat += 1350 * doc.roof.coverageRatio;
       break;
     case 'fixed_dome':

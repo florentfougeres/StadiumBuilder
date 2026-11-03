@@ -146,6 +146,22 @@ function sanitizeLegacyNames(doc: StadiumDocument): void {
   });
 }
 
+/** Upgrades documents saved by older versions (renamed roof styles, missing materials). */
+function migrateLegacyDocument(doc: StadiumDocument): StadiumDocument {
+  const legacyRoofStyle = doc.roof.style as string;
+  if (legacyRoofStyle === 'bowl_canopy') {
+    doc.roof.style = 'bicycle_wheel';
+  } else if (legacyRoofStyle === 'retractable_arch') {
+    doc.roof.style = 'retractable';
+  }
+  doc.materials = {
+    ...DEFAULT_STADIUM_MATERIALS,
+    ...(doc.materials ?? {}),
+  };
+  sanitizeLegacyNames(doc);
+  return doc;
+}
+
 export const useStadiumStore = create<StadiumStoreState>((set, get) => {
   const initialDoc = createPresetDocument('bowl_bowstring_60k');
 
@@ -178,15 +194,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     initFromDb: async () => {
       const projects = await listProjectsFromDb();
       if (projects.length > 0) {
-        const restored = cloneDocument(projects[0].document);
-        if ((restored.roof.style as string) === 'bowl_canopy') {
-          restored.roof.style = 'bicycle_wheel';
-        }
-        restored.materials = {
-          ...DEFAULT_STADIUM_MATERIALS,
-          ...(restored.materials ?? {}),
-        };
-        sanitizeLegacyNames(restored);
+        const restored = migrateLegacyDocument(cloneDocument(projects[0].document));
         set({
           doc: restored,
           savedProjects: projects,
@@ -222,15 +230,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     loadDocument: (incoming) => {
       const { doc, history } = get();
       const nextHistory = pushHistorySnapshot(history, doc);
-      const clean = cloneDocument(incoming);
-      if ((clean.roof.style as string) === 'bowl_canopy') {
-        clean.roof.style = 'bicycle_wheel';
-      }
-      clean.materials = {
-        ...DEFAULT_STADIUM_MATERIALS,
-        ...(clean.materials ?? {}),
-      };
-      sanitizeLegacyNames(clean);
+      const clean = migrateLegacyDocument(cloneDocument(incoming));
       clean.updatedAt = Date.now();
       set({
         doc: clean,
@@ -285,7 +285,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
           d.stands.south.enabled = true;
           d.stands.west.enabled = true;
           d.stands.east.enabled = false;
-          if (d.roof.style === 'truss' || d.roof.style === 'retractable_arch') {
+          if (d.roof.style === 'truss' || d.roof.style === 'retractable') {
             d.roof.style = 'cantilever';
           }
         } else if (shape === 'modern_bowl') {

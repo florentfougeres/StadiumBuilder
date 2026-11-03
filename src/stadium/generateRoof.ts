@@ -583,25 +583,18 @@ function buildSuspendedMastsRoof(
 }
 
 /**
- * 3. MONUMENTAL TWIN ARCHES & RETRACTABLE ROOF (`retractable_arch`):
- * Supports `doc.roof.retractableClosed` (`true` = closed indoor arena, `false` = open to sky).
+ * Shared perimeter crown for whole-arena roofs with an open centre: annular canopy following the
+ * bowl contour, catwalk floodlights on its inner edge and raking columns down to the stand crest.
  */
-function buildRetractableTwinArchRoof(
+function buildPerimeterCanopyCrown(
   doc: StadiumDocument,
   crossSectionClip: boolean,
   maxAnisotropy: number
-): THREE.Group {
+) {
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
-  const {
-    ring,
-    innerHalfX,
-    innerHalfZ,
-    maxStandH,
-    avgDepth,
-    standHeightAtNormal,
-    standDepthAtNormal,
-  } = computeStadiumRingBounds(doc);
+  const bounds = computeStadiumRingBounds(doc);
+  const { ring, maxStandH, avgDepth, standHeightAtNormal, standDepthAtNormal } = bounds;
   const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
   const arcFraction = Math.max(0.25, tEnd - tStart);
   const roofY = maxStandH + Math.max(4.0, doc.roof.heightOffset);
@@ -638,12 +631,6 @@ function buildRetractableTwinArchRoof(
   );
 
   const primaryStructMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
-  const cableSteelMat = new THREE.MeshStandardMaterial({
-    color: 0x334155,
-    roughness: 0.3,
-    metalness: 0.84,
-  });
-  const concreteMat = createConcreteBowlMaterial(maxAnisotropy);
 
   const colBays = Math.max(12, Math.round(40 * arcFraction));
   for (let i = 0; i < colBays; i++) {
@@ -670,6 +657,137 @@ function buildRetractableTwinArchRoof(
       )
     );
   }
+
+  return { group, bounds, roofY, innerOffset, outerOffset, primaryStructMat };
+}
+
+/**
+ * 3. RETRACTABLE ROOF (`retractable`):
+ * Perimeter canopy whose central opening is covered by two motorized sliding leaves.
+ * Each leaf is cut from the opening contour so its outer edges follow the bowl outline.
+ * Supports `doc.roof.retractableClosed` (`true` = closed indoor arena, `false` = open to sky).
+ */
+function buildRetractableRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const { group, bounds, roofY, innerOffset, outerOffset, primaryStructMat } =
+    buildPerimeterCanopyCrown(doc, crossSectionClip, maxAnisotropy);
+  const { ring } = bounds;
+
+  if (doc.shape === 'horseshoe') {
+    return group;
+  }
+
+  // Leaves overlap the canopy rim by 2 m; the cross-section keeps only the north half (z <= 0).
+  const leafOverlap = 2.0;
+  const contourSegs = 96;
+  const contour: { x: number; z: number }[] = [];
+  for (let s = 0; s < contourSegs; s++) {
+    const p = sampleRoundedBowlRing(ring, s / contourSegs, innerOffset + leafOverlap);
+    contour.push({ x: p.x, z: crossSectionClip ? Math.min(0, p.z) : p.z });
+  }
+  const openingHalfX = Math.max(...contour.map((p) => Math.abs(p.x)));
+
+  // Half-depth of the (convex) contour at a given x, by intersecting its edges with that line.
+  const contourHalfDepthAt = (x: number): number => {
+    let maxZ = 0;
+    for (let i = 0; i < contour.length; i++) {
+      const a = contour[i];
+      const b = contour[(i + 1) % contour.length];
+      if ((a.x - x) * (b.x - x) > 0 || a.x === b.x) continue;
+      const f = (x - a.x) / (b.x - a.x);
+      maxZ = Math.max(maxZ, Math.abs(a.z + f * (b.z - a.z)));
+    }
+    return maxZ;
+  };
+
+  // Open leaves park over the canopy, so their travel is bounded by its width.
+  const maxTravel = Math.max(0, outerOffset - innerOffset - leafOverlap);
+  const isClosed = Boolean(doc.roof.retractableClosed);
+  const travel = isClosed ? 0 : maxTravel;
+  const leafY = roofY + 2.15;
+
+  const leafMat = new THREE.MeshPhysicalMaterial({
+    color: 0xe0f2fe,
+    roughness: 0.12,
+    metalness: 0.15,
+    clearcoat: 0.9,
+    transparent: true,
+    opacity: isClosed ? 0.84 : 0.65,
+    side: THREE.DoubleSide,
+  });
+
+  for (const xSign of [-1, 1] as const) {
+    // Clamping a convex outline to one side of x = 0 yields that half of the opening.
+    const shape = new THREE.Shape(
+      contour.map((p) => {
+        const x = xSign > 0 ? Math.max(0, p.x) : Math.min(0, p.x);
+        return new THREE.Vector2(x, -p.z);
+      })
+    );
+    const leafGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.55, bevelEnabled: false });
+    leafGeo.rotateX(-Math.PI / 2);
+    const leaf = new THREE.Mesh(leafGeo, leafMat);
+    leaf.position.set(xSign * travel, leafY, 0);
+    leaf.castShadow = true;
+    leaf.renderOrder = 3;
+    group.add(leaf);
+
+    // Transverse motorized box-trusses, each trimmed to the leaf outline at its station
+    for (const frac of [0.12, 0.4, 0.68, 0.94]) {
+      const localX = xSign * openingHalfX * frac;
+      const beamZ = contourHalfDepthAt(localX);
+      if (beamZ < 2) continue;
+      const zMin = -beamZ;
+      const zMax = crossSectionClip ? 0 : beamZ;
+      const beam = new THREE.Mesh(
+        new THREE.BoxGeometry(0.65, 1.15, zMax - zMin),
+        primaryStructMat
+      );
+      beam.position.set(localX + xSign * travel, leafY + 1.05, (zMin + zMax) / 2);
+      beam.castShadow = true;
+      group.add(beam);
+    }
+  }
+
+  // Longitudinal runway rails the leaves slide along, laid over the canopy
+  const railHalfLen = openingHalfX + maxTravel;
+  const railZ = contourHalfDepthAt(0) * 0.6;
+  for (const zSign of crossSectionClip ? [-1] : [-1, 1]) {
+    const rail = new THREE.Mesh(
+      new THREE.BoxGeometry(railHalfLen * 2, 0.4, 0.9),
+      primaryStructMat
+    );
+    rail.position.set(0, roofY + 1.9, zSign * railZ);
+    group.add(rail);
+  }
+
+  return group;
+}
+
+/**
+ * 4. MONUMENTAL TWIN ARCHES (`twin_arch`):
+ * Annular canopy hung from two parallel lattice arches, with a suspended centre-hung scoreboard.
+ */
+function buildTwinArchRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const { group, bounds, roofY, primaryStructMat } = buildPerimeterCanopyCrown(
+    doc,
+    crossSectionClip,
+    maxAnisotropy
+  );
+  const { innerHalfX, innerHalfZ, avgDepth } = bounds;
+  const cableSteelMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    roughness: 0.3,
+    metalness: 0.84,
+  });
+  const concreteMat = createConcreteBowlMaterial(maxAnisotropy);
 
   const archHalfSpanX = innerHalfX + avgDepth + 24;
   const archApexY = roofY + 26;
@@ -750,47 +868,6 @@ function buildRetractableTwinArchRoof(
       );
     }
 
-    // Motorized Retractable Central Panels (open vs closed!)
-    const isClosed = Boolean(doc.roof.retractableClosed);
-    const oculusSpanX = (innerHalfX + innerOffset) * 2 + 4;
-    const oculusSpanZ = (innerHalfZ + innerOffset) * 2 + 4;
-    const panelHalfLen = oculusSpanX * 0.51;
-
-    const retractMat = new THREE.MeshPhysicalMaterial({
-      color: 0xe0f2fe,
-      roughness: 0.12,
-      metalness: 0.15,
-      clearcoat: 0.9,
-      transparent: true,
-      opacity: isClosed ? 0.84 : 0.65,
-      side: THREE.DoubleSide,
-    });
-
-    for (const xSign of [-1, 1] as const) {
-      const panelW = isClosed ? panelHalfLen : panelHalfLen * 0.68;
-      const centerPos = isClosed
-        ? xSign * (panelHalfLen * 0.5)
-        : xSign * (innerHalfX + innerOffset - panelW * 0.35);
-
-      const panel = new THREE.Mesh(
-        new THREE.BoxGeometry(panelW, 0.55, oculusSpanZ),
-        retractMat
-      );
-      panel.position.set(centerPos, roofY + 2.15, 0);
-      panel.castShadow = true;
-      group.add(panel);
-
-      // Transverse motorized box-trusses across sliding leaves
-      for (const txOff of [-panelW * 0.38, 0, panelW * 0.38]) {
-        const beam = new THREE.Mesh(
-          new THREE.BoxGeometry(0.65, 1.15, oculusSpanZ + 1.2),
-          primaryStructMat
-        );
-        beam.position.set(centerPos + txOff, roofY + 2.65, 0);
-        group.add(beam);
-      }
-    }
-
     const jumboY = Math.max(24, roofY - 7.5);
     const jumboBody = new THREE.Mesh(
       new THREE.BoxGeometry(34, 9.5, 13),
@@ -835,7 +912,7 @@ function buildRetractableTwinArchRoof(
 }
 
 /**
- * 4. ICONIC GIANT SINGLE ARCH (`giant_arch`):
+ * 5. ICONIC GIANT SINGLE ARCH (`giant_arch`):
  * Monumental 3-chord spatial lattice steel arch spanning ~275m across the entire stadium
  * at a tilted architectural angle, suspending the roof canopy via fan stay cables!
  */
@@ -1470,25 +1547,30 @@ function buildFixedDomeRoof(
 ): THREE.Group {
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
-  const {
-    ring,
-    innerHalfX,
-    innerHalfZ,
-    maxStandH,
-    avgDepth,
-    standHeightAtNormal,
-    standDepthAtNormal,
-  } = computeStadiumRingBounds(doc);
+  const { ring, maxStandH, avgDepth, standHeightAtNormal, standDepthAtNormal } =
+    computeStadiumRingBounds(doc);
 
   const springY = maxStandH + Math.max(2.8, doc.roof.heightOffset * 0.7);
   const domeRise = 23.5;
-  const rx = innerHalfX + avgDepth + 3.2;
-  const rz = innerHalfZ + avgDepth + 3.2;
+  const eaveOffset = avgDepth + 3.2;
+
+  // Dome surface point: the eave follows the bowl contour, and each higher course is that
+  // contour scaled toward the centre, so the sides hug the stadium outline instead of an ellipse.
+  const domePoint = (t: number, theta: number, yAdjust = 0): THREE.Vector3 => {
+    const eave = sampleRoundedBowlRing(ring, t, eaveOffset);
+    const scale = Math.cos(theta);
+    return new THREE.Vector3(
+      eave.x * scale,
+      springY + Math.sin(theta) * domeRise + yAdjust,
+      eave.z * scale
+    );
+  };
 
   const uSegs = crossSectionClip ? 48 : 96;
   const vSegs = 16;
-  const phiStart = crossSectionClip ? Math.PI : 0;
-  const phiSpan = crossSectionClip ? Math.PI : Math.PI * 2;
+  // The dome always closes the full contour (even over a horseshoe's open end).
+  const tStart = crossSectionClip ? 0.5 : 0;
+  const tSpan = crossSectionClip ? 0.5 : 1;
   const uCount = crossSectionClip ? uSegs + 1 : uSegs;
 
   // Main outer dome shell (`v` from `0` = perimeter eaves to `0.84` = zenithal oculus edge)
@@ -1497,19 +1579,16 @@ function buildFixedDomeRoof(
   const indices: number[] = [];
 
   for (let u = 0; u < uCount; u++) {
-    const phi = phiStart + (u / uSegs) * phiSpan;
-    const cosP = Math.cos(phi);
-    const sinP = Math.sin(phi);
+    const t = tStart + (u / uSegs) * tSpan;
 
     for (let v = 0; v <= vSegs; v++) {
       const theta = (v / vSegs) * (Math.PI * 0.43); // Leaves central glazed skylight oculus (`theta > 0.43*PI`)
-      const radFrac = Math.cos(theta);
-      const yOff = Math.sin(theta) * domeRise;
+      const p = domePoint(t, theta);
 
       const idx = (u * (vSegs + 1) + v) * 3;
-      positions[idx] = cosP * rx * radFrac;
-      positions[idx + 1] = springY + yOff;
-      positions[idx + 2] = sinP * rz * radFrac;
+      positions[idx] = p.x;
+      positions[idx + 1] = p.y;
+      positions[idx + 2] = p.z;
 
       const uvIdx = (u * (vSegs + 1) + v) * 2;
       uvs[uvIdx] = (u / uSegs) * (crossSectionClip ? 8 : 16);
@@ -1549,21 +1628,25 @@ function buildFixedDomeRoof(
   domeMesh.renderOrder = 2;
   group.add(domeMesh);
 
-  // Translucent Zenithal Skylight Crown Cap
-  const oculusRx = rx * Math.cos(Math.PI * 0.43);
-  const oculusRz = rz * Math.cos(Math.PI * 0.43);
-  const oculusY = springY + Math.sin(Math.PI * 0.43) * domeRise;
-  const skylightGeo = new THREE.CylinderGeometry(
-    0.1,
-    1.0,
-    2.4,
-    crossSectionClip ? 24 : 48,
-    1,
-    false,
-    crossSectionClip ? Math.PI * 0.5 : 0,
-    crossSectionClip ? Math.PI : Math.PI * 2
-  );
-  skylightGeo.scale(oculusRx, 1, oculusRz);
+  // Translucent Zenithal Skylight Crown Cap: a low cone fanned over the contour-shaped oculus
+  const oculusTheta = Math.PI * 0.43;
+  const capSegs = crossSectionClip ? 48 : 96;
+  const capRimCount = crossSectionClip ? capSegs + 1 : capSegs;
+  const capPositions: number[] = [];
+  for (let s = 0; s < capRimCount; s++) {
+    const p = domePoint(tStart + (s / capSegs) * tSpan, oculusTheta, -0.15);
+    capPositions.push(p.x, p.y, p.z);
+  }
+  const capApexY = springY + Math.sin(oculusTheta) * domeRise + 2.25;
+  capPositions.push(0, capApexY, 0);
+  const capIndices: number[] = [];
+  for (let s = 0; s < capSegs; s++) {
+    capIndices.push(capRimCount, (s + 1) % capRimCount, s);
+  }
+  const skylightGeo = new THREE.BufferGeometry();
+  skylightGeo.setAttribute('position', new THREE.Float32BufferAttribute(capPositions, 3));
+  skylightGeo.setIndex(capIndices);
+  skylightGeo.computeVertexNormals();
   const skylightMat = new THREE.MeshPhysicalMaterial({
     color: 0xe0f2fe,
     roughness: 0.08,
@@ -1573,28 +1656,18 @@ function buildFixedDomeRoof(
     opacity: 0.58,
     side: THREE.DoubleSide,
   });
-  const skylightMesh = new THREE.Mesh(skylightGeo, skylightMat);
-  skylightMesh.position.y = oculusY + 1.05;
-  group.add(skylightMesh);
+  group.add(new THREE.Mesh(skylightGeo, skylightMat));
 
   const structMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
 
   // Radial spatial arch ribs + circumferential purlin rings
   const ribCount = crossSectionClip ? 13 : 24;
   for (let r = 0; r < ribCount; r++) {
-    const phi =
-      phiStart +
-      (r / (crossSectionClip ? Math.max(1, ribCount - 1) : ribCount)) * phiSpan;
+    const t =
+      tStart + (r / (crossSectionClip ? Math.max(1, ribCount - 1) : ribCount)) * tSpan;
     const ribPts: THREE.Vector3[] = [];
     for (let v = 0; v <= 12; v++) {
-      const th = (v / 12) * (Math.PI * 0.48);
-      ribPts.push(
-        new THREE.Vector3(
-          Math.cos(phi) * rx * Math.cos(th),
-          springY + Math.sin(th) * domeRise - 0.25,
-          Math.sin(phi) * rz * Math.cos(th)
-        )
-      );
+      ribPts.push(domePoint(t, (v / 12) * (Math.PI * 0.43), -0.25));
     }
     group.add(
       new THREE.Mesh(
@@ -1609,14 +1682,7 @@ function buildFixedDomeRoof(
     const purlinPts: THREE.Vector3[] = [];
     const segN = crossSectionClip ? 36 : 72;
     for (let s = 0; s <= segN; s++) {
-      const phi = phiStart + (s / segN) * phiSpan;
-      purlinPts.push(
-        new THREE.Vector3(
-          Math.cos(phi) * rx * Math.cos(th),
-          springY + Math.sin(th) * domeRise - 0.2,
-          Math.sin(phi) * rz * Math.cos(th)
-        )
-      );
+      purlinPts.push(domePoint(tStart + (s / segN) * tSpan, th, -0.2));
     }
     const closedRing = !crossSectionClip;
     group.add(
@@ -1637,13 +1703,12 @@ function buildFixedDomeRoof(
   const vBayCount = crossSectionClip ? 18 : 36;
   for (let i = 0; i < vBayCount; i++) {
     const frac = crossSectionClip ? i / Math.max(1, vBayCount - 1) : i / vBayCount;
-    const phi = phiStart + frac * phiSpan;
-    const t = (((phi / (Math.PI * 2)) % 1) + 1) % 1;
+    const t = tStart + frac * tSpan;
     const s0 = sampleRoundedBowlRing(ring, t, 0);
     const d0 = standDepthAtNormal(s0.nx, s0.nz);
     const h0 = standHeightAtNormal(s0.nx, s0.nz);
     const wallPt = sampleRoundedBowlRing(ring, t, d0 - 0.3);
-    const domeEdge = new THREE.Vector3(Math.cos(phi) * rx, springY, Math.sin(phi) * rz);
+    const domeEdge = domePoint(t, 0);
 
     group.add(
       createStrutBetween(
@@ -2271,8 +2336,13 @@ export function generateRoofGroup(
       return root;
     }
 
-    if (doc.roof.style === 'retractable_arch') {
-      root.add(buildRetractableTwinArchRoof(doc, crossSectionClip, maxAnisotropy));
+    if (doc.roof.style === 'twin_arch') {
+      root.add(buildTwinArchRoof(doc, crossSectionClip, maxAnisotropy));
+      return root;
+    }
+
+    if (doc.roof.style === 'retractable') {
+      root.add(buildRetractableRoof(doc, crossSectionClip, maxAnisotropy));
       return root;
     }
 

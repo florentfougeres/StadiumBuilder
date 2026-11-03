@@ -165,7 +165,7 @@ describe('StadiumForge 9 Morphologies, 13 Roofs, 4 Envelopes & Full-Height Kop W
     expect(foundSteppedMultiMatBowl).toBe(true);
   });
 
-  it('builds all 12 covered structural roof typologies plus retractable closed state across bowls and discrete stands', () => {
+  it('builds all 13 covered structural roof typologies plus retractable closed state across bowls and discrete stands', () => {
     ensureCanvasMock();
     const styles: RoofStyle[] = [
       'column_supported',
@@ -178,7 +178,8 @@ describe('StadiumForge 9 Morphologies, 13 Roofs, 4 Envelopes & Full-Height Kop W
       'bicycle_wheel',
       'tensile_net',
       'enveloping_shell',
-      'retractable_arch',
+      'twin_arch',
+      'retractable',
       'fixed_dome',
     ];
 
@@ -189,7 +190,7 @@ describe('StadiumForge 9 Morphologies, 13 Roofs, 4 Envelopes & Full-Height Kop W
           : 'bowl_bowstring_60k'
       );
       doc.roof.style = style;
-      if (style === 'retractable_arch') {
+      if (style === 'retractable') {
         doc.roof.retractableClosed = true;
       }
       const roofGroup = generateRoofGroup(doc, false);

@@ -584,7 +584,7 @@ export const STADIUM_PRESETS: PresetDefinition[] = [
         }),
       },
       roof: {
-        style: 'retractable_arch',
+        style: 'retractable',
         heightOffset: 5.5,
         coverageRatio: 1.08,
         opacity: 0.92,

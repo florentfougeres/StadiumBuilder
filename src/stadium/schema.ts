@@ -25,7 +25,8 @@ export type RoofStyle =
   | 'bicycle_wheel'
   | 'tensile_net'
   | 'enveloping_shell'
-  | 'retractable_arch'
+  | 'twin_arch'
+  | 'retractable'
   | 'fixed_dome';
 
 export type EnvelopeStyle =
