@@ -626,9 +626,14 @@ function buildStraightStandMesh(
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
   const envelope: EnvelopeStyle = mats.envelopeStyle ?? 'enveloping_skin';
+  const ownStructure = stand.structureMaterialOverride;
   const isHollow =
     doc.roof.style !== 'enveloping_shell' &&
-    (envelope === 'exposed_structure' || envelope === 'colonnade_forest');
+    (envelope === 'exposed_structure' ||
+      envelope === 'colonnade_forest' ||
+      (ownStructure !== undefined &&
+        ownStructure !== 'inherit' &&
+        ownStructure !== 'reinforced_concrete'));
   const isNight = doc.lighting !== 'day';
 
   const {
@@ -1368,6 +1373,7 @@ function buildStraightStandMesh(
         pattern: facadePattern,
         density: mats.facadeDensity ?? 1.0,
         depth: mats.facadeDepth ?? 0.85,
+        bulge: mats.facadeBulge ?? 0,
         primaryMat: facadeMat,
         accentMat: structureMat,
         name: `StandParametricFacade_${stand.id}`,
@@ -3056,6 +3062,7 @@ function buildCornerVirageQuadrant(
         pattern: mats.facadePattern,
         density: mats.facadeDensity ?? 1.0,
         depth: mats.facadeDepth ?? 0.85,
+        bulge: mats.facadeBulge ?? 0,
         primaryMat: facadeMat,
         accentMat: structureMat,
       });
@@ -3444,6 +3451,7 @@ function buildCornerBuildingPavilion(
       pattern: mats.facadePattern,
       density: mats.facadeDensity ?? 1.0,
       depth: mats.facadeDepth ?? 0.85,
+      bulge: mats.facadeBulge ?? 0,
       primaryMat: facadeMat,
       accentMat: structureMat,
     });
@@ -5150,6 +5158,7 @@ function buildModernBowlSweep(
         pattern: mats.facadePattern,
         density: mats.facadeDensity ?? 1.0,
         depth: mats.facadeDepth ?? 0.85,
+        bulge: mats.facadeBulge ?? 0,
         primaryMat: facadeMat,
         accentMat: structureMat,
       });
@@ -5246,7 +5255,9 @@ export function generateStandsGroup(
       seatMat,
       concreteMat,
       facadeMat,
-      structureMat,
+      stand.structureMaterialOverride && stand.structureMaterialOverride !== 'inherit'
+        ? createStructurePbrMaterial(stand.structureMaterialOverride, maxAnisotropy)
+        : structureMat,
       vipTex,
       turnstileTex
     );

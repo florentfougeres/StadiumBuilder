@@ -166,17 +166,17 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
   {
     id: 'concrete_portals',
     label: 'Portiques en béton',
-    desc: 'Nervures en béton précontraint hors façade, en porte-à-faux sans poteau (Parc des Princes)',
+    desc: 'Nervures en béton précontraint hors façade, en porte-à-faux sans poteau',
   },
   {
     id: 'counterweighted_cantilever',
     label: 'Fermes à contre-poids',
-    desc: 'Fermes rayonnantes en porte-à-faux, ancrées par tirants derrière les tribunes (Lyon)',
+    desc: 'Fermes rayonnantes en porte-à-faux, ancrées par tirants derrière les tribunes',
   },
   {
     id: 'corner_pylons',
     label: 'Méga-pylônes d’angle',
-    desc: '4 pylônes portant des méga-poutres au-dessus du bord de toit (Lens, Vélodrome)',
+    desc: '4 pylônes portant des méga-poutres au-dessus du bord de toit',
   },
   {
     id: 'bowstring_arch',
@@ -226,7 +226,7 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
   {
     id: 'spanning_girders',
     label: 'Toit fermé sur méga-poutres',
-    desc: 'Toit plat fermé porté par des poutres de grande portée, comme une arène (La Défense)',
+    desc: 'Toit plat fermé porté par des poutres de grande portée, comme une arène',
   },
   {
     id: 'fixed_dome',
@@ -1200,6 +1200,22 @@ const StandInspector: React.FC = () => {
             options={STAND_ROOF_OVERRIDES}
           />
         )}
+        {!isContinuousBowlShape(doc.shape) && (
+          <SelectField
+            label="Structure de cette tribune"
+            disabled={off}
+            value={stand.structureMaterialOverride ?? 'inherit'}
+            onChange={(v) =>
+              updateStand(target, {
+                structureMaterialOverride: v === 'inherit' ? undefined : v,
+              })
+            }
+            options={[
+              { id: 'inherit', label: 'Comme le stade' },
+              ...STRUCTURE_MATERIAL_CATALOG.map((o) => ({ id: o.id, label: o.label })),
+            ]}
+          />
+        )}
       </PanelSection>
       <PanelSection title="Lignes de vue">
         <div className="flex items-baseline justify-between text-xs">
@@ -1414,7 +1430,7 @@ const RoofInspector: React.FC = () => {
           />
           <SliderField
             label="Bombement de la couverture"
-            hint="Relève la couverture vers le terrain, comme le Vélodrome"
+            hint="Relève la couverture vers le terrain en dôme"
             min={0}
             max={25}
             step={1}
@@ -1813,6 +1829,18 @@ const MaterialsInspector: React.FC = () => {
           display={`${fr1(depth)} m`}
           onChange={(facadeDepth) => updateMaterials({ facadeDepth })}
         />
+        {(pattern === 'triangulated_lace' || pattern === 'scales') && (
+          <SliderField
+            label="Bombement de la façade"
+            hint="La peau se bombe vers l’extérieur à mi-hauteur"
+            min={0}
+            max={1}
+            step={0.05}
+            value={mats.facadeBulge ?? 0}
+            display={`${Math.round((mats.facadeBulge ?? 0) * 6 * 10) / 10} m`}
+            onChange={(facadeBulge) => updateMaterials({ facadeBulge })}
+          />
+        )}
       </PanelSection>
       <PanelSection title="Enveloppe">
         <OptionList

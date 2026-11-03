@@ -194,6 +194,38 @@ export const FACADE_MATERIAL_CATALOG: MaterialCatalogEntry<FacadeMaterialId>[] =
       'repeating-linear-gradient(90deg, #6b7480 0 2px, #c7cdd4 2px 4px, #9aa3ad 4px 6px)',
   },
   {
+    id: 'uhpc_lace_panels',
+    label: 'Dentelle en BFUP',
+    subtitle: 'Triangles de béton fibré blanc ajourés de motifs organiques',
+    fallbackHex: '#e8e4da',
+    swatchBackground:
+      'radial-gradient(circle at 30% 40%, #3b4048 0 2px, transparent 2.5px) 0 0 / 8px 8px, linear-gradient(135deg, transparent 48%, #b9b4a8 49% 51%, transparent 52%) 0 0 / 12px 12px, #ebe7dd',
+  },
+  {
+    id: 'precast_concrete_scales',
+    label: 'Écailles de béton blanc',
+    subtitle: 'Écailles préfabriquées qui se recouvrent en rangées décalées',
+    fallbackHex: '#efede7',
+    swatchBackground:
+      'radial-gradient(ellipse at 50% 0%, #f7f6f2 0 60%, #c9c6bd 61% 70%, transparent 71%) 0 0 / 12px 9px, #e6e3dc',
+  },
+  {
+    id: 'polycarbonate_facade',
+    label: 'Polycarbonate alvéolaire',
+    subtitle: 'Plaques translucides rainurées, rétroéclairées la nuit',
+    fallbackHex: '#d6e2e8',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, rgba(255,255,255,0.7) 0 1px, transparent 1px 3px), linear-gradient(180deg, #e3edf2 0%, #bfd0d8 100%)',
+  },
+  {
+    id: 'glulam_lattice',
+    label: 'Résille en bois lamellé-collé',
+    subtitle: 'Losanges de poutres en bois devant un vitrage sombre',
+    fallbackHex: '#c4965f',
+    swatchBackground:
+      'repeating-linear-gradient(45deg, #c4965f 0 3px, transparent 3px 11px), repeating-linear-gradient(-45deg, #b5874f 0 3px, transparent 3px 11px), #2b323b',
+  },
+  {
     id: 'sadu_textile',
     label: 'Toile tissée sadu',
     subtitle: 'Bandes tissées noir, blanc et rouge à motifs géométriques, façon tente bédouine',
@@ -585,6 +617,16 @@ export const FACADE_PATTERN_CATALOG: SimpleCatalogEntry<FacadePatternId>[] = [
     id: 'cassette_panels',
     label: 'Panneaux à facettes',
     subtitle: 'Cassettes modulaires en quinconce à relief architectural',
+  },
+  {
+    id: 'triangulated_lace',
+    label: 'Dentelle triangulée',
+    subtitle: 'Triangles alternés de taille variable, ajourés',
+  },
+  {
+    id: 'scales',
+    label: 'Écailles',
+    subtitle: 'Rangées d’écailles décalées qui se recouvrent',
   },
 ];
 
@@ -1493,6 +1535,96 @@ export function createFacadePbrMaterial(
       };
     }
 
+    if (facadeId === 'uhpc_lace_panels') {
+      // 3 x 3 cells of two 2.7 m triangles per 8 m, pierced by organic lace openings
+      const su = (u * 3) % 1;
+      const sv = (v * 3) % 1;
+      const joint = su < 0.012 || sv < 0.012 || Math.abs(su + sv - 1) < 0.012;
+      if (joint) return { r: 150, g: 146, b: 138, height: 0.2, roughness: 0.9 };
+      const lace = periodicNoise2D(u, v, 36, 36, 1551) * 0.7 + periodicNoise2D(u, v, 72, 72, 1552) * 0.3;
+      if (lace > 0.6) {
+        const glow = isNight && periodicNoise2D(u, v, 6, 6, 1553) > 0.35;
+        return {
+          r: glow ? 236 : 40,
+          g: glow ? 196 : 44,
+          b: glow ? 132 : 50,
+          height: 0.05,
+          roughness: 0.3,
+          emissiveR: glow ? 220 : 0,
+          emissiveG: glow ? 178 : 0,
+          emissiveB: glow ? 112 : 0,
+        };
+      }
+      const rim = Math.max(0, lace - 0.52) * 4;
+      const val = 230 + (fbm - 0.5) * 10 + (fine - 0.5) * 6 - rim * 30;
+      return { r: val, g: val * 0.985, b: val * 0.95, height: 0.7 - rim * 0.3, roughness: 0.72 };
+    }
+
+    if (facadeId === 'precast_concrete_scales') {
+      // 4 scales per 8 m across, 2 rows per tile, alternate rows offset by half a scale
+      const row = Math.floor(v * 2);
+      const su = (u * 4 + (row % 2) * 0.5) % 1;
+      const sv = (v * 2) % 1;
+      // Rounded lower edge: each scale overlaps the one below it.
+      const edge = 0.82 + 0.16 * Math.sin(su * Math.PI);
+      if (sv > edge) return { r: 118, g: 116, b: 110, height: 0.08, roughness: 0.9 };
+      if (su < 0.015 || su > 0.985) return { r: 170, g: 168, b: 162, height: 0.25, roughness: 0.85 };
+      const swell = sv / edge;
+      const tone = hash2Periodic(Math.floor(u * 4 + (row % 2) * 0.5), row, 4, 2, 1561);
+      const val = 226 + swell * 16 + (tone - 0.5) * 8 + (fbm - 0.5) * 8;
+      return { r: val, g: val * 0.992, b: val * 0.97, height: 0.3 + swell * 0.6, roughness: 0.66 };
+    }
+
+    if (facadeId === 'polycarbonate_facade') {
+      // 1 m multiwall sheets (8 per tile) with 16 mm cell walls and aluminium cover joints
+      const sheet = (u * 8) % 1;
+      if (sheet < 0.03) return { r: 150, g: 156, b: 162, height: 0.9, roughness: 0.3 };
+      const cell = Math.sin(u * 500 * Math.PI) * 0.5 + 0.5;
+      const glow = isNight ? 0.7 + (fbm - 0.5) * 0.3 : 0;
+      const val = 206 + cell * 18 + (fbm - 0.5) * 10;
+      return {
+        r: val * 0.97,
+        g: val * 1.0,
+        b: val * 1.04,
+        height: 0.5 + cell * 0.12,
+        roughness: 0.28,
+        emissiveR: 230 * glow,
+        emissiveG: 238 * glow,
+        emissiveB: 244 * glow,
+      };
+    }
+
+    if (facadeId === 'glulam_lattice') {
+      // Diamond lattice of 30 cm glulam members, 4 diamonds per 8 m, dark glazing behind
+      const du = (u * 4 + v * 4) % 1;
+      const dv = (u * 4 - v * 4 + 8) % 1;
+      const beamA = du < 0.09;
+      const beamB = dv < 0.09;
+      if (beamA || beamB) {
+        const along = beamA ? dv : du;
+        const grain = periodicNoise2D(along, beamA ? du : dv, 64, 4, 1571);
+        const lam = Math.sin((beamA ? du : dv) * 140) * 0.5 + 0.5;
+        return {
+          r: 196 + grain * 22 - lam * 14,
+          g: 148 + grain * 16 - lam * 10,
+          b: 94 + grain * 10 - lam * 6,
+          height: 0.85 + lam * 0.05,
+          roughness: 0.6,
+        };
+      }
+      const glow = isNight && periodicNoise2D(u, v, 8, 8, 1572) > 0.4;
+      return {
+        r: glow ? 236 : 34,
+        g: glow ? 190 : 42,
+        b: glow ? 120 : 52,
+        height: 0.1,
+        roughness: 0.12,
+        emissiveR: glow ? 210 : 0,
+        emissiveG: glow ? 164 : 0,
+        emissiveB: glow ? 98 : 0,
+      };
+    }
+
     if (facadeId === 'sadu_textile') {
       // Horizontal woven bands (4 m repeat, read from across the forecourt): wide black ground,
       // cream pinstripes and a red band carrying a row of cream diamonds, as on a Bedouin tent
@@ -1691,7 +1823,7 @@ export function createFacadePbrMaterial(
     facadeId === 'black_zinc_cladding' ||
     facadeId === 'corrugated_steel_sheet';
   const isCeramic = facadeId === 'ceramic_tile_mosaic';
-  const isGlass = facadeId === 'glass_curtain';
+  const isGlass = facadeId === 'glass_curtain' || facadeId === 'polycarbonate_facade';
   const isEtfe = facadeId === 'etfe_cushions_facade';
   const isCorten = facadeId === 'weathered_corten';
 

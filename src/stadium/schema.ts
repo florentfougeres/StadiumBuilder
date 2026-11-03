@@ -118,7 +118,13 @@ export type StandTunnelStyle = 'center' | 'corner_twin' | 'none';
 
 export type SkylightMode = 'none' | 'pitch_ring' | 'radial_slots' | 'grid_oculi';
 
-export type FacadePatternId = 'none' | 'vertical_fins' | 'diagrid' | 'cassette_panels';
+export type FacadePatternId =
+  | 'none'
+  | 'vertical_fins'
+  | 'diagrid'
+  | 'cassette_panels'
+  | 'triangulated_lace'
+  | 'scales';
 
 export type FloodlightRigMode = 'roof_gantry' | 'corner_masts' | 'both' | 'none';
 
@@ -146,6 +152,8 @@ export interface StandConfig {
   seatingType?: SeatingType;
   vipLoges?: boolean;
   roofStyleOverride?: RoofStyle | 'inherit';
+  /** Structure of this stand only (rectangular grounds); steel or timber leaves the underside open. */
+  structureMaterialOverride?: StructureMaterialId | 'inherit';
   /** Default forward cantilever advance (m) for upper tiers on this stand (`0..8.5`). */
   tierOverhang?: number;
   /** Independent per-tier row counts, slopes, and cantilever overhangs. */
@@ -449,6 +457,10 @@ export type FacadeMaterialId =
   | 'ceramic_tile_mosaic'
   | 'corrugated_steel_sheet'
   | 'sadu_textile'
+  | 'uhpc_lace_panels'
+  | 'precast_concrete_scales'
+  | 'polycarbonate_facade'
+  | 'glulam_lattice'
   | 'calabash_mosaic'
   | 'woven_glassfibre_mesh';
 
@@ -528,6 +540,8 @@ export interface StadiumMaterialsConfig {
   facadeDensity?: number;
   /** Outward 3D relief projection depth in metres (`0.15..2.4`). */
   facadeDepth?: number;
+  /** Outward bow of lace and scale skins at mid-height (`0..1`, up to 6 m). */
+  facadeBulge?: number;
 }
 
 export const DEFAULT_STADIUM_MATERIALS: StadiumMaterialsConfig = {

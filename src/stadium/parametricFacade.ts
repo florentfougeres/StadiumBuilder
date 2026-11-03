@@ -288,6 +288,97 @@ export function buildEnvelopeDressing(params: {
   return group.children.length > 0 ? group : null;
 }
 
+/** Outward bow (m) of a bulged skin at relative height `f` (0 = bottom, 1 = top). */
+function bulgeOffset(bulge: number, f: number): number {
+  return Math.max(0, Math.min(1, bulge)) * 6 * Math.sin(Math.PI * f);
+}
+
+/**
+ * Tiled skins standing proud of the facade: `triangulated_lace` (Jean Bouin) alternates up- and
+ * down-pointing triangular panels whose size varies across the skin, and `scales` (La Défense
+ * Arena) hangs rows of shingles tilted out at the bottom so each overlaps the row below.
+ */
+function buildTiledSkin(
+  pattern: 'triangulated_lace' | 'scales',
+  sampleAtArc: (s: number) => FacadeRailSample,
+  totalLen: number,
+  closed: boolean,
+  density: number,
+  depth: number,
+  bulge: number,
+  mat: THREE.Material,
+  group: THREE.Group
+): THREE.Group {
+  const lace = pattern === 'triangulated_lace';
+  const tileW = lace ? Math.max(2.2, 4.6 / density) : Math.max(2.0, 4.2 / density);
+  const cols = Math.max(4, Math.min(400, Math.round(totalLen / tileW)));
+  const stepS = totalLen / cols;
+  const dummy = new THREE.Object3D();
+  const matrices: THREE.Matrix4[] = [];
+  const probe = sampleAtArc(0);
+  const refH = Math.max(4, probe.yTop - probe.yBottom - 0.5);
+  const rows = lace
+    ? Math.max(2, Math.round(refH / (stepS * 0.87)))
+    : Math.max(1, Math.min(5, Math.round(density * 2.4)));
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols * (lace ? 2 : 1); c++) {
+      // Lace: two triangles per column (pointing up, then down); scales: offset every other row.
+      const sCenter = lace ? (c * 0.5 + 0.25 + (r % 2) * 0.5) * stepS : (c + 0.5 + (r % 2) * 0.5) * stepS;
+      if (!closed && (sCenter < stepS * 0.3 || sCenter > totalLen - stepS * 0.3)) continue;
+      const pt = sampleAtArc(closed ? sCenter % totalLen : sCenter);
+      const wallH = pt.yTop - pt.yBottom - 0.5;
+      if (wallH < 2.5) continue;
+      const rowH = wallH / rows;
+      const f = (r + 0.5) / rows;
+      const yaw = Math.atan2(pt.nx, pt.nz);
+      const out = depth * 0.5 + bulgeOffset(bulge, f);
+      dummy.position.set(pt.x + pt.nx * out, pt.yBottom + 0.25 + rowH * (r + 0.5), pt.z + pt.nz * out);
+      if (lace) {
+        // Panel size breathes across the skin so the openings between panels vary.
+        const breathe = 0.72 + 0.22 * Math.sin(sCenter * 0.21 + r * 1.3) * Math.cos(sCenter * 0.07);
+        const flip = (c + r) % 2 === 0 ? 0 : Math.PI;
+        dummy.rotation.set(0, yaw, flip, 'YXZ');
+        dummy.scale.set(stepS * breathe, rowH * breathe, Math.max(0.12, depth * 0.3));
+      } else {
+        dummy.rotation.set(-0.16, yaw, 0, 'YXZ');
+        dummy.scale.set(stepS * 1.04, rowH * 1.12, Math.max(0.2, depth * 0.4));
+      }
+      dummy.updateMatrix();
+      matrices.push(dummy.matrix.clone());
+    }
+  }
+
+  if (matrices.length > 0) {
+    let geo: THREE.BufferGeometry;
+    if (lace) {
+      // Unit triangle (width 1, height 1) pointing up, extruded along +z.
+      const tri = new THREE.Shape([
+        new THREE.Vector2(-0.5, -0.5),
+        new THREE.Vector2(0.5, -0.5),
+        new THREE.Vector2(0, 0.5),
+      ]);
+      geo = new THREE.ExtrudeGeometry(tri, { depth: 1, bevelEnabled: false });
+      geo.translate(0, 0, -0.5);
+    } else {
+      // Shingle: a shallow cylindrical shell, convex outward, 1 x 1 x 1.
+      geo = new THREE.CylinderGeometry(0.62, 0.62, 1, 12, 1, true, -Math.PI / 4, Math.PI / 2);
+      geo.rotateZ(Math.PI / 2);
+      geo.rotateY(Math.PI / 2);
+      geo.translate(0, 0, -0.44);
+    }
+    geo.computeVertexNormals();
+    const inst = new THREE.InstancedMesh(geo, mat, matrices.length);
+    inst.name = lace ? 'FacadeLacePanels' : 'FacadeScales';
+    matrices.forEach((m, i) => inst.setMatrixAt(i, m));
+    inst.instanceMatrix.needsUpdate = true;
+    inst.castShadow = true;
+    inst.receiveShadow = true;
+    group.add(inst);
+  }
+  return group;
+}
+
 /**
  * Generates a real 3D parametric facade relief assembly (`vertical_fins`, `diagrid`, or `cassette_panels`)
  * along a sequence of exterior wall samples (`samples[0..N-1]`).
@@ -299,6 +390,8 @@ export function buildParametricFacadeOnRail(params: {
   pattern: FacadePatternId;
   density: number;
   depth: number;
+  /** Outward bow of `triangulated_lace` and `scales` skins (`0..1`, up to 6 m at mid-height). */
+  bulge?: number;
   primaryMat: THREE.Material;
   accentMat: THREE.Material;
   name?: string;
@@ -309,6 +402,7 @@ export function buildParametricFacadeOnRail(params: {
     pattern,
     density,
     depth,
+    bulge = 0,
     primaryMat,
     accentMat,
     name = 'ParametricFacadeRelief',
@@ -335,6 +429,10 @@ export function buildParametricFacadeOnRail(params: {
   const dir = new THREE.Vector3();
   const mid = new THREE.Vector3();
   const qOrient = new THREE.Quaternion();
+
+  if (pattern === 'triangulated_lace' || pattern === 'scales') {
+    return buildTiledSkin(pattern, sampleAtArc, totalLen, closed, safeDensity, safeDepth, bulge, primaryMat, group);
+  }
 
   if (pattern === 'vertical_fins') {
     const spacing = Math.max(1.1, 2.85 / safeDensity);
@@ -602,6 +700,8 @@ export function buildStraightParametricFacade(params: {
   pattern: FacadePatternId;
   density: number;
   depth: number;
+  /** Outward bow of `triangulated_lace` and `scales` skins (`0..1`, up to 6 m at mid-height). */
+  bulge?: number;
   primaryMat: THREE.Material;
   accentMat: THREE.Material;
   name?: string;
@@ -614,6 +714,7 @@ export function buildStraightParametricFacade(params: {
     pattern,
     density,
     depth,
+    bulge,
     primaryMat,
     accentMat,
     name,
@@ -645,6 +746,7 @@ export function buildStraightParametricFacade(params: {
     pattern,
     density,
     depth,
+    bulge,
     primaryMat,
     accentMat,
     name,

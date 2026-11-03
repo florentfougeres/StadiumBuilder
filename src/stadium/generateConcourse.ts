@@ -154,6 +154,7 @@ export function generateConcourseGroup(
       pattern: facadePattern,
       density: mats.facadeDensity ?? 1.0,
       depth: mats.facadeDepth ?? 0.85,
+      bulge: mats.facadeBulge ?? 0,
       primaryMat: facadeMat,
       accentMat: structMat,
       name: 'ConcourseParametricFacade',
