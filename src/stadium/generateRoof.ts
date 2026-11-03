@@ -30,13 +30,14 @@ import {
   resolveCornerPylonFrame,
   resolveCounterweightTrusses,
   resolveFloodlightRig,
+  resolveSpanningGirderCount,
   RoofStyle,
   StadiumDocument,
   StadiumShape,
   StandSide,
 } from './schema';
 import { buildRetractablePanels } from './generateRetractableRoof';
-import { beamGeometry, mergedMesh } from './roofBeams';
+import { beamGeometry, chordAt, mergedMesh } from './roofBeams';
 
 function hasRoofGantryLights(doc: StadiumDocument): boolean {
   const rig = resolveFloodlightRig(doc);
@@ -1549,6 +1550,139 @@ function buildCounterweightedCantileverRoof(
     const mesh = mergedMesh(parts, mat, name);
     if (mesh) group.add(mesh);
   }
+  return group;
+}
+
+/**
+ * CLOSED ROOF ON MEGA-GIRDERS (`spanning_girders`), after Paris La Défense Arena: a slightly
+ * cambered deck closes the whole bowl out to the eaves, carried by transverse Warren mega-girders
+ * resting on the perimeter walls; a skirt closes the gap between stands and deck.
+ */
+function buildSpanningGirdersRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const group = new THREE.Group();
+  const mats = resolveStadiumMaterials(doc);
+  const { ring, maxStandH, canopyOuterOffsetAt, standHeightAtNormal, standDepthAtNormal } =
+    computeStadiumRingBounds(doc);
+  const primaryStructMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
+  const { surfaceMat, shadowDepthMat } = buildCanopyMaterialBundle(doc, maxAnisotropy, 14, 4, 1);
+
+  const girderDepth = 7;
+  const springY = maxStandH + Math.max(2.8, doc.roof.heightOffset * 0.7);
+  const deckY = springY + girderDepth + 0.4;
+  const camber = 2.5;
+
+  // Eave outline over the concourse; the cross-section keeps the north half (z <= 0).
+  const segs = 128;
+  const eave: { x: number; z: number; h: number }[] = [];
+  // Girders bear on the rear wall of the stands, inside the facade.
+  const crest: { x: number; z: number; h: number }[] = [];
+  for (let s = 0; s < segs; s++) {
+    const n = sampleRoundedBowlRing(ring, s / segs, 0);
+    const h = standHeightAtNormal(n.nx, n.nz);
+    const clipZ = (z: number) => (crossSectionClip ? Math.min(0, z) : z);
+    const p = sampleRoundedBowlRing(ring, s / segs, canopyOuterOffsetAt(n.nx, n.nz, 3.2));
+    eave.push({ x: p.x, z: clipZ(p.z), h });
+    const c = sampleRoundedBowlRing(ring, s / segs, standDepthAtNormal(n.nx, n.nz) - 1.5);
+    crest.push({ x: c.x, z: clipZ(c.z), h });
+  }
+
+  // Deck: concentric copies of the eave shrinking to the centre, cambered up toward it.
+  const rings = 10;
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  for (let s = 0; s < segs; s++) {
+    for (let r = 0; r <= rings; r++) {
+      const k = 1 - r / rings;
+      pos.push(eave[s].x * k, deckY + camber * (1 - k * k), eave[s].z * k);
+      uv.push((s / segs) * 16, r / rings);
+    }
+  }
+  for (let s = 0; s < segs; s++) {
+    const a0 = s * (rings + 1);
+    const b0 = ((s + 1) % segs) * (rings + 1);
+    for (let r = 0; r < rings; r++) {
+      idx.push(a0 + r, a0 + r + 1, b0 + r, b0 + r, a0 + r + 1, b0 + r + 1);
+    }
+  }
+  const deckGeo = new THREE.BufferGeometry();
+  deckGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  deckGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  deckGeo.setIndex(idx);
+  deckGeo.computeVertexNormals();
+  const deck = new THREE.Mesh(deckGeo, surfaceMat);
+  deck.name = 'RoofCanopySurface';
+  deck.customDepthMaterial = shadowDepthMat;
+  deck.castShadow = true;
+  deck.receiveShadow = true;
+  deck.renderOrder = 2;
+  group.add(deck);
+
+  // Eave skirt from the stand crest up to the deck edge.
+  const skirtPos: number[] = [];
+  const skirtIdx: number[] = [];
+  for (let s = 0; s < segs; s++) {
+    skirtPos.push(eave[s].x, eave[s].h - 0.5, eave[s].z, eave[s].x, deckY + 0.6, eave[s].z);
+    const a = s * 2;
+    const b = ((s + 1) % segs) * 2;
+    skirtIdx.push(a, b, a + 1, b, b + 1, a + 1);
+  }
+  const skirtGeo = new THREE.BufferGeometry();
+  skirtGeo.setAttribute('position', new THREE.Float32BufferAttribute(skirtPos, 3));
+  skirtGeo.setIndex(skirtIdx);
+  skirtGeo.computeVertexNormals();
+  const skirt = new THREE.Mesh(skirtGeo, primaryStructMat);
+  skirt.name = 'RoofEaveSkirt';
+  skirt.castShadow = true;
+  group.add(skirt);
+
+  // Transverse mega-girders across the short axis, evenly spaced along the pitch.
+  const count = resolveSpanningGirderCount(doc.roof);
+  const halfX = Math.max(...crest.map((p) => p.x));
+  const steel: THREE.BufferGeometry[] = [];
+  for (let g = 0; g < count; g++) {
+    const x = -halfX * 0.72 + (1.44 * halfX * g) / Math.max(1, count - 1);
+    const chord = chordAt(crest, 'x', x);
+    if (!chord || chord[1] - chord[0] < 4) continue;
+    const a = new THREE.Vector3(x, springY, chord[0]);
+    const b = new THREE.Vector3(x, springY, chord[1]);
+    steel.push(...warrenTrussParts(a, b, girderDepth, Math.max(8, Math.round((b.z - a.z) / 7)), 1.8, 0.7));
+    // Bearing columns down to the stand crest at both ends.
+    for (const end of crossSectionClip ? [a] : [a, b]) {
+      const nearest = crest.reduce((best, p) =>
+        Math.hypot(p.x - end.x, p.z - end.z) < Math.hypot(best.x - end.x, best.z - end.z) ? p : best
+      );
+      steel.push(
+        beamGeometry(
+          new THREE.Vector3(end.x, nearest.h - 1, end.z),
+          end,
+          2.2,
+          2.2
+        )
+      );
+    }
+  }
+  // Longitudinal purlin trusses tying the girders together under the deck.
+  for (const zf of crossSectionClip ? [-0.45] : [-0.45, 0.45]) {
+    const mid = chordAt(eave, 'z', 0) ?? [-halfX, halfX];
+    const zHalf = Math.max(...eave.map((p) => Math.abs(p.z)));
+    steel.push(
+      ...warrenTrussParts(
+        new THREE.Vector3(mid[0] * 0.8, springY + girderDepth * 0.45, zf * zHalf),
+        new THREE.Vector3(mid[1] * 0.8, springY + girderDepth * 0.45, zf * zHalf),
+        girderDepth * 0.5,
+        16,
+        0.7,
+        0.35
+      )
+    );
+  }
+  const girders = mergedMesh(steel, primaryStructMat, 'SpanningMegaGirders');
+  if (girders) group.add(girders);
   return group;
 }
 
@@ -3257,6 +3391,11 @@ function buildRoofAssembly(
 
     if (doc.roof.style === 'retractable' || doc.roof.style === 'petal_iris') {
       root.add(buildRetractableRoof(doc, crossSectionClip, maxAnisotropy));
+      return root;
+    }
+
+    if (doc.roof.style === 'spanning_girders') {
+      root.add(buildSpanningGirdersRoof(doc, crossSectionClip, maxAnisotropy));
       return root;
     }
 

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-/** Structural steel members shared by the roof builders, merged into few draw calls. */
+/** Structural members and outline helpers shared by the roof builders. */
 
 /** Box beam between two points, oriented along the segment. */
 export function beamGeometry(a: THREE.Vector3, b: THREE.Vector3, w: number, h: number): THREE.BufferGeometry {
@@ -30,5 +30,26 @@ export function mergedMesh(
   mesh.name = name;
   mesh.castShadow = true;
   return mesh;
+}
+
+/** Extent `[min, max]` of the outline across the line `axis = value` (axis `x` or `z`). */
+export function chordAt(
+  poly: { x: number; z: number }[],
+  axis: 'x' | 'z',
+  value: number
+): [number, number] | null {
+  const other = axis === 'x' ? 'z' : 'x';
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    if ((a[axis] - value) * (b[axis] - value) > 0 || a[axis] === b[axis]) continue;
+    const f = (value - a[axis]) / (b[axis] - a[axis]);
+    const v = a[other] + (b[other] - a[other]) * f;
+    lo = Math.min(lo, v);
+    hi = Math.max(hi, v);
+  }
+  return lo < hi ? [lo, hi] : null;
 }
 

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { beamGeometry, mergedMesh } from './roofBeams';
+import { beamGeometry, chordAt, mergedMesh } from './roofBeams';
 import { RoundedBowlGeometry, sampleRoundedBowlRing } from './bowlRing';
 import { createRoofPbrMaterial, createRoofShadowDepthMaterial } from './materials';
 import { RetractableConfig, resolveRetractable, StadiumDocument } from './schema';
@@ -78,23 +78,6 @@ function rayHit(poly: Pt[], a: number): Pt {
     if (t > best && s >= 0 && s <= 1) best = t;
   }
   return { x: dx * best, z: dz * best };
-}
-
-/** Extent `[min, max]` of the outline across the line `axis = value` (axis `x` or `z`). */
-function chordAt(poly: Pt[], axis: 'x' | 'z', value: number): [number, number] | null {
-  const other = axis === 'x' ? 'z' : 'x';
-  let lo = Infinity;
-  let hi = -Infinity;
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i];
-    const b = poly[(i + 1) % poly.length];
-    if ((a[axis] - value) * (b[axis] - value) > 0 || a[axis] === b[axis]) continue;
-    const f = (value - a[axis]) / (b[axis] - a[axis]);
-    const v = a[other] + (b[other] - a[other]) * f;
-    lo = Math.min(lo, v);
-    hi = Math.max(hi, v);
-  }
-  return lo < hi ? [lo, hi] : null;
 }
 
 interface PanelKit {

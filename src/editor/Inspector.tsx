@@ -36,6 +36,7 @@ import {
   resolveCounterweightTrusses,
   resolveFloodlightRig,
   resolveSite,
+  resolveSpanningGirderCount,
   resolveRetractable,
   resolveStandVomitories,
   RETRACTABLE_PANEL_LIMITS,
@@ -215,6 +216,11 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
     id: 'petal_iris',
     label: 'Toit iris à pétales',
     desc: 'Pétales qui pivotent sur la couronne comme un diaphragme d’appareil photo',
+  },
+  {
+    id: 'spanning_girders',
+    label: 'Toit fermé sur méga-poutres',
+    desc: 'Toit plat fermé porté par des poutres de grande portée, comme une arène (La Défense)',
   },
   {
     id: 'fixed_dome',
@@ -1336,6 +1342,20 @@ const RoofInspector: React.FC = () => {
           options={ROOF_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
         />
       </PanelSection>
+      {roof.style === 'spanning_girders' && (
+        <PanelSection title="Méga-poutres">
+          <SliderField
+            label="Nombre de méga-poutres"
+            hint="Poutres transversales posées sur les murs, sous la couverture"
+            min={2}
+            max={6}
+            step={1}
+            value={resolveSpanningGirderCount(roof)}
+            display={String(resolveSpanningGirderCount(roof))}
+            onChange={(v) => updateRoof({ girderCount: v })}
+          />
+        </PanelSection>
+      )}
       {roof.style === 'counterweighted_cantilever' && (
         <PanelSection title="Fermes à contre-poids">
           <SliderField

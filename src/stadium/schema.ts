@@ -35,6 +35,7 @@ export type RoofStyle =
   | 'fixed_dome'
   | 'corner_pylons'
   | 'counterweighted_cantilever'
+  | 'spanning_girders'
   | 'wave_canopy'
   | 'petal_iris'
   | 'historic_gable';
@@ -275,6 +276,11 @@ export function resolveCounterweightTrusses(roof: RoofConfig): { trussCount: num
   };
 }
 
+/** Transverse mega-girders of a `spanning_girders` roof (Paris La Défense Arena: 4). */
+export function resolveSpanningGirderCount(roof: RoofConfig): number {
+  return Math.max(2, Math.min(6, Math.round(roof.girderCount ?? 4)));
+}
+
 export interface RoofConfig {
   style: RoofStyle;
   heightOffset: number;
@@ -294,6 +300,8 @@ export interface RoofConfig {
   trussCount?: number;
   /** `counterweighted_cantilever`: back-span length as a share of the front arm. */
   backspanRatio?: number;
+  /** `spanning_girders`: transverse mega-girders carrying the closed roof (`2..6`). */
+  girderCount?: number;
   /** Continuous bowls only: stands under the roof; absent means the whole bowl is covered. */
   coveredSides?: StandSide[];
   /** Extends the outer edge of all roofs across the outer concourse up to the facade (enabled by default). */
