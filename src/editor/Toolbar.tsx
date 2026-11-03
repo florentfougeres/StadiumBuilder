@@ -143,7 +143,7 @@ const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus })
             }
           },
           'Image photoréaliste téléchargée',
-          'Rendu impossible : WebGL 2 requis'
+          'Rendu photoréaliste interrompu par la carte graphique (WebGL 2 requis)'
         ),
     },
     {

@@ -26,6 +26,7 @@ import {
 import {
   CornerId,
   CornerMode,
+  EnvelopeProfile,
   getEffectiveSunkenDepth,
   getMaxPitchLengthForTrack,
   isContinuousBowlShape,
@@ -231,6 +232,12 @@ const STAND_TABS: { id: StandTarget; label: string }[] = [
 ];
 
 const TIER_OPTIONS: (1 | 2 | 3 | 4 | 5)[] = [1, 2, 3, 4, 5];
+
+const ENVELOPE_PROFILE_OPTIONS: { id: EnvelopeProfile; label: string; detail: string }[] = [
+  { id: 'straight', label: 'Verticale', detail: 'Peau droite le long des tribunes' },
+  { id: 'bulging', label: 'Calebasse bombée', detail: 'Se gonfle à mi-hauteur, comme une calebasse' },
+  { id: 'tent', label: 'Tente inclinée', detail: 'Large pied concave qui se replie jusqu’au toit, comme une tente' },
+];
 
 /**
  * Pure SVG procedural material swatch preview (zero inline styles, crisp micro-textures).
@@ -1529,6 +1536,15 @@ const MaterialsInspector: React.FC = () => {
           onChange={(envelopeStyle) => updateMaterials({ envelopeStyle })}
           options={ENVELOPE_STYLE_CATALOG.map((o) => ({ id: o.id, label: o.label, detail: o.subtitle }))}
         />
+        {isContinuousBowlShape(doc.shape) && (
+          <OptionList
+            label="Silhouette de la peau"
+            disabled={(mats.envelopeStyle ?? 'enveloping_skin') !== 'enveloping_skin'}
+            value={mats.envelopeProfile ?? 'straight'}
+            onChange={(envelopeProfile) => updateMaterials({ envelopeProfile })}
+            options={ENVELOPE_PROFILE_OPTIONS}
+          />
+        )}
       </PanelSection>
       <PanelSection title="Façade">
         <OptionList

@@ -4919,9 +4919,11 @@ function buildModernBowlSweep(
       group.add(colForest);
     } else {
       // 3 & 4. `enveloping_skin` (including sculpted pneumatic ETFE cushion curve!) OR `louver_curtain`
+      const profile = mats.envelopeProfile ?? 'straight';
       const isEtfeBelly =
         envelope === 'enveloping_skin' && mats.facade === 'etfe_cushions_facade';
-      const vBands = isEtfeBelly ? 5 : 2;
+      const isShaped = profile !== 'straight' && envelope === 'enveloping_skin';
+      const vBands = isShaped ? 9 : isEtfeBelly ? 5 : 2;
       const facadePositions = new Float32Array(ringCount * vBands * 3);
       const facadeUvs = new Float32Array(ringCount * vBands * 2);
       const facadeIndices: number[] = [];
@@ -4939,7 +4941,14 @@ function buildModernBowlSweep(
         for (let b = 0; b < vBands; b++) {
           const vf = b / (vBands - 1);
           const py = lobbyTopY + vf * Math.max(0.5, crestY - lobbyTopY);
-          const bellyOut = isEtfeBelly
+          const skinH = Math.max(0.5, crestY - lobbyTopY);
+          const bellyOut = isShaped
+            ? profile === 'bulging'
+              ? // Calabash: swells to a sixth of its height at mid-height
+                BOWL_CURTAIN_WALL_OFFSET + Math.sin(vf * Math.PI) * Math.min(7, skinH * 0.17)
+              : // Tent: a wide concave foot leaning in to meet the roof at the crest
+                BOWL_CURTAIN_WALL_OFFSET + Math.pow(1 - vf, 1.5) * Math.min(16, skinH * 0.55)
+            : isEtfeBelly
             ? Math.sin(vf * Math.PI) * 3.8 + vf * 0.8
             : envelope === 'louver_curtain'
             ? -0.25
@@ -5041,7 +5050,7 @@ function buildModernBowlSweep(
             );
           }
         }
-      } else if (!isEtfeBelly) {
+      } else if (!isEtfeBelly && !isShaped) {
         if (doc.shape === 'steep_cauldron') {
           const pierCount = crossSectionClip ? 24 : 48;
           const pierGeo = new THREE.BoxGeometry(1.45, 1, 2.6);

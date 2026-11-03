@@ -1323,4 +1323,25 @@ describe('cantilevered upper tiers', () => {
     expect(glow.emissive.getHexString()).toBe(new THREE.Color('#dc2626').getHexString());
     expect(createFacadePbrMaterial('etfe_cushions_facade', 'day', false, 1, '#dc2626').emissive.getHex()).toBe(0);
   });
+  it('shapes a continuous bowl skin as a calabash or a tent, with their textile and mosaic finishes', () => {
+    const base = createPresetDocument('bowl_bowstring_60k');
+    const skinReach = (profile: 'straight' | 'bulging' | 'tent') => {
+      const doc = {
+        ...base,
+        concourse: { width: 0, heightRatio: 0.5 },
+        materials: { ...base.materials!, envelopeStyle: 'enveloping_skin' as const, envelopeProfile: profile },
+      };
+      const box = new THREE.Box3().setFromObject(generateStandsGroup(doc, false));
+      return box.max.x - box.min.x;
+    };
+    const straight = skinReach('straight');
+    expect(skinReach('bulging')).toBeGreaterThan(straight + 4);
+    expect(skinReach('tent')).toBeGreaterThan(skinReach('bulging'));
+
+    for (const id of ['sadu_textile', 'calabash_mosaic', 'woven_glassfibre_mesh'] as const) {
+      const mat = createFacadePbrMaterial(id, 'day', false, 1);
+      expect(mat.map).toBeTruthy();
+      expect(mat.normalMap).toBeTruthy();
+    }
+  });
 });

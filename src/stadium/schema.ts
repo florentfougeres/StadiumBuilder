@@ -38,6 +38,12 @@ export type RoofStyle =
   | 'petal_iris'
   | 'historic_gable';
 
+/**
+ * Silhouette of a continuous bowl's outer skin: upright, bulging out at mid-height (a calabash),
+ * or a tent leaning in from a wide foot up to the roof.
+ */
+export type EnvelopeProfile = 'straight' | 'bulging' | 'tent';
+
 export type EnvelopeStyle =
   | 'enveloping_skin'
   | 'exposed_structure'
@@ -310,7 +316,10 @@ export type FacadeMaterialId =
   | 'black_zinc_cladding'
   | 'living_green_wall'
   | 'ceramic_tile_mosaic'
-  | 'corrugated_steel_sheet';
+  | 'corrugated_steel_sheet'
+  | 'sadu_textile'
+  | 'calabash_mosaic'
+  | 'woven_glassfibre_mesh';
 
 export type RoofMaterialId =
   | 'ptfe_membrane'
@@ -365,6 +374,8 @@ export type PlazaMaterialId =
 
 export interface StadiumMaterialsConfig {
   envelopeStyle?: EnvelopeStyle;
+  /** Outer skin silhouette of continuous bowls (`straight` when absent). */
+  envelopeProfile?: EnvelopeProfile;
   facade: FacadeMaterialId;
   roof: RoofMaterialId;
   structure: StructureMaterialId;

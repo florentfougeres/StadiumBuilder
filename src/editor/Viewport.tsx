@@ -581,11 +581,12 @@ export const Viewport: React.FC = () => {
                 renderer,
                 camera,
                 stadium: engine.stadiumRoot,
-                sun: keyLight,
+                lights: [keyLight, rimLight, arenaBowlLight],
+                hemisphereIntensity: hemiLight.intensity,
                 sky: skyEnv && mode !== 'night' ? skyEnv.sky : null,
                 background: skyTextures.night,
                 environmentIntensity: scene.environmentIntensity,
-                samples: 160,
+                samples: 96,
                 onProgress,
               });
             } finally {

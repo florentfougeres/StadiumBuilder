@@ -193,6 +193,30 @@ export const FACADE_MATERIAL_CATALOG: MaterialCatalogEntry<FacadeMaterialId>[] =
     swatchBackground:
       'repeating-linear-gradient(90deg, #6b7480 0 2px, #c7cdd4 2px 4px, #9aa3ad 4px 6px)',
   },
+  {
+    id: 'sadu_textile',
+    label: 'Toile tissée sadu',
+    subtitle: 'Bandes tissées noir, blanc et rouge à motifs géométriques, façon tente bédouine',
+    fallbackHex: '#2a2422',
+    swatchBackground:
+      'repeating-linear-gradient(0deg, #1c1917 0 6px, #f5f0e6 6px 8px, #9b1c1c 8px 11px, #f5f0e6 11px 13px)',
+  },
+  {
+    id: 'calabash_mosaic',
+    label: 'Mosaïque calebasse',
+    subtitle: 'Panneaux de béton fibré aux tons de terre cuite, ocre et brun',
+    fallbackHex: '#a8643a',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, rgba(40,20,10,0.4) 0 1px, transparent 1px 8px), linear-gradient(135deg, #c98a52 0%, #8a4a2a 60%, #5c3320 100%)',
+  },
+  {
+    id: 'woven_glassfibre_mesh',
+    label: 'Maille de fibre de verre tissée',
+    subtitle: 'Peau translucide tressée en losanges qui capte la lumière',
+    fallbackHex: '#e8ecef',
+    swatchBackground:
+      'repeating-linear-gradient(45deg, rgba(100,116,139,0.45) 0 1px, transparent 1px 6px), repeating-linear-gradient(-45deg, rgba(100,116,139,0.45) 0 1px, transparent 1px 6px), #eef2f5',
+  },
 ];
 
 export const ROOF_MATERIAL_CATALOG: MaterialCatalogEntry<RoofMaterialId>[] = [
@@ -1467,6 +1491,61 @@ export function createFacadePbrMaterial(
         height: lap ? 0.2 : 0.5 + wave * 0.32,
         roughness: 0.36 + (fbm - 0.5) * 0.12 + rust * 0.003,
       };
+    }
+
+    if (facadeId === 'sadu_textile') {
+      // Horizontal woven bands (4 m repeat, read from across the forecourt): wide black ground,
+      // cream pinstripes and a red band carrying a row of cream diamonds, as on a Bedouin tent
+      const band = (v * 2) % 1;
+      const weave = periodicNoise2D(u, v, 256, 256, 1541);
+      const cream = [238, 228, 208];
+      const red = [150, 30, 32];
+      let c = [30, 26, 24];
+      if (band > 0.62 && band < 0.66) c = cream;
+      else if (band >= 0.68 && band < 0.88) {
+        // Diamonds 0.5 m wide along the red band
+        const du = Math.abs(((u * 4) % 1) - 0.5) * 2;
+        const dv = Math.abs((band - 0.78) / 0.1);
+        c = du + dv < 0.62 ? cream : red;
+      } else if (band >= 0.9 && band < 0.94) c = cream;
+      const thread = 0.9 + weave * 0.2;
+      return { r: c[0] * thread, g: c[1] * thread, b: c[2] * thread, height: 0.5 + weave * 0.15, roughness: 0.92 };
+    }
+
+    if (facadeId === 'calabash_mosaic') {
+      // Staggered fibre-concrete panels 1.0 x 0.5 m, each fired an earth tone
+      const rowIdx = Math.floor(v * 16);
+      const stagger = (rowIdx % 2) * 0.5;
+      const colIdx = Math.floor(u * 8 + stagger);
+      const fu = (u * 8 + stagger) % 1;
+      const fv = (v * 16) % 1;
+      if (fu < 0.03 || fv < 0.05) {
+        return { r: 52, g: 34, b: 24, height: 0.15, roughness: 0.9 };
+      }
+      const tones = [
+        [196, 126, 74],
+        [168, 96, 56],
+        [128, 70, 42],
+        [214, 160, 96],
+        [96, 56, 36],
+        [180, 112, 64],
+      ];
+      const t = tones[Math.floor(hash2Periodic(colIdx, rowIdx, 8, 16, 1551) * tones.length)];
+      const grain = (fine - 0.5) * 14 + (med - 0.5) * 10;
+      return { r: t[0] + grain, g: t[1] + grain * 0.8, b: t[2] + grain * 0.6, height: 0.6 + fine * 0.08, roughness: 0.78 };
+    }
+
+    if (facadeId === 'woven_glassfibre_mesh') {
+      // Diamond weave of 25 cm strands over a light, partly open skin
+      const a = (u * 32 + v * 32) % 1;
+      const b = (u * 32 - v * 32 + 64) % 1;
+      const strandA = Math.abs(a - 0.5) > 0.34;
+      const strandB = Math.abs(b - 0.5) > 0.34;
+      if (strandA || strandB) {
+        const over = strandA && strandB ? 1.06 : 1;
+        return { r: 236 * over, g: 240 * over, b: 243 * over, height: strandA && strandB ? 0.9 : 0.7, roughness: 0.55 };
+      }
+      return { r: 150, g: 160, b: 170, height: 0.25, roughness: 0.7 };
     }
 
     if (facadeId === 'gold_anodized_panels') {
