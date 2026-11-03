@@ -574,6 +574,7 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       baseCostPerSeat += 900 * doc.roof.coverageRatio;
       break;
     case 'retractable':
+    case 'petal_iris':
       baseCostPerSeat += 1350 * doc.roof.coverageRatio;
       break;
     case 'fixed_dome':

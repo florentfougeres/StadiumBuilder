@@ -173,12 +173,81 @@ export interface StandConfig {
   banners?: boolean;
 }
 
+/** How the movable roof panels travel (typology of Mahovič, 2015). */
+export type RetractableMotion =
+  | 'slide_longitudinal'
+  | 'slide_transverse'
+  | 'slide_off'
+  | 'rotate_vertical'
+  | 'rotate_horizontal'
+  | 'iris'
+  | 'fold_central'
+  | 'fold_edge'
+  | 'combined_stack';
+
+export type RetractablePanelKind = 'rigid' | 'membrane' | 'mixed';
+
+export interface RetractableConfig {
+  motion: RetractableMotion;
+  /** 0 = fully closed, 1 = fully open. */
+  openRatio: number;
+  /** Movable panels, segments, petals, cables (`fold_central`) or folding trusses (`fold_edge`). */
+  panelCount: number;
+  panelKind: RetractablePanelKind;
+  panelMaterial: RoofMaterialId;
+  /** Sliding motions: end(s) of the long axis where open panels park. */
+  parkEnd: 'east' | 'west' | 'both';
+  /** `fold_central`: the central ring hangs from an inclined mast outside the bowl. */
+  suspensionMast: boolean;
+}
+
+/** Allowed `panelCount` range and default per motion. */
+export const RETRACTABLE_PANEL_LIMITS: Record<
+  RetractableMotion,
+  { min: number; max: number; def: number }
+> = {
+  slide_longitudinal: { min: 2, max: 6, def: 4 },
+  slide_transverse: { min: 2, max: 6, def: 4 },
+  slide_off: { min: 1, max: 2, def: 2 },
+  rotate_vertical: { min: 4, max: 12, def: 8 },
+  rotate_horizontal: { min: 4, max: 16, def: 8 },
+  iris: { min: 6, max: 16, def: 8 },
+  fold_central: { min: 16, max: 32, def: 24 },
+  fold_edge: { min: 6, max: 12, def: 8 },
+  combined_stack: { min: 4, max: 4, def: 4 },
+};
+
+/**
+ * Fills retractable roof defaults. `petal_iris` always uses the iris motion, and the legacy
+ * `retractableClosed` flag maps to a fully closed (0) or fully open (1) `openRatio`.
+ */
+export function resolveRetractable(roof: RoofConfig): RetractableConfig {
+  const r = roof.retractable ?? {};
+  const motion: RetractableMotion =
+    roof.style === 'petal_iris' ? 'iris' : r.motion ?? 'slide_longitudinal';
+  const limits = RETRACTABLE_PANEL_LIMITS[motion];
+  const panelKind = r.panelKind ?? (motion.startsWith('fold') ? 'membrane' : 'rigid');
+  return {
+    motion,
+    openRatio: Math.max(0, Math.min(1, r.openRatio ?? (roof.retractableClosed ? 0 : 1))),
+    panelCount: Math.max(limits.min, Math.min(limits.max, Math.round(r.panelCount ?? limits.def))),
+    panelKind,
+    panelMaterial:
+      r.panelMaterial ?? (panelKind === 'membrane' ? 'ptfe_membrane' : 'polycarbonate_glass'),
+    parkEnd: r.parkEnd ?? 'both',
+    suspensionMast: r.suspensionMast ?? false,
+  };
+}
+
 export interface RoofConfig {
   style: RoofStyle;
   heightOffset: number;
   coverageRatio: number;
   opacity: number;
+  /** Legacy open/closed flag, superseded by `retractable.openRatio` when that is set. */
   retractableClosed?: boolean;
+  /** Movable roof settings for `retractable` and `petal_iris`; missing fields use defaults. */
+  retractable?: Partial<RetractableConfig>;
   /** Continuous bowls only: stands under the roof; absent means the whole bowl is covered. */
   coveredSides?: StandSide[];
   /** Extends the outer edge of all roofs across the outer concourse up to the facade (enabled by default). */

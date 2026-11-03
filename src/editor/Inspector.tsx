@@ -33,7 +33,12 @@ import {
   resolveAllCorners,
   resolveFloodlightRig,
   resolveSite,
+  resolveRetractable,
   resolveStandVomitories,
+  RETRACTABLE_PANEL_LIMITS,
+  RetractableConfig,
+  RetractableMotion,
+  RetractablePanelKind,
   RoofStyle,
   SeatingType,
   SiteSetting,
@@ -191,7 +196,12 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
   {
     id: 'retractable',
     label: 'Toit rétractable motorisé',
-    desc: 'Panneaux coulissants épousant l’ouverture centrale',
+    desc: 'Panneaux mobiles : coulissants, pivotants, à volets ou membrane repliable',
+  },
+  {
+    id: 'petal_iris',
+    label: 'Toit iris à pétales',
+    desc: 'Pétales qui pivotent sur la couronne comme un diaphragme d’appareil photo',
   },
   {
     id: 'fixed_dome',
@@ -1305,14 +1315,15 @@ const RoofInspector: React.FC = () => {
           onChange={(style) => updateRoof({ style })}
           options={ROOF_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
         />
-        {roof.style === 'retractable' && (
-          <ToggleField
-            label="Panneaux fermés"
-            checked={Boolean(roof.retractableClosed)}
-            onChange={(v) => updateRoof({ retractableClosed: v })}
-          />
-        )}
       </PanelSection>
+      {(roof.style === 'retractable' || roof.style === 'petal_iris') && (
+        <RetractableRoofSection
+          retractable={resolveRetractable(roof)}
+          iris={roof.style === 'petal_iris'}
+          horseshoe={shape === 'horseshoe'}
+          onChange={(patch) => updateRoof({ retractable: { ...roof.retractable, ...patch } })}
+        />
+      )}
       {isContinuousBowlShape(shape) && !none && (
         <PanelSection title="Tribunes couvertes">
           <div className="grid grid-cols-4 gap-1" role="group" aria-label="Tribunes couvertes">
@@ -1473,6 +1484,167 @@ const RoofInspector: React.FC = () => {
     </>
   );
 };
+
+const RETRACTABLE_MOTION_OPTIONS: { id: RetractableMotion; label: string; desc: string }[] = [
+  {
+    id: 'slide_longitudinal',
+    label: 'Coulissant dans l’axe',
+    desc: 'Panneaux sur méga-poutres, empilés au-dessus des virages',
+  },
+  {
+    id: 'slide_transverse',
+    label: 'Coulissant en travers',
+    desc: 'Panneaux qui s’écartent vers les tribunes latérales',
+  },
+  {
+    id: 'slide_off',
+    label: 'Toit qui sort du stade',
+    desc: 'Le toit roule hors de l’enceinte sur des rails à chevalets',
+  },
+  {
+    id: 'rotate_vertical',
+    label: 'Secteurs pivotants',
+    desc: 'Secteurs qui tournent autour d’un moyeu central et s’empilent',
+  },
+  {
+    id: 'rotate_horizontal',
+    label: 'Volets à charnière',
+    desc: 'Volets articulés sur la couronne, relevés vers l’extérieur',
+  },
+  {
+    id: 'iris',
+    label: 'Iris à pétales',
+    desc: 'Pétales qui pivotent sur la couronne comme un diaphragme',
+  },
+  {
+    id: 'fold_central',
+    label: 'Membrane repliée au centre',
+    desc: 'Membrane sur câbles, ramenée vers un anneau central suspendu',
+  },
+  {
+    id: 'fold_edge',
+    label: 'Membrane en accordéon',
+    desc: 'Fermes mobiles qui se regroupent en plissant la membrane',
+  },
+  {
+    id: 'combined_stack',
+    label: 'Coulissant et pivotant',
+    desc: '3 panneaux s’empilent sur un panneau fixe, dont un en tournant',
+  },
+];
+
+const PANEL_KIND_OPTIONS: { id: RetractablePanelKind; label: string }[] = [
+  { id: 'rigid', label: 'Rigides' },
+  { id: 'membrane', label: 'Membrane' },
+  { id: 'mixed', label: 'Mixtes' },
+];
+
+const PARK_END_OPTIONS: { id: RetractableConfig['parkEnd']; label: string }[] = [
+  { id: 'both', label: 'Deux côtés' },
+  { id: 'east', label: 'Est' },
+  { id: 'west', label: 'Ouest' },
+];
+
+function RetractableRoofSection({
+  retractable,
+  iris,
+  horseshoe,
+  onChange,
+}: {
+  retractable: RetractableConfig;
+  iris: boolean;
+  horseshoe: boolean;
+  onChange: (patch: Partial<RetractableConfig>) => void;
+}) {
+  const { motion, openRatio, panelCount, panelKind, panelMaterial, parkEnd, suspensionMast } =
+    retractable;
+  const limits = RETRACTABLE_PANEL_LIMITS[motion];
+  const parks =
+    motion === 'slide_longitudinal' || motion === 'slide_off' || motion === 'fold_edge';
+  const countLabel =
+    motion === 'fold_central' ? 'Câbles' : motion === 'fold_edge' ? 'Fermes mobiles' : 'Panneaux';
+  return (
+    <PanelSection title="Toit mobile">
+      {horseshoe && (
+        <p className="text-2xs text-ink-faint">
+          Le fer à cheval n’a pas d’ouverture fermée : seule la couronne fixe est construite.
+        </p>
+      )}
+      {!iris && (
+        <OptionList
+          label="Mouvement"
+          value={motion}
+          onChange={(m) => onChange({ motion: m, panelCount: RETRACTABLE_PANEL_LIMITS[m].def })}
+          options={RETRACTABLE_MOTION_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
+        />
+      )}
+      <SliderField
+        label="Ouverture"
+        min={0}
+        max={1}
+        step={0.05}
+        value={openRatio}
+        display={openRatio === 0 ? 'Fermé' : `${Math.round(openRatio * 100)} %`}
+        scale={100}
+        onChange={(v) => onChange({ openRatio: v })}
+      />
+      <div className="grid grid-cols-2 gap-1" role="group" aria-label="Ouverture rapide">
+        <button
+          type="button"
+          onClick={() => onChange({ openRatio: 0 })}
+          className={`h-7 text-xs ${choiceClass(openRatio === 0)}`}
+        >
+          Fermé
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange({ openRatio: 1 })}
+          className={`h-7 text-xs ${choiceClass(openRatio === 1)}`}
+        >
+          Ouvert
+        </button>
+      </div>
+      {limits.min < limits.max && (
+        <SliderField
+          label={countLabel}
+          min={limits.min}
+          max={limits.max}
+          step={1}
+          value={panelCount}
+          display={String(panelCount)}
+          onChange={(v) => onChange({ panelCount: v })}
+        />
+      )}
+      {parks && (
+        <Segmented
+          label="Côté de rangement"
+          value={parkEnd}
+          options={PARK_END_OPTIONS}
+          onChange={(v) => onChange({ parkEnd: v })}
+        />
+      )}
+      {motion === 'fold_central' && (
+        <ToggleField
+          label="Mât incliné porteur"
+          checked={suspensionMast}
+          onChange={(v) => onChange({ suspensionMast: v })}
+        />
+      )}
+      <Segmented
+        label="Type de panneaux"
+        value={panelKind}
+        options={PANEL_KIND_OPTIONS}
+        onChange={(v) => onChange({ panelKind: v })}
+      />
+      <OptionList
+        label="Matériau des panneaux"
+        value={panelMaterial}
+        onChange={(v) => onChange({ panelMaterial: v })}
+        options={materialOptions(ROOF_MATERIAL_CATALOG)}
+      />
+    </PanelSection>
+  );
+}
 
 function materialOptions<T extends string>(
   catalog: { id: T; label: string; subtitle: string }[]

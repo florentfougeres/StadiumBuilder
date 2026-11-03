@@ -33,6 +33,7 @@ import {
   StadiumShape,
   StandSide,
 } from './schema';
+import { buildRetractablePanels } from './generateRetractableRoof';
 
 function hasRoofGantryLights(doc: StadiumDocument): boolean {
   const rig = resolveFloodlightRig(doc);
@@ -1229,10 +1230,9 @@ function buildFoldedPlateRoof(
 }
 
 /**
- * 3. RETRACTABLE ROOF (`retractable`):
- * Perimeter canopy whose central opening is covered by two motorized sliding leaves.
- * Each leaf is cut from the opening contour so its outer edges follow the bowl outline.
- * Supports `doc.roof.retractableClosed` (`true` = closed indoor arena, `false` = open to sky).
+ * 3. RETRACTABLE ROOF (`retractable`, `petal_iris`):
+ * Perimeter canopy whose central opening is covered by movable panels (see
+ * `generateRetractableRoof.ts` for the nine motions and `doc.roof.retractable` for settings).
  */
 function buildRetractableRoof(
   doc: StadiumDocument,
@@ -1241,107 +1241,23 @@ function buildRetractableRoof(
 ): THREE.Group {
   const { group, bounds, roofY, innerOffset, outerOffset, primaryStructMat } =
     buildPerimeterCanopyCrown(doc, crossSectionClip, maxAnisotropy);
-  const { ring } = bounds;
 
+  // The open end of a horseshoe leaves no closed opening for the panels to cover.
   if (doc.shape === 'horseshoe') {
     return group;
   }
 
-  // Leaves overlap the canopy rim by 2 m; the cross-section keeps only the north half (z <= 0).
-  const leafOverlap = 2.0;
-  const contourSegs = 96;
-  const contour: { x: number; z: number }[] = [];
-  for (let s = 0; s < contourSegs; s++) {
-    const p = sampleRoundedBowlRing(ring, s / contourSegs, innerOffset + leafOverlap);
-    contour.push({ x: p.x, z: crossSectionClip ? Math.min(0, p.z) : p.z });
-  }
-  const openingHalfX = Math.max(...contour.map((p) => Math.abs(p.x)));
-
-  // Half-depth of the (convex) contour at a given x, by intersecting its edges with that line.
-  const contourHalfDepthAt = (x: number): number => {
-    let maxZ = 0;
-    for (let i = 0; i < contour.length; i++) {
-      const a = contour[i];
-      const b = contour[(i + 1) % contour.length];
-      if ((a.x - x) * (b.x - x) > 0 || a.x === b.x) continue;
-      const f = (x - a.x) / (b.x - a.x);
-      maxZ = Math.max(maxZ, Math.abs(a.z + f * (b.z - a.z)));
-    }
-    return maxZ;
-  };
-
-  // Open leaves park over the canopy, so their travel is bounded by its width.
-  const maxTravel = Math.max(0, outerOffset - innerOffset - leafOverlap);
-  const isClosed = Boolean(doc.roof.retractableClosed);
-  const travel = isClosed ? 0 : maxTravel;
-  const leafY = roofY + 2.15;
-
-  const leafOpacity = isClosed ? Math.min(doc.roof.opacity, 0.84) : Math.min(doc.roof.opacity, 0.65);
-  const leafMat = new THREE.MeshPhysicalMaterial({
-    color: 0xe0f2fe,
-    roughness: 0.12,
-    metalness: 0.15,
-    clearcoat: 0.9,
-    transparent: true,
-    opacity: leafOpacity,
-    side: THREE.DoubleSide,
-  });
-  const leafShadowDepth = createRoofShadowDepthMaterial(
-    'polycarbonate_glass',
-    leafOpacity,
-    doc.roof.skylightMode ?? 'none',
-    doc.roof.skylightRatio ?? 0,
-    0.04,
-    0.04
+  group.add(
+    buildRetractablePanels(doc, {
+      ring: bounds.ring,
+      roofY,
+      innerOffset,
+      outerOffset,
+      primaryStructMat,
+      crossSectionClip,
+      maxAnisotropy,
+    })
   );
-
-  for (const xSign of [-1, 1] as const) {
-    // Clamping a convex outline to one side of x = 0 yields that half of the opening.
-    const shape = new THREE.Shape(
-      contour.map((p) => {
-        const x = xSign > 0 ? Math.max(0, p.x) : Math.min(0, p.x);
-        return new THREE.Vector2(x, -p.z);
-      })
-    );
-    const leafGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.55, bevelEnabled: false });
-    leafGeo.rotateX(-Math.PI / 2);
-    const leaf = new THREE.Mesh(leafGeo, leafMat);
-    leaf.name = 'RetractableRoofLeaf';
-    leaf.customDepthMaterial = leafShadowDepth;
-    leaf.position.set(xSign * travel, leafY, 0);
-    leaf.castShadow = true;
-    leaf.renderOrder = 3;
-    group.add(leaf);
-
-    // Transverse motorized box-trusses, each trimmed to the leaf outline at its station
-    for (const frac of [0.12, 0.4, 0.68, 0.94]) {
-      const localX = xSign * openingHalfX * frac;
-      const beamZ = contourHalfDepthAt(localX);
-      if (beamZ < 2) continue;
-      const zMin = -beamZ;
-      const zMax = crossSectionClip ? 0 : beamZ;
-      const beam = new THREE.Mesh(
-        new THREE.BoxGeometry(0.65, 1.15, zMax - zMin),
-        primaryStructMat
-      );
-      beam.position.set(localX + xSign * travel, leafY + 1.05, (zMin + zMax) / 2);
-      beam.castShadow = true;
-      group.add(beam);
-    }
-  }
-
-  // Longitudinal runway rails the leaves slide along, laid over the canopy
-  const railHalfLen = openingHalfX + maxTravel;
-  const railZ = contourHalfDepthAt(0) * 0.6;
-  for (const zSign of crossSectionClip ? [-1] : [-1, 1]) {
-    const rail = new THREE.Mesh(
-      new THREE.BoxGeometry(railHalfLen * 2, 0.4, 0.9),
-      primaryStructMat
-    );
-    rail.position.set(0, roofY + 1.9, zSign * railZ);
-    group.add(rail);
-  }
-
   return group;
 }
 
@@ -3048,7 +2964,7 @@ function buildRoofAssembly(
       return root;
     }
 
-    if (doc.roof.style === 'retractable') {
+    if (doc.roof.style === 'retractable' || doc.roof.style === 'petal_iris') {
       root.add(buildRetractableRoof(doc, crossSectionClip, maxAnisotropy));
       return root;
     }

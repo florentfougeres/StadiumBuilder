@@ -436,7 +436,11 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
           d.stands.south.enabled = true;
           d.stands.west.enabled = true;
           d.stands.east.enabled = false;
-          if (d.roof.style === 'truss' || d.roof.style === 'retractable') {
+          if (
+            d.roof.style === 'truss' ||
+            d.roof.style === 'retractable' ||
+            d.roof.style === 'petal_iris'
+          ) {
             d.roof.style = 'cantilever';
           }
         } else if (shape === 'modern_bowl') {
