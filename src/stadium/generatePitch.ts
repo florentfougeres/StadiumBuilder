@@ -11,6 +11,7 @@ import {
   DEFAULT_STADIUM_MATERIALS,
   getTrackGeometry,
   LightingMode,
+  OfficialTrackGeometry,
   PitchConfig,
   PitchTurfMaterialId,
   StadiumColors,
@@ -687,6 +688,126 @@ export function createSiteGroundGeometry(rawPitch: PitchConfig, width: number, d
     : createHollowHorizontalFrameGeometry(width, depth, totalLength - 0.24, totalWidth - 0.24, 'normalized');
 }
 
+/** Period of the blade field (m): each blade wraps to the copy nearest the camera. */
+const BLADE_FIELD_PERIOD = 12;
+const BLADE_FIELD_COUNT = 220_000;
+/** Distance from the camera (m) over which blades shrink into the painted turf. */
+const BLADE_FADE_START = 3.2;
+const BLADE_FADE_END = 5.8;
+
+/**
+ * Real grass blades around the camera, so the turf reads as grass and not as a printed carpet
+ * once you get close. One tapered blade is instanced ~1 500 times per m² over a 12 m tile; the
+ * vertex shader wraps every blade to its copy nearest the camera, so the field stays fixed on the
+ * ground while following the viewer, and blades shrink to nothing past ~6 m where the painted
+ * turf takes over. Each blade takes its colour from the pitch texture underneath (mowing stripes
+ * and white lines included) and only grows on the turf itself.
+ */
+function createGrassBladeField(
+  pitchMap: THREE.Texture,
+  totalLength: number,
+  totalWidth: number,
+  track: OfficialTrackGeometry | null
+): THREE.Mesh {
+  // A blade 1 unit tall: two tapering quads and a pointed tip (x = width, y = height).
+  const blade = new THREE.BufferGeometry();
+  blade.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(
+      [-0.5, 0, 0, 0.5, 0, 0, -0.42, 0.4, 0, 0.42, 0.4, 0, -0.26, 0.75, 0, 0.26, 0.75, 0, 0, 1, 0],
+      3
+    )
+  );
+  blade.setIndex([0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4, 4, 5, 6]);
+
+  const geo = new THREE.InstancedBufferGeometry();
+  geo.index = blade.index;
+  geo.setAttribute('position', blade.getAttribute('position'));
+  const offsets = new Float32Array(BLADE_FIELD_COUNT * 2);
+  let seed = 1;
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  for (let i = 0; i < BLADE_FIELD_COUNT; i++) {
+    offsets[i * 2] = rand() * BLADE_FIELD_PERIOD;
+    offsets[i * 2 + 1] = rand() * BLADE_FIELD_PERIOD;
+  }
+  geo.setAttribute('bladeOffset', new THREE.InstancedBufferAttribute(offsets, 2));
+  geo.instanceCount = BLADE_FIELD_COUNT;
+
+  const material = new THREE.MeshStandardMaterial({ roughness: 0.78, side: THREE.DoubleSide });
+  material.customProgramCacheKey = () => 'grass-blade-field-v1';
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uPitchMap = { value: pitchMap };
+    shader.uniforms.uTurfHalf = { value: new THREE.Vector2(totalLength / 2, totalWidth / 2) };
+    shader.uniforms.uTrack = {
+      value: new THREE.Vector3(track ? 1 : 0, track?.straightHalfLength ?? 0, track?.innerRadius ?? 0),
+    };
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+attribute vec2 bladeOffset;
+uniform sampler2D uPitchMap;
+uniform vec2 uTurfHalf;
+uniform vec3 uTrack;
+varying vec3 vBladeColor;
+varying float vBladeT;
+float bladeHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }`
+      )
+      .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(0.0, 1.0, 0.0);')
+      .replace(
+        '#include <begin_vertex>',
+        `float period = ${BLADE_FIELD_PERIOD.toFixed(1)};
+vec2 base = bladeOffset + period * floor((cameraPosition.xz - bladeOffset) / period + 0.5);
+float h1 = bladeHash(base);
+float h2 = bladeHash(base + 17.3);
+float h3 = bladeHash(base - 5.1);
+bool onTurf = uTrack.x > 0.5
+  ? length(vec2(max(abs(base.x) - uTrack.y, 0.0), base.y)) < uTrack.z - 0.3
+  : abs(base.x) < uTurfHalf.x - 0.05 && abs(base.y) < uTurfHalf.y - 0.05;
+float fade = 1.0 - smoothstep(${BLADE_FADE_START.toFixed(1)}, ${BLADE_FADE_END.toFixed(1)}, distance(cameraPosition, vec3(base.x, 0.0, base.y)));
+float bladeH = onTurf ? (0.02 + 0.018 * h1) * fade : 0.0;
+float angle = h2 * 6.2831853;
+vec2 dir = vec2(cos(angle), sin(angle));
+float t = position.y;
+// Blades lean and curve over with height; width 4-6 mm.
+float bend = t * t * (0.25 + 0.45 * h3);
+vec2 side = vec2(-dir.y, dir.x) * position.x * (0.004 + 0.002 * h3);
+vec3 transformed = vec3(
+  base.x + side.x + dir.x * bend * bladeH,
+  0.03 + t * bladeH * (1.0 - 0.25 * bend),
+  base.y + side.y + dir.y * bend * bladeH
+);
+vec2 pitchUv = vec2(base.x / (2.0 * uTurfHalf.x) + 0.5, 0.5 - base.y / (2.0 * uTurfHalf.y));
+vBladeColor = texture2D(uPitchMap, pitchUv).rgb * (0.85 + 0.3 * h1);
+vBladeT = t;`
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+varying vec3 vBladeColor;
+varying float vBladeT;`
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+// Dark at the root where blades shade each other, lighter and slightly yellow at the tip.
+diffuseColor.rgb = vBladeColor * mix(0.45, 1.15, vBladeT) * mix(vec3(1.0), vec3(1.08, 1.06, 0.86), vBladeT * vBladeT);`
+      );
+  };
+
+  const mesh = new THREE.Mesh(geo, material);
+  mesh.name = 'TurfGrassBlades';
+  // Positions come from the shader around the camera: never cull or pick it.
+  mesh.frustumCulled = false;
+  mesh.raycast = () => {};
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
 export function generatePitchGroup(
   rawPitch: PitchConfig,
   _colors: StadiumColors,
@@ -804,6 +925,7 @@ export function generatePitchGroup(
   turfMesh.position.y = 0.03;
   turfMesh.receiveShadow = true;
   root.add(turfMesh);
+  root.add(createGrassBladeField(colorMap, totalLength, totalWidth, track));
 
   // 3. Concrete Perimeter Drainage Curb framing the pitch apron (on non-track stadiums)
   if (!track) {
