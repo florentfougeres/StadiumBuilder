@@ -1510,11 +1510,8 @@ function getSeatGeometry(): THREE.BufferGeometry {
   );
   const bracket = new THREE.BoxGeometry(0.05, 0.36, 0.2);
   bracket.translate(-0.2, 0.18, 0.12);
-  const merged = mergeGeometries([
-    back.toNonIndexed(),
-    foldedPan.toNonIndexed(),
-    bracket.toNonIndexed(),
-  ]);
+  // Extrusions come out non-indexed; the bracket box is indexed, so match it to them.
+  const merged = mergeGeometries([back, foldedPan, bracket.toNonIndexed()]);
   back.dispose();
   foldedPan.dispose();
   bracket.dispose();

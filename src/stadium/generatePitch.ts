@@ -695,6 +695,24 @@ const BLADE_FIELD_COUNT = 220_000;
 const BLADE_FADE_START = 3.2;
 const BLADE_FADE_END = 5.8;
 
+/** Blade positions inside one tile; identical for every pitch, so computed once. */
+let bladeOffsetsCache: Float32Array | null = null;
+function getBladeOffsets(): Float32Array {
+  if (bladeOffsetsCache) return bladeOffsetsCache;
+  const offsets = new Float32Array(BLADE_FIELD_COUNT * 2);
+  let seed = 1;
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  for (let i = 0; i < BLADE_FIELD_COUNT; i++) {
+    offsets[i * 2] = rand() * BLADE_FIELD_PERIOD;
+    offsets[i * 2 + 1] = rand() * BLADE_FIELD_PERIOD;
+  }
+  bladeOffsetsCache = offsets;
+  return offsets;
+}
+
 /**
  * Real grass blades around the camera, so the turf reads as grass and not as a printed carpet
  * once you get close. One tapered blade is instanced ~1 500 times per m² over a 12 m tile; the
@@ -723,17 +741,7 @@ function createGrassBladeField(
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = blade.index;
   geo.setAttribute('position', blade.getAttribute('position'));
-  const offsets = new Float32Array(BLADE_FIELD_COUNT * 2);
-  let seed = 1;
-  const rand = () => {
-    seed = (seed * 16807) % 2147483647;
-    return seed / 2147483647;
-  };
-  for (let i = 0; i < BLADE_FIELD_COUNT; i++) {
-    offsets[i * 2] = rand() * BLADE_FIELD_PERIOD;
-    offsets[i * 2 + 1] = rand() * BLADE_FIELD_PERIOD;
-  }
-  geo.setAttribute('bladeOffset', new THREE.InstancedBufferAttribute(offsets, 2));
+  geo.setAttribute('bladeOffset', new THREE.InstancedBufferAttribute(getBladeOffsets(), 2));
   geo.instanceCount = BLADE_FIELD_COUNT;
 
   const material = new THREE.MeshStandardMaterial({ roughness: 0.78, side: THREE.DoubleSide });
