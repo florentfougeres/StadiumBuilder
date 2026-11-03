@@ -912,6 +912,87 @@ function wrapDataTextures(
   };
 }
 
+const TRIPLANAR_COMMON = /* glsl */ `
+uniform float triplanarScale;
+vec3 triW;
+vec3 triSign;
+vec3 triPos;
+void triplanarSetup() {
+  #ifdef FLAT_SHADED
+    vec3 nV = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));
+  #else
+    vec3 nV = normalize(vNormal) * (gl_FrontFacing ? 1.0 : -1.0);
+  #endif
+  vec3 nW = inverseTransformDirection(nV, viewMatrix);
+  triPos = (cameraPosition + inverseTransformDirection(-vViewPosition, viewMatrix) * length(vViewPosition)) * triplanarScale;
+  triSign = vec3(nW.x < 0.0 ? -1.0 : 1.0, nW.y < 0.0 ? -1.0 : 1.0, nW.z < 0.0 ? -1.0 : 1.0);
+  // Sharp blend: faces read as one clean projection, rounded corners cross-fade over a narrow band
+  vec3 w = pow(abs(nW), vec3(6.0));
+  triW = w / (w.x + w.y + w.z);
+}
+// Walls keep world-up as texture V so formwork rows stay level; X/Z faces un-mirror by facing sign
+vec2 triUvX() { return vec2(-triPos.z * triSign.x, triPos.y); }
+vec2 triUvY() { return vec2(triPos.x, -triPos.z * triSign.y); }
+vec2 triUvZ() { return vec2(triPos.x * triSign.z, triPos.y); }
+vec4 triplanarSample(sampler2D tex) {
+  return texture2D(tex, triUvX()) * triW.x + texture2D(tex, triUvY()) * triW.y + texture2D(tex, triUvZ()) * triW.z;
+}
+`;
+
+/**
+ * Samples a tiled material's maps by world-space triplanar projection at `tileM` metres per tile
+ * instead of the geometry's UVs. Bowl, concourse and facade meshes come from boxes, extrusions and
+ * swept corner strips whose UVs have no common scale, so UV mapping stretched the texture on every
+ * piece and broke it at each corner; world projection keeps one metric scale across all of them.
+ * Re-applied on `clone()`, since three does not copy `onBeforeCompile`.
+ */
+function applyWorldTriplanarMapping<M extends THREE.MeshStandardMaterial>(material: M, tileM: number): M {
+  const scale = 1 / tileM;
+  material.customProgramCacheKey = () => `world-triplanar-v1-${tileM}`;
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.triplanarScale = { value: scale };
+    const chunk = (name: keyof typeof THREE.ShaderChunk, from: string, to: string) => {
+      const src = THREE.ShaderChunk[name];
+      if (!src.includes(from)) throw new Error(`triplanar: ${name} chunk changed`);
+      return src.replace(from, to);
+    };
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <normal_pars_fragment>', `#include <normal_pars_fragment>\n${TRIPLANAR_COMMON}`)
+      .replace(
+        '#include <map_fragment>',
+        'triplanarSetup();\n' + chunk('map_fragment', 'texture2D( map, vMapUv )', 'triplanarSample( map )')
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        chunk('roughnessmap_fragment', 'texture2D( roughnessMap, vRoughnessMapUv )', 'triplanarSample( roughnessMap )')
+      )
+      .replace(
+        '#include <emissivemap_fragment>',
+        chunk('emissivemap_fragment', 'texture2D( emissiveMap, vEmissiveMapUv )', 'triplanarSample( emissiveMap )')
+      )
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#ifdef USE_NORMALMAP_TANGENTSPACE
+  vec3 triNW = inverseTransformDirection(normal, viewMatrix);
+  vec3 tnX = texture2D(normalMap, triUvX()).xyz * 2.0 - 1.0;
+  vec3 tnY = texture2D(normalMap, triUvY()).xyz * 2.0 - 1.0;
+  vec3 tnZ = texture2D(normalMap, triUvZ()).xyz * 2.0 - 1.0;
+  // Each projection's tangent-space bump expressed along its world (U, V) axes, then blended
+  vec3 triBump =
+    (vec3(0.0, 0.0, -triSign.x) * tnX.x + vec3(0.0, 1.0, 0.0) * tnX.y) * triW.x +
+    (vec3(1.0, 0.0, 0.0) * tnY.x + vec3(0.0, 0.0, -triSign.y) * tnY.y) * triW.y +
+    (vec3(triSign.z, 0.0, 0.0) * tnZ.x + vec3(0.0, 1.0, 0.0) * tnZ.y) * triW.z;
+  normal = normalize(transformDirection(triNW + triBump * normalScale.x, viewMatrix));
+#else
+  #include <normal_fragment_maps>
+#endif`
+      );
+  };
+  const baseClone = material.clone.bind(material);
+  material.clone = () => applyWorldTriplanarMapping(baseClone() as M, tileM);
+  return material;
+}
+
 // ============================================================================
 // 1. ARCHITECTURAL PRECAST / BOARD-FORMED CONCRETE BOWL MATERIAL (512x512, 6m TILE)
 // ============================================================================
@@ -987,9 +1068,9 @@ export function createConcreteBowlMaterial(
     }
   );
 
-  // 1x1 repeat: geometry supplies real-world metric UVs (`meters / CONCRETE_UV_TILE_M`)
+  // Sampled by world-space triplanar projection, one tile per `CONCRETE_UV_TILE_M` metres
   const maps = wrapDataTextures(buffers, 1, 1, maxAnisotropy);
-  return new THREE.MeshStandardMaterial({
+  const material = new THREE.MeshStandardMaterial({
     map: maps.map,
     normalMap: maps.normalMap,
     normalScale: new THREE.Vector2(0.55, 0.55),
@@ -997,6 +1078,7 @@ export function createConcreteBowlMaterial(
     roughness: 0.92,
     metalness: 0.03,
   });
+  return applyWorldTriplanarMapping(material, CONCRETE_UV_TILE_M);
 }
 
 // ============================================================================
@@ -1453,7 +1535,7 @@ export function createFacadePbrMaterial(
     };
   });
 
-  // 1x1 repeat: geometry supplies real-world metric UVs (`meters / FACADE_UV_TILE_M`)
+  // Sampled by world-space triplanar projection, one tile per `FACADE_UV_TILE_M` metres
   const maps = wrapDataTextures(buffers, 1, 1, maxAnisotropy);
 
   const isMetallic = facadeId === 'brushed_steel_mesh' || facadeId === 'gold_anodized_panels';
@@ -1462,7 +1544,7 @@ export function createFacadePbrMaterial(
   const isEtfe = facadeId === 'etfe_cushions_facade';
   const isCorten = facadeId === 'weathered_corten';
 
-  return new THREE.MeshPhysicalMaterial({
+  const material = new THREE.MeshPhysicalMaterial({
     map: maps.map,
     normalMap: maps.normalMap,
     normalScale: new THREE.Vector2(isEtfe ? 1.25 : 0.72, isEtfe ? 1.25 : 0.72),
@@ -1479,6 +1561,7 @@ export function createFacadePbrMaterial(
     flatShading,
     side: THREE.DoubleSide,
   });
+  return applyWorldTriplanarMapping(material, FACADE_UV_TILE_M);
 }
 
 // ============================================================================

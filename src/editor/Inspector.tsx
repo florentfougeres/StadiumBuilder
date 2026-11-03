@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { MIN_PITCH_SETBACK } from '../stadium/bowlRing';
 import {
   calculateStadiumMetrics,
@@ -12,6 +12,7 @@ import {
   FACADE_MATERIAL_CATALOG,
   FACADE_PATTERN_CATALOG,
   FLOODLIGHT_RIG_CATALOG,
+  getMaterialPreviewDataUrl,
   PLAZA_MATERIAL_CATALOG,
   resolveStadiumMaterials,
   ROOF_MATERIAL_CATALOG,
@@ -238,7 +239,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
   switch (materialId) {
     case 'glass_curtain':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#0f2942" />
           <polygon points="0,0 26,0 10,28 0,28" fill="#0284c7" opacity="0.55" />
           <polygon points="18,0 30,0 14,28 4,28" fill="#bae6fd" opacity="0.3" />
@@ -250,7 +251,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
       );
     case 'brushed_steel_mesh':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#94a3b8" />
           <polygon points="0,0 28,0 12,28 0,28" fill="#e2e8f0" opacity="0.65" />
           {[4, 8, 12, 16, 20, 24].map((y) => (
@@ -260,7 +261,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
       );
     case 'architectural_concrete':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#8b95a1" />
           <line x1="20" y1="0" x2="20" y2="28" stroke="#475569" strokeWidth="1" />
           <line x1="0" y1="14" x2="40" y2="14" stroke="#475569" strokeWidth="1" />
@@ -273,7 +274,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
     case 'weathered_corten':
     case 'corten_structure':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#7c2d12" />
           <circle cx="12" cy="10" r="10" fill="#c2410c" opacity="0.65" />
           <circle cx="30" cy="20" r="9" fill="#431407" opacity="0.6" />
@@ -283,7 +284,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
       );
     case 'heritage_brick':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#88291a" />
           {[7, 14, 21].map((y) => (
             <line key={y} x1="0" y1={y} x2="40" y2={y} stroke="#cbd5e1" strokeWidth="1" opacity="0.65" />
@@ -298,7 +299,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
     case 'limestone_travertine':
     case 'sandstone_esplanade':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#d6d0c4" />
           <rect x="0" y="0" width="40" height="10" fill="#e7e2d8" opacity="0.7" />
           <line x1="0" y1="10" x2="40" y2="10" stroke="#78716c" strokeWidth="1" opacity="0.55" />
@@ -311,7 +312,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
     case 'glulam_acoustic_deck':
     case 'glulam_timber':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#b45309" />
           {[5, 11, 17, 23, 29, 35].map((x) => (
             <line key={x} x1={x} y1="0" x2={x} y2="28" stroke="#451a03" strokeWidth="1.6" opacity="0.65" />
@@ -322,7 +323,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
     case 'ptfe_membrane':
     case 'white_steel':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#e2e8f0" />
           <polygon points="0,0 32,0 16,28 0,28" fill="#ffffff" opacity="0.85" />
           <line x1="14" y1="0" x2="14" y2="28" stroke="#94a3b8" strokeWidth="1" />
@@ -332,7 +333,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
     case 'etfe_cushions':
     case 'etfe_cushions_facade':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#38bdf8" />
           <polygon points="20,2 37,14 20,26 3,14" fill="#f0f9ff" stroke="#1e293b" strokeWidth="1.2" />
           <ellipse cx="20" cy="14" rx="8" ry="5" fill="#bae6fd" opacity="0.7" />
@@ -340,7 +341,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
       );
     case 'polycarbonate_glass':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#38bdf8" opacity="0.45" />
           <polygon points="0,0 24,0 8,28 0,28" fill="#e0f2fe" opacity="0.7" />
           {[8, 16, 24, 32].map((x) => (
@@ -350,7 +351,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
       );
     case 'standing_seam_zinc':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#64748b" />
           {[6, 13, 20, 27, 34].map((x) => (
             <g key={x}>
@@ -363,7 +364,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
     case 'titanium_scales':
     case 'galvanized_steel':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#94a3b8" />
           <polygon points="0,0 24,0 40,28 14,28" fill="#f1f5f9" opacity="0.65" />
           <line x1="0" y1="9" x2="40" y2="9" stroke="#475569" strokeWidth="0.9" />
@@ -374,7 +375,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
     case 'anthracite_apron':
     case 'urban_asphalt':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#1e293b" />
           <polygon points="0,0 22,0 10,28 0,28" fill="#475569" opacity="0.55" />
           <circle cx="28" cy="10" r="1" fill="#94a3b8" opacity="0.5" />
@@ -383,7 +384,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
       );
     case 'molded_poly_mosaic':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#991b1b" />
           <rect x="3" y="4" width="6" height="8" rx="1.5" fill="#ef4444" />
           <rect x="11" y="4" width="6" height="8" rx="1.5" fill="#f8fafc" />
@@ -397,7 +398,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
       );
     case 'ribbed_stadium_shell':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#1e3a8a" />
           {[4, 13, 22, 31].map((x) => (
             <rect key={x} x={x} y="4" width="6" height="20" rx="2" fill="#3b82f6" />
@@ -407,7 +408,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
       );
     case 'padded_club_velvet':
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#0f172a" />
           {[4, 14, 24].map((x) => (
             <rect key={x} x={x} y="4" width="8" height="20" rx="2.5" fill="#334155" stroke="#475569" strokeWidth="0.8" />
@@ -435,7 +436,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
           ? '#1b7a3e'
           : '#268040';
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill={c1} />
           <rect x="8" y="0" width="8" height="28" fill={c2} />
           <rect x="24" y="0" width="8" height="28" fill={c2} />
@@ -456,7 +457,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
           ? '#5b21b6'
           : '#9a2b20';
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill={fill} />
           {[7, 14, 21].map((y) => (
             <line key={y} x1="0" y1={y} x2="40" y2={y} stroke="#f8fafc" strokeWidth="0.9" opacity="0.85" />
@@ -466,7 +467,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
     }
     default:
       return (
-        <svg viewBox="0 0 40 28" aria-hidden className="w-7 h-5 rounded-sm shrink-0">
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
           <rect width="40" height="28" fill="#475569" />
           <line x1="13" y1="0" x2="13" y2="28" stroke="#cbd5e1" strokeWidth="0.8" opacity="0.4" />
           <line x1="27" y1="0" x2="27" y2="28" stroke="#cbd5e1" strokeWidth="0.8" opacity="0.4" />
@@ -474,6 +475,36 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
         </svg>
       );
   }
+};
+
+/**
+ * Lit render of the material's actual PBR texture. Rendering is deferred past the first paint
+ * (each facade texture synthesises 512² texels on first use); the SVG sketch shows meanwhile and
+ * stays as the fallback where no 2D canvas exists.
+ */
+const MaterialPreview: React.FC<{ materialId: string }> = ({ materialId }) => {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const t = setTimeout(() => {
+      const next = getMaterialPreviewDataUrl(materialId);
+      if (alive) setUrl(next);
+    }, 0);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [materialId]);
+  return url ? (
+    <img
+      src={url}
+      alt=""
+      aria-hidden
+      className="w-10 h-[26px] rounded-sm shrink-0 object-cover ring-1 ring-black/10"
+    />
+  ) : (
+    <MaterialSwatchSvg materialId={materialId} />
+  );
 };
 
 const SeatPaletteChip: React.FC<{ primary: string; secondary: string }> = ({
@@ -1409,7 +1440,7 @@ function materialOptions<T extends string>(
     id: item.id,
     label: item.label,
     detail: item.subtitle,
-    leading: <MaterialSwatchSvg materialId={item.id} />,
+    leading: <MaterialPreview materialId={item.id} />,
   }));
 }
 
