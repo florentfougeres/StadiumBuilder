@@ -33,6 +33,7 @@ import {
   Button,
   FieldRow,
   OptionList,
+  choiceClass,
   PanelSection,
   Segmented,
   SelectField,
@@ -923,9 +924,7 @@ const RoofInspector: React.FC = () => {
                   type="button"
                   aria-pressed={on}
                   onClick={() => toggleSide(side)}
-                  className={`h-7 rounded text-xs transition-colors duration-100 ${
-                    on ? 'bg-accent-soft text-ink font-medium' : 'bg-canvas text-ink-muted hover:text-ink'
-                  }`}
+                  className={`h-7 text-xs ${choiceClass(on)} ${on ? 'font-medium' : ''}`}
                 >
                   {STAND_LABELS[side]}
                 </button>
@@ -1040,7 +1039,7 @@ const MaterialsInspector: React.FC = () => {
           onChange={(seatFinish) => updateMaterials({ seatFinish })}
           options={materialOptions(SEAT_MATERIAL_CATALOG)}
         />
-        <div className="grid grid-cols-2 gap-px -mx-2" role="group" aria-label="Couleurs de club">
+        <div className="grid grid-cols-2 gap-1" role="group" aria-label="Couleurs de club">
           {SEAT_CLUB_PALETTES.map((pal) => {
             const current =
               doc.colors.seatsPrimary.toLowerCase() === pal.primary.toLowerCase() &&
@@ -1051,8 +1050,8 @@ const MaterialsInspector: React.FC = () => {
                 type="button"
                 aria-pressed={current}
                 onClick={() => updateColors({ seatsPrimary: pal.primary, seatsSecondary: pal.secondary })}
-                className={`flex items-center gap-2 h-7 px-2 rounded text-left text-xs transition-colors duration-100 ${
-                  current ? 'bg-accent-soft text-ink font-medium' : 'text-ink hover:bg-hover'
+                className={`flex items-center gap-2 h-8 px-2 text-left text-xs ${choiceClass(current)} ${
+                  current ? 'font-medium' : ''
                 }`}
               >
                 <SeatPaletteChip primary={pal.primary} secondary={pal.secondary} />

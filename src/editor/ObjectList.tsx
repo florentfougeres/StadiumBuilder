@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { ObjectMount, PlacedObjectType, StandSide } from '../stadium/schema';
 import { useStadiumStore } from '../state/useStadiumStore';
-import { IconButton, NumberField, PanelSection, Segmented, SelectField, SliderField } from './ui';
+import { IconButton, NumberField, PanelSection, Segmented, SelectField, SliderField, choiceClass } from './ui';
 
 const ADDABLE_ASSETS: {
   type: PlacedObjectType;
@@ -182,17 +182,17 @@ export const ObjectList: React.FC = () => {
         </div>
       </div>
       <PanelSection title="Ajouter">
-        <div className="grid grid-cols-2 gap-px -mx-2">
+        <div className="grid grid-cols-2 gap-1">
           {ADDABLE_ASSETS.map((item) => (
             <button
               key={item.type}
               type="button"
               onClick={() => addObject(item.type)}
-              className="group flex items-center gap-2 h-8 px-2 rounded text-left text-xs text-ink hover:bg-hover"
+              className={`group flex items-center gap-2 h-8 px-2 text-left text-xs ${choiceClass(false)}`}
             >
               <span className="text-ink-faint group-hover:text-ink">{item.icon}</span>
               <span className="flex-1 truncate">{item.label}</span>
-              <Plus aria-hidden className="w-3 h-3 text-ink-faint opacity-0 group-hover:opacity-100" />
+              <Plus aria-hidden className="w-3 h-3 text-ink-faint group-hover:text-accent-ink" />
             </button>
           ))}
         </div>

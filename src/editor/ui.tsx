@@ -1,7 +1,33 @@
 import React, { useId, useState } from 'react';
 
+import { ChevronRight } from 'lucide-react';
+
 const parseFr = (raw: string) => Number(raw.replace(/\s/g, '').replace(',', '.'));
-import { Check, ChevronRight } from 'lucide-react';
+
+/**
+ * Shell of anything the user picks: an outlined tile that strengthens on hover
+ * and turns blue when chosen, so every choice reads as clickable at rest.
+ */
+export const choiceClass = (active: boolean) =>
+  `rounded border transition-colors duration-100 ${
+    active ? 'border-accent bg-accent-soft text-ink' : 'border-edge bg-panel text-ink hover:border-edge-hover hover:bg-hover'
+  }`;
+
+/** Text-entry shell shared by selects, number fields and exact-value entries. */
+const fieldClass =
+  'rounded border border-edge bg-field hover:border-edge-hover focus:border-accent focus-within:border-accent outline-none';
+
+/** Radio mark: an empty ring at rest, a filled blue dot when chosen. */
+const RadioMark: React.FC<{ active: boolean }> = ({ active }) => (
+  <span
+    aria-hidden
+    className={`grid place-items-center w-3.5 h-3.5 shrink-0 rounded-full border transition-colors duration-100 ${
+      active ? 'border-accent bg-accent' : 'border-edge-hover bg-field'
+    }`}
+  >
+    {active && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+  </span>
+);
 
 /** Inspector section: a title row that collapses its body. */
 export const PanelSection: React.FC<{
@@ -102,7 +128,7 @@ export const SliderField: React.FC<{
               e.currentTarget.blur();
             }
           }}
-          className="min-w-10 max-w-40 h-6 -mr-1 px-1 text-right text-xs text-ink tabular-nums bg-transparent rounded border border-transparent hover:border-line-strong focus:border-accent focus:bg-canvas outline-none"
+          className={`min-w-10 max-w-40 h-6 px-1.5 text-right text-xs text-ink tabular-nums ${fieldClass}`}
         />
       </div>
       <input
@@ -177,7 +203,7 @@ export function Segmented<T extends string | number>({
     <div
       role="radiogroup"
       aria-label={label}
-      className={`flex p-0.5 rounded-md bg-canvas ${disabled ? 'opacity-40 pointer-events-none' : ''}`}
+      className={`flex p-0.5 rounded-md bg-canvas border border-line ${disabled ? 'opacity-40 pointer-events-none' : ''}`}
     >
       {options.map((o) => {
         const active = o.id === value;
@@ -191,7 +217,9 @@ export function Segmented<T extends string | number>({
             onClick={() => onChange(o.id)}
             className={`flex-1 flex items-center justify-center gap-1.5 rounded whitespace-nowrap transition-colors duration-100 ${
               size === 'sm' ? 'h-6 px-2 text-2xs' : 'h-7 px-2.5 text-xs'
-            } ${active ? 'bg-raised text-ink font-medium' : 'text-ink-muted hover:text-ink'}`}
+            } ${
+              active ? 'bg-raised text-ink font-medium shadow-thumb' : 'text-ink-muted hover:text-ink hover:bg-hover'
+            }`}
           >
             {o.label}
           </button>
@@ -221,7 +249,7 @@ export function SelectField<T extends string>({
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value as T)}
-        className="h-7 max-w-44 pl-2 pr-6 text-xs text-ink bg-canvas border border-transparent hover:border-line-strong rounded appearance-none bg-no-repeat bg-[right_6px_center] bg-[length:10px] disabled:opacity-40"
+        className={`h-7 max-w-44 pl-2 pr-6 text-xs text-ink appearance-none bg-no-repeat bg-[right_6px_center] bg-[length:10px] cursor-pointer disabled:opacity-40 ${fieldClass}`}
         style={{
           backgroundImage:
             "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23a3a3a3' fill='none' stroke-width='1.4'/%3E%3C/svg%3E\")",
@@ -238,8 +266,8 @@ export function SelectField<T extends string>({
 }
 
 /**
- * Single-choice list: one compact row per option with a short secondary line.
- * Replaces the old grids of paragraph cards.
+ * Single-choice list: one outlined row per option with a radio mark; the chosen
+ * row shows its short secondary line.
  */
 export function OptionList<T extends string>({
   label,
@@ -260,7 +288,7 @@ export function OptionList<T extends string>({
     <div
       role="radiogroup"
       aria-label={label}
-      className={`grid gap-px -mx-2 ${columns === 2 ? 'grid-cols-2' : 'grid-cols-1'} ${
+      className={`grid gap-1 ${columns === 2 ? 'grid-cols-2' : 'grid-cols-1'} ${
         disabled ? 'opacity-40 pointer-events-none' : ''
       }`}
     >
@@ -274,10 +302,9 @@ export function OptionList<T extends string>({
             aria-checked={active}
             title={o.detail}
             onClick={() => onChange(o.id)}
-            className={`flex items-center gap-2 min-h-8 px-2 py-1 rounded text-left transition-colors duration-100 ${
-              active ? 'bg-accent-soft' : 'hover:bg-hover'
-            }`}
+            className={`flex items-center gap-2 min-h-8 px-2 py-1.5 text-left ${choiceClass(active)}`}
           >
+            <RadioMark active={active} />
             {o.leading}
             <span className="flex-1 min-w-0">
               <span className={`block text-xs truncate text-ink ${active ? 'font-medium' : ''}`}>
@@ -287,7 +314,6 @@ export function OptionList<T extends string>({
                 <span className="block mt-0.5 text-2xs text-ink-muted">{o.detail}</span>
               )}
             </span>
-            {active && <Check aria-hidden className="w-3.5 h-3.5 text-accent-ink shrink-0" />}
           </button>
         );
       })}
@@ -303,9 +329,9 @@ export const Button: React.FC<
     {...props}
     className={`inline-flex items-center justify-center gap-1.5 h-7 px-2.5 text-xs font-medium rounded transition-colors duration-100 whitespace-nowrap disabled:opacity-40 disabled:pointer-events-none ${
       variant === 'primary'
-        ? 'bg-accent-strong text-white hover:bg-[#0b7ee6]'
+        ? 'bg-accent-strong text-white hover:bg-accent-strong-hover'
         : variant === 'secondary'
-          ? 'bg-raised text-ink hover:bg-line-strong'
+          ? 'bg-raised text-ink border border-edge hover:border-edge-hover hover:bg-hover'
           : 'text-ink-muted hover:text-ink hover:bg-hover'
     } ${className}`}
   />
@@ -320,7 +346,7 @@ export const IconButton: React.FC<
     title={label}
     {...props}
     className={`inline-flex items-center justify-center w-7 h-7 rounded transition-colors duration-100 disabled:opacity-35 disabled:pointer-events-none ${
-      active ? 'bg-raised text-ink' : 'text-ink-muted hover:text-ink hover:bg-hover'
+      active ? 'bg-accent-soft text-accent-ink' : 'text-ink-muted hover:text-ink hover:bg-hover'
     } ${className}`}
   >
     {children}
@@ -335,7 +361,7 @@ export const NumberField: React.FC<{
   max?: number;
   onChange: (value: number) => void;
 }> = ({ label, value, step = 1, min, max, onChange }) => (
-  <label className="flex items-center h-7 rounded bg-canvas border border-transparent focus-within:border-accent hover:border-line-strong">
+  <label className={`flex items-center h-7 ${fieldClass}`}>
     <span className="pl-2 pr-1 text-2xs text-ink-faint whitespace-nowrap">{label}</span>
     <input
       type="number"

@@ -11,6 +11,11 @@
   --color-hover: #333333;
   --color-line: #3a3a3a;
   --color-line-strong: #4a4a4a;
+  /* Outline of a clickable choice at rest, and its hover */
+  --color-edge: #4f4f4f;
+  --color-edge-hover: #6e6e6e;
+  /* Text-entry fields */
+  --color-field: #1e1e1e;
 
   /* Text */
   --color-ink: #e6e6e6;
@@ -20,6 +25,7 @@
   /* Accent: bright for marks on dark, deep for filled controls carrying white text */
   --color-accent: #0d99ff;
   --color-accent-strong: #0a6fcc;
+  --color-accent-strong-hover: #0b7ee6;
   --color-accent-soft: #0d99ff26;
   --color-accent-ink: #5cb8ff;
 
@@ -27,9 +33,47 @@
   --color-warn: #f2b44c;
   --color-danger: #f26b5b;
 
+  /* Contact shadow under the active segmented option; none on dark ground */
+  --shadow-thumb: none;
+
   --text-2xs: 11px;
   --text-xs: 12px;
   --text-sm: 13px;
+}
+
+/* Light theme: the same roles on a white workbench. Chosen explicitly, or
+   followed from the system when no choice is stored. */
+@layer theme {
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --color-canvas: #ededed;
+    --color-panel: #ffffff;
+    --color-raised: #ffffff;
+    --color-hover: #f2f2f2;
+    --color-line: #e3e3e3;
+    --color-line-strong: #c4c4c4;
+    --color-edge: #cfcfcf;
+    --color-edge-hover: #8f8f8f;
+    --color-field: #ffffff;
+
+    --color-ink: #1c1c1c;
+    --color-ink-muted: #4a4a4a;
+    --color-ink-faint: #6b6b6b;
+
+    --color-accent: #0b8ae8;
+    --color-accent-strong: #0a6fcc;
+    --color-accent-strong-hover: #085aa6;
+    --color-accent-soft: #0d99ff1a;
+    --color-accent-ink: #0a62b5;
+
+    --color-warn: #a96a0a;
+    --color-danger: #d03a28;
+
+    --shadow-thumb: 0 1px 2px rgb(0 0 0 / 0.14), 0 0 0 1px rgb(0 0 0 / 0.04);
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+  }
 }
 
 @layer base {
@@ -106,7 +150,7 @@
   margin-top: -5px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(0 0 0 / 0.12);
   transition: transform 120ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .sf-range::-moz-range-thumb {

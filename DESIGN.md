@@ -1,6 +1,6 @@
 ---
 name: StadiumForge
-description: Parametric 3D football stadium editor in the browser; a dark, Figma-grade tool chrome that serves the viewport.
+description: Parametric 3D football stadium editor in the browser; a Figma-grade tool chrome, dark or light, that serves the viewport.
 colors:
   canvas: "#1e1e1e"
   panel: "#2c2c2c"
@@ -8,6 +8,9 @@ colors:
   hover: "#333333"
   line: "#3a3a3a"
   line-strong: "#4a4a4a"
+  edge: "#4f4f4f"
+  edge-hover: "#6e6e6e"
+  field: "#1e1e1e"
   ink: "#e6e6e6"
   ink-muted: "#b8b8b8"
   ink-faint: "#9a9a9a"
@@ -159,10 +162,10 @@ StadiumForge's chrome is a category-standard design-tool editor executed without
 
 Density is high and calm. Type sits at 11 to 13px, controls sit on 28px rows, and numbers are always tabular and French-formatted (fr-FR: narrow-space thousands, comma decimals). Feedback is carried by value, not by colour: when a parameter changes, the metric strip flashes a signed delta in blue, holds it, then lets it fade.
 
-The world is dark only. Depth comes from tonal layering, not shadow; shadows exist only where something genuinely floats above the work (popovers, the mobile inspector drawer).
+The world is dark by default, with a light theme mapping the same roles onto a white workbench (see Light theme). Depth comes from tonal layering, not shadow; shadows exist only where something genuinely floats above the work (popovers, the mobile inspector drawer), plus the light theme's contact shadow under the active segmented option.
 
 **Key Characteristics:**
-- Dark-only neutral greys; one blue family for selection, focus, sliders and the primary action.
+- Neutral greys in a dark and a light theme; every clickable choice outlined at rest; one blue family for selection, focus, sliders and the primary action.
 - Inter at 11/12/13px, weights 400/500/600, tabular numerals, `cv11` and `ss01` on.
 - 28px control rows, 4px radii, 1px dividers, no gradients.
 - Flat surfaces; shadow only on floating layers.
@@ -184,7 +187,9 @@ A neutral charcoal ramp with a single electric blue split into four jobs, plus t
 - **Raised Graphite** (raised): active segmented option, secondary button, active icon button.
 - **Hover Graphite** (hover): row and ghost-control hover.
 - **Hairline** (line): 1px dividers between zones, sections and metric cells.
-- **Strong Hairline** (line-strong): hover border on fields, slider track, switch "off", vertical separators in the top bar, scrollbar thumb.
+- **Strong Hairline** (line-strong): slider track, switch "off", vertical separators in the top bar, scrollbar thumb.
+- **Edge** (edge) and **Edge Hover** (edge-hover): the 1px outline every clickable choice and field carries at rest, and its hover strength. Edge Hover also draws the empty radio ring.
+- **Field** (field): fill of text-entry fields and selects (Workbench Black on dark, white on light).
 - **Ink** (ink): primary text and values.
 - **Muted Ink** (ink-muted): field labels, ghost controls at rest, units.
 - **Faint Ink** (ink-faint): metadata (counts, capacities, save time), tree group labels, chevrons, metric labels. Raised to its current value for contrast; do not go darker.
@@ -197,6 +202,15 @@ A neutral charcoal ramp with a single electric blue split into four jobs, plus t
 **The One Blue Rule.** Blue is the only hue in the chrome. Bright blue marks; deep blue fills under white text; the wash selects; the ink speaks. Never swap their jobs.
 
 **The No Scoreboard Rule.** Metric changes are never green or red. A delta is Signal Blue Ink with an explicit sign (+ or the true minus −); red and amber are kept for warnings and destruction.
+
+**The Visible Choice Rule.** Anything the user picks is outlined at rest (Edge), strengthens on hover (Edge Hover + Hover fill) and turns blue when chosen (Selection Blue border + Selection Wash). Single choices also carry a radio mark. A choice that only reveals itself on hover is a bug. The shared `choiceClass()` in `src/editor/ui.tsx` owns this shell.
+
+### Light theme
+Same roles, white workbench, set by `data-theme="light"` on `<html>` (`src/index.css`). The top-bar contrast button toggles it and stores the choice (`stadiumforge.theme`); with no stored choice the system preference wins, applied before first paint by `index.html`.
+- canvas #ededed, panel and raised #ffffff, hover #f2f2f2, line #e3e3e3, line-strong #c4c4c4, edge #cfcfcf, edge-hover #8f8f8f, field #ffffff.
+- ink #1c1c1c, ink-muted #4a4a4a, ink-faint #6b6b6b.
+- accent #0b8ae8 (marks reach 3:1 on white), accent-strong #0a6fcc with hover #085aa6, accent-soft 10% blue, accent-ink #0a62b5; warn #a96a0a, danger #d03a28.
+- The active segmented option is white on the grey track, lifted by the `thumb` contact shadow (none on dark).
 
 ## Typography
 
@@ -247,19 +261,20 @@ Small, consistent corners: 4px on controls, rows and fields; 6px on containers t
 Compact and quiet; only one filled button per view.
 - **Shape:** gently squared (4px), 28px tall, 10px side padding, 12px medium text.
 - **Primary:** Deep Action Blue with white text; hover to Lifted Action Blue. Reserved for the main action (Exporter).
-- **Secondary:** Raised Graphite with Ink text; hover to Strong Hairline grey.
+- **Secondary:** Raised Graphite with Ink text and a 1px Edge outline; hover to Edge Hover and Hover Graphite.
 - **Ghost:** Muted Ink, no fill; hover adds Hover Graphite and Ink text.
-- **Icon button:** 28px square, Muted Ink; active state uses Raised Graphite. Destructive icon buttons turn Danger Coral on hover.
+- **Icon button:** 28px square, Muted Ink; active (toggled) state uses Selection Wash with Signal Blue Ink. Destructive icon buttons turn Danger Coral on hover.
 - **Focus / disabled:** global 2px Selection Blue outline; disabled at 40% opacity.
 
 ### Segmented control
-A recessed canvas track (6px radius, 2px inset) holding equal options; the active option rises to Raised Graphite with Ink medium text. 28px (md) or 24px with 11px text (sm). Used for camera modes, lighting, transform tools.
+A recessed canvas track with a 1px Hairline outline (6px radius, 2px inset) holding equal options; inactive options take Hover Graphite on hover; the active option rises to Raised Graphite with Ink medium text (and the thumb shadow on light). 28px (md) or 24px with 11px text (sm). Used for camera modes, lighting, transform tools.
 
 ### Inputs / Fields
-- **Style:** canvas fill, transparent 1px border, 4px radius, 28px tall, 12px text; numeric values right-aligned and tabular. Number fields carry an inline 11px Faint Ink prefix label.
-- **Hover / Focus:** border to Strong Hairline on hover, Selection Blue on focus.
+- **Style:** Field fill, 1px Edge border, 4px radius, 28px tall, 12px text; numeric values right-aligned and tabular. Number fields carry an inline 11px Faint Ink prefix label.
+- **Hover / Focus:** border to Edge Hover on hover, Selection Blue on focus.
 - **Selects:** same shell with a drawn chevron at right.
-- **Inline-editable text:** project name and slider values read as plain text and show the field shell only on hover/focus.
+- **Slider values:** a compact 24px field shell, always visible so the exact value reads as editable.
+- **Inline-editable text:** the project name reads as plain text and shows the field shell only on hover/focus.
 
 ### Slider field
 Label left, formatted value right (click to type an exact value, Enter commits, Escape cancels). Below: a 2px track filled with Selection Blue up to the value over Strong Hairline, and a 12px white round thumb that scales to 1.2 on hover/focus with a soft blue focus halo.
@@ -268,7 +283,7 @@ Label left, formatted value right (click to type an exact value, Enter commits, 
 28 by 16px pill; Deep Action Blue when on, Strong Hairline when off; white 12px knob slides with a 150ms transition.
 
 ### Option list
-Single-choice list of compact 32px rows replacing paragraph cards. Selected row: Selection Wash, medium text, a Signal Blue Ink check at right, and its one-line detail revealed in 11px Muted Ink.
+Single-choice list of compact outlined rows (min 32px, 4px gap) replacing paragraph cards, each led by a 14px radio mark. At rest: Panel fill, Edge outline, empty ring. Hover: Edge Hover outline and Hover fill. Selected: Selection Blue outline, Selection Wash, filled blue dot, medium text, and its one-line detail revealed in 11px Muted Ink. Toggle groups (covered stands), club palettes and the add-equipment grid use the same `choiceClass()` tile.
 
 ### Navigation (structure tree)
 28px rows, 4px radius, icon in Faint Ink, optional right-aligned tabular metadata. Children indent to 32px. Selected row: Selection Wash with a Signal Blue Ink icon. Group labels (Stade, Abords, Fichier) are 11px medium Faint Ink, sentence case.
@@ -295,6 +310,7 @@ Panel Charcoal, 1px Hairline, 6px radius, 4px inset, Popover shadow. 36px rows w
 - **Don't** colour metric changes green or red; deltas are Signal Blue Ink.
 - **Don't** use Warning Amber or Danger Coral outside warnings and destructive actions.
 - **Don't** add shadows to panels, buttons, cards or the metric strip; shadow is for popovers and the overlay drawer only.
-- **Don't** use gradients, a light theme, or text larger than 13px in the chrome.
+- **Don't** use gradients or text larger than 13px in the chrome.
+- **Don't** leave a clickable choice without an outline at rest, or hard-code a colour that skips the theme tokens.
 - **Don't** put white text on Selection Blue; it fails contrast.
 - **Don't** lighten Faint or Muted Ink back below their current values.

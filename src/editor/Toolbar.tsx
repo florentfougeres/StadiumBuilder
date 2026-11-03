@@ -3,6 +3,7 @@ import {
   Box,
   Camera,
   ChevronDown,
+  Contrast,
   Eye,
   FileCode2,
   FileDown,
@@ -31,6 +32,7 @@ import { exportArchitecturalPlanPdf } from '../export/exportPlan';
 import { exportViewportPng } from '../export/exportPng';
 import { CameraPresetMode, LightingMode, TransformMode } from '../stadium/schema';
 import { useStadiumStore } from '../state/useStadiumStore';
+import { useTheme } from './theme';
 import { Button, IconButton, Segmented } from './ui';
 
 const CAMERA_MODES: { id: CameraPresetMode; label: string; icon: React.ReactNode }[] = [
@@ -230,6 +232,7 @@ export const Toolbar: React.FC = () => {
   const undo = useStadiumStore((s) => s.undo);
   const redo = useStadiumStore((s) => s.redo);
   const setExamplesOpen = useStadiumStore((s) => s.setExamplesOpen);
+  const [theme, toggleTheme] = useTheme();
 
   const [status, setStatus] = useState<string | null>(null);
   useEffect(() => {
@@ -247,7 +250,7 @@ export const Toolbar: React.FC = () => {
           aria-label="Nom du projet"
           value={docName}
           onChange={(e) => setProjectName(e.target.value)}
-          className="min-w-0 w-56 h-7 px-2 text-xs text-ink bg-transparent rounded border border-transparent hover:border-line-strong focus:border-accent focus:bg-canvas outline-none truncate"
+          className="min-w-0 w-56 h-7 px-2 text-xs text-ink bg-transparent rounded border border-transparent hover:border-edge-hover focus:border-accent focus:bg-field outline-none truncate"
         />
         <span className="hidden xl:inline text-2xs text-ink-faint whitespace-nowrap" aria-live="polite">
           {status ?? formatSavedAt(lastSavedAt)}
@@ -301,6 +304,13 @@ export const Toolbar: React.FC = () => {
           onClick={togglePanels}
         >
           <PanelsTopLeft className="w-4 h-4" />
+        </IconButton>
+        <IconButton
+          label={theme === 'light' ? 'Passer au thème sombre' : 'Passer au thème clair'}
+          onClick={toggleTheme}
+          className="max-sm:hidden"
+        >
+          <Contrast className="w-4 h-4" />
         </IconButton>
         <span aria-hidden className="max-sm:hidden w-px h-4 mx-1 bg-line-strong" />
         <ExportMenu onStatus={setStatus} />

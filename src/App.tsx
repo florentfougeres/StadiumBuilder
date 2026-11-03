@@ -212,7 +212,7 @@ export default function App() {
                 aria-label="Élément à modifier"
                 value={node}
                 onChange={(e) => setNode(e.target.value as EditorNode)}
-                className="flex-1 min-w-0 h-8 px-2 text-xs text-ink bg-canvas rounded border border-line-strong"
+                className="flex-1 min-w-0 h-8 px-2 text-xs text-ink bg-field rounded border border-edge hover:border-edge-hover"
               >
                 {(Object.keys(NODE_LABELS) as EditorNode[]).map((n) => (
                   <option key={n} value={n}>
