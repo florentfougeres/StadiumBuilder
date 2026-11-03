@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {
+  applyTurfCloseUpDetail,
   createGrassBladeNormalMap,
   createPlazaDetailNormalAndRoughness,
   createTrackPbrMaterial,
@@ -34,9 +35,10 @@ function createPitchTextures(
   const totalH = pitch.width + effectiveMarginSide * 2;
   const turfColors = getTurfPresetColors(turfId);
 
-  const pxPerMeter = 18;
-  const cw = Math.min(2048, Math.max(1024, Math.round(totalW * pxPerMeter)));
-  const ch = Math.min(2048, Math.max(1024, Math.round(totalH * pxPerMeter)));
+  // ~30 px/m keeps 12 cm markings crisp at touchline camera distance.
+  const pxPerMeter = 30;
+  const cw = Math.min(4096, Math.max(1024, Math.round(totalW * pxPerMeter)));
+  const ch = Math.min(4096, Math.max(1024, Math.round(totalH * pxPerMeter)));
 
   const canvas = document.createElement('canvas');
   canvas.width = cw;
@@ -1062,6 +1064,7 @@ export function generatePitchGroup(
     metalness: 0.0,
     envMapIntensity: 0.55,
   });
+  applyTurfCloseUpDetail(turfMat, maxAnisotropy);
 
   const turfMesh = new THREE.Mesh(turfGeo, turfMat);
   turfMesh.name = 'PitchTurf';

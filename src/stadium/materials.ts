@@ -1886,3 +1886,150 @@ export function createGrassBladeNormalMap(maxAnisotropy: number = 4): THREE.Data
   maps.roughnessMap.dispose();
   return maps.normalMap;
 }
+
+const TURF_DETAIL_SIZE = 512;
+
+/**
+ * Rasterises a tileable field of individual grass blades (bright tips, dark gaps,
+ * mixed green/straw tones). RGB is a linear colour multiplier encoded so that
+ * 128 = ×1 (mean-normalised), alpha carries a slow macro-patch noise.
+ */
+function createTurfDetailBuffers(): CachedPbrBuffers {
+  const n = TURF_DETAIL_SIZE;
+  const height = new Float32Array(n * n);
+  const tone = new Float32Array(n * n);
+  let seed = 90173;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+
+  for (let b = 0; b < 21000; b++) {
+    const x0 = rand() * n;
+    const y0 = rand() * n;
+    // Blades lie mostly along the mowing direction, with plenty of scatter.
+    const angle = (rand() - 0.5) * Math.PI * 1.3;
+    const len = 5 + rand() * 12;
+    const width = 0.7 + rand() * 1.1;
+    const bladeTone = rand() < 0.12 ? 1 : rand() < 0.2 ? -1 : 0;
+    const base = 0.25 + rand() * 0.35;
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    for (let s = 0; s <= len; s += 0.5) {
+      const t = s / len;
+      const h = base + t * 0.6;
+      const w = width * (1 - t * 0.75);
+      for (let o = -w; o <= w; o += 0.5) {
+        const px = Math.floor(x0 + dx * s - dy * o);
+        const py = Math.floor(y0 + dy * s + dx * o);
+        const idx = (((py % n) + n) % n) * n + (((px % n) + n) % n);
+        if (h > height[idx]) {
+          height[idx] = h;
+          tone[idx] = bladeTone;
+        }
+      }
+    }
+  }
+
+  // Colour multiplier per pixel, then normalise to a mean of 1.
+  const mult = new Float32Array(n * n * 3);
+  const sum = [0, 0, 0];
+  for (let i = 0; i < n * n; i++) {
+    const h = height[i];
+    const lum = h === 0 ? 0.32 : 0.55 + h * 0.75;
+    const t = tone[i];
+    const r = lum * (t > 0 ? 1.35 : t < 0 ? 0.8 : 1);
+    const g = lum * (t > 0 ? 1.1 : t < 0 ? 0.88 : 1);
+    const bl = lum * (t > 0 ? 0.75 : t < 0 ? 0.9 : 1);
+    mult[i * 3] = r;
+    mult[i * 3 + 1] = g;
+    mult[i * 3 + 2] = bl;
+    sum[0] += r;
+    sum[1] += g;
+    sum[2] += bl;
+  }
+  const mean = sum.map((s) => s / (n * n));
+
+  return synthesizeCachedPbrBuffers('turf_close_detail_v1', n, n, 2.2, false, (u, v, px, py) => {
+    const i = py * n + px;
+    return {
+      r: (mult[i * 3] / mean[0]) * 128,
+      g: (mult[i * 3 + 1] / mean[1]) * 128,
+      b: (mult[i * 3 + 2] / mean[2]) * 128,
+      a: periodicFbm2D(u, v, 4, 3, 1907) * 255,
+      height: height[i],
+      roughness: 1,
+    };
+  });
+}
+
+/**
+ * Adds world-space close-range grass detail to the pitch turf material: blade-level
+ * colour and relief sampled at two rotated scales (fading out beyond ~80 m so the
+ * broadcast mowing pattern stays clean from afar) and slow patchy tone variation at
+ * every distance. The base canvas map only carries ~30 px/m, which reads as a flat
+ * model surface when the camera gets close.
+ */
+export function applyTurfCloseUpDetail(material: THREE.MeshStandardMaterial, maxAnisotropy: number): void {
+  const buffers = createTurfDetailBuffers();
+  const makeTex = (data: Uint8Array) => {
+    const tex = new THREE.DataTexture(data, buffers.sizeW, buffers.sizeH, THREE.RGBAFormat);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.generateMipmaps = true;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.anisotropy = maxAnisotropy;
+    tex.needsUpdate = true;
+    return tex;
+  };
+  const detailMap = makeTex(buffers.albedo);
+  const detailNormal = makeTex(buffers.normal);
+
+  material.customProgramCacheKey = () => 'turf-close-detail-v1';
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.turfDetailMap = { value: detailMap };
+    shader.uniforms.turfDetailNormal = { value: detailNormal };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vTurfXZ;')
+      .replace(
+        '#include <project_vertex>',
+        '#include <project_vertex>\nvTurfXZ = (modelMatrix * vec4(transformed, 1.0)).xz;'
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+varying vec2 vTurfXZ;
+uniform sampler2D turfDetailMap;
+uniform sampler2D turfDetailNormal;
+const mat2 TURF_ROT = mat2(0.8, -0.6, 0.6, 0.8);`
+      )
+      .replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+float turfNear = 1.0 - smoothstep(12.0, 85.0, length(vViewPosition));
+vec2 turfUvA = vTurfXZ * 0.62;
+vec2 turfUvB = TURF_ROT * vTurfXZ * 0.24 + 0.37;
+vec3 turfFine = texture2D(turfDetailMap, turfUvA).rgb * 2.0;
+vec3 turfClump = mix(vec3(1.0), texture2D(turfDetailMap, turfUvB).rgb * 2.0, 0.55);
+diffuseColor.rgb *= mix(vec3(1.0), turfFine * turfClump, turfNear);
+float turfPatch = texture2D(turfDetailMap, vTurfXZ * 0.018).a * 0.6
+  + texture2D(turfDetailMap, TURF_ROT * vTurfXZ * 0.047 + 0.5).a * 0.4;
+diffuseColor.rgb *= vec3(0.94 + 0.12 * turfPatch, 0.9 + 0.2 * turfPatch, 0.94 + 0.12 * turfPatch);`
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        `#include <roughnessmap_fragment>
+// Blade gaps scatter light: matte up close, keeping the mowing sheen readable.
+roughnessFactor = min(1.0, roughnessFactor + (0.1 + 0.15 * (1.0 - turfFine.g * 0.5)) * turfNear);`
+      )
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+vec2 turfSlope = (texture2D(turfDetailNormal, turfUvA).xy * 2.0 - 1.0)
+  + 0.5 * (texture2D(turfDetailNormal, turfUvB).xy * 2.0 - 1.0);
+normal = normalize(normal + (viewMatrix * vec4(turfSlope.x, 0.0, -turfSlope.y, 0.0)).xyz * 0.9 * turfNear);`
+      );
+  };
+}
