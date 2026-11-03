@@ -18,6 +18,7 @@ import {
 import {
   createConcreteBowlMaterial,
   createFacadePbrMaterial,
+  createLedSponsorRibbonTexture,
   createPlazaDetailNormalAndRoughness,
   createSeatTerracePbrMaterial,
   createStructurePbrMaterial,
@@ -113,6 +114,56 @@ function createStrut(
   mesh.position.copy(mid);
   mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
   mesh.castShadow = true;
+  return mesh;
+}
+
+/** Lit sponsor-panel material for the balcony LED bands (one 8-panel tile per `LED_BAND_TILE_M`). */
+function createLedFasciaMaterial(isDay: boolean): THREE.MeshStandardMaterial {
+  const tex = createLedSponsorRibbonTexture();
+  tex.repeat.set(1, 1);
+  return new THREE.MeshStandardMaterial({
+    map: tex,
+    emissive: new THREE.Color(0xffffff),
+    emissiveMap: tex,
+    emissiveIntensity: isDay ? 0.5 : 1.1,
+    roughness: 0.3,
+    metalness: 0.1,
+    side: THREE.DoubleSide,
+  });
+}
+
+const LED_BAND_TILE_M = 14.4;
+
+/**
+ * Pitch-facing LED advertising band hung on a balcony fascia: a vertical strip of `height`
+ * centred on `centres`, with texture U following arc length so panels keep a constant width.
+ */
+function buildLedFasciaBand(
+  centres: THREE.Vector3[],
+  height: number,
+  mat: THREE.Material
+): THREE.Mesh {
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  let run = 0;
+  centres.forEach((p, i) => {
+    if (i > 0) {
+      run += p.distanceTo(centres[i - 1]);
+      const b = (i - 1) * 2;
+      idx.push(b, b + 2, b + 1, b + 1, b + 2, b + 3);
+    }
+    const u = run / LED_BAND_TILE_M;
+    pos.push(p.x, p.y - height / 2, p.z, p.x, p.y + height / 2, p.z);
+    uv.push(u, 0, u, 1);
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'BalconyLedBand';
   return mesh;
 }
 
@@ -829,16 +880,16 @@ function buildStraightStandMesh(
 
   // 5. Recessed 3D Vomitory Tunnel Portals inside each carved terrace opening + 3D Stepped Radial Stairs
   const vomPortalMat = new THREE.MeshStandardMaterial({
-    color: 0xdbe2ea,
-    roughness: 0.72,
-    metalness: 0.08,
+    color: 0x8b9199,
+    roughness: 0.9,
+    metalness: 0.02,
   });
   const darkVomMat = new THREE.MeshStandardMaterial({
-    color: 0x030712,
+    color: 0x1a1714,
     roughness: 0.96,
   });
   const vomRailMat = new THREE.MeshStandardMaterial({
-    color: 0xe2e8f0,
+    color: 0x9ca3af,
     roughness: 0.28,
     metalness: 0.85,
   });
@@ -1039,13 +1090,7 @@ function buildStraightStandMesh(
       roughness: 0.34,
       metalness: 0.16,
     });
-    const ledRibbonMat = new THREE.MeshStandardMaterial({
-      color: 0x0f172a,
-      emissive: new THREE.Color(doc.colors.seatsSecondary),
-      emissiveIntensity: doc.lighting === 'day' ? 0.25 : 0.95,
-      roughness: 0.2,
-      metalness: 0.4,
-    });
+    const ledFasciaMat = createLedFasciaMaterial(doc.lighting === 'day');
     const vipGlassMat = new THREE.MeshPhysicalMaterial({
       map: vipTex,
       emissive: new THREE.Color(doc.lighting === 'day' ? 0x000000 : 0xf59e0b),
@@ -1058,19 +1103,24 @@ function buildStraightStandMesh(
 
     for (const bal of balconies) {
       const whiteFascia = new THREE.Mesh(
-        new THREE.BoxGeometry(spanLength - 0.08, bal.hasVipGlass ? 0.85 : 0.58, 0.4),
+        new THREE.BoxGeometry(spanLength - 0.08, bal.hasVipGlass ? 1.05 : 0.92, 0.4),
         fasciaSlabMat
       );
       whiteFascia.position.set(0, bal.y, bal.d - 0.04);
       whiteFascia.castShadow = true;
       group.add(whiteFascia);
 
-      const ledStrip = new THREE.Mesh(
-        new THREE.BoxGeometry(spanLength - 0.06, 0.26, 0.12),
-        ledRibbonMat
+      const bandZ = bal.d - 0.27;
+      group.add(
+        buildLedFasciaBand(
+          [
+            new THREE.Vector3(-(spanLength - 0.1) / 2, bal.y, bandZ),
+            new THREE.Vector3((spanLength - 0.1) / 2, bal.y, bandZ),
+          ],
+          bal.hasVipGlass ? 1.0 : 0.88,
+          ledFasciaMat
+        )
       );
-      ledStrip.position.set(0, bal.y, bal.d - 0.25);
-      group.add(ledStrip);
 
       if (bal.hasVipGlass) {
         const skyboxGlass = new THREE.Mesh(
@@ -2010,16 +2060,16 @@ function buildCornerVirageQuadrant(
 
   // 5. 3D Precast Corner Vomitory Portals at the 45° Corner Bisector
   const vomPortalMat = new THREE.MeshStandardMaterial({
-    color: 0xdbe2ea,
-    roughness: 0.72,
-    metalness: 0.08,
+    color: 0x8b9199,
+    roughness: 0.9,
+    metalness: 0.02,
   });
   const darkVomMat = new THREE.MeshStandardMaterial({
-    color: 0x030712,
+    color: 0x1a1714,
     roughness: 0.96,
   });
   const vomRailMat = new THREE.MeshStandardMaterial({
-    color: 0xe2e8f0,
+    color: 0x9ca3af,
     roughness: 0.28,
     metalness: 0.85,
   });
@@ -2077,13 +2127,7 @@ function buildCornerVirageQuadrant(
       roughness: 0.32,
       metalness: 0.18,
     });
-    const ledRibbonMat = new THREE.MeshStandardMaterial({
-      color: 0x0f172a,
-      emissive: new THREE.Color(doc.colors.seatsSecondary),
-      emissiveIntensity: doc.lighting === 'day' ? 0.25 : 0.95,
-      roughness: 0.2,
-      metalness: 0.4,
-    });
+    const ledFasciaMat = createLedFasciaMaterial(doc.lighting === 'day');
     const vipGlassMat = new THREE.MeshPhysicalMaterial({
       map: vipTex,
       emissive: new THREE.Color(doc.lighting === 'day' ? 0x000000 : 0xf59e0b),
@@ -2109,7 +2153,7 @@ function buildCornerVirageQuadrant(
         if (!bal || bal.weight < 0.18) continue;
         const u = s / segs;
         const fp = sampleCornerQuadrantPoint(corner, u, bal.d - 0.04);
-        const lp = sampleCornerQuadrantPoint(corner, u, bal.d - 0.26);
+        const lp = sampleCornerQuadrantPoint(corner, u, bal.d - 0.42);
         fasciaPts.push(new THREE.Vector3(fp.x, bal.y, fp.z));
         ledPts.push(new THREE.Vector3(lp.x, bal.y, lp.z));
 
@@ -2130,12 +2174,7 @@ function buildCornerVirageQuadrant(
         group.add(fasciaTube);
 
         const lCurve = new THREE.CatmullRomCurve3(ledPts, false, curveType, curveTension);
-        group.add(
-          new THREE.Mesh(
-            new THREE.TubeGeometry(lCurve, ledPts.length * 2, 0.14, 6, false),
-            ledRibbonMat
-          )
-        );
+        group.add(buildLedFasciaBand(lCurve.getPoints(ledPts.length * 2), 0.88, ledFasciaMat));
       }
 
       if (vipBotPts.length >= 3) {
@@ -3582,16 +3621,16 @@ function buildModernBowlSweep(
   // Compute carved vomitory holes & recessed 3D vomitory portals around the bowl sectors
   const bowlHoleMap = new Map<number, Set<number>>();
   const vomPortalMat = new THREE.MeshStandardMaterial({
-    color: 0xdbe2ea,
-    roughness: 0.72,
-    metalness: 0.08,
+    color: 0x8b9199,
+    roughness: 0.9,
+    metalness: 0.02,
   });
   const darkVomMat = new THREE.MeshStandardMaterial({
-    color: 0x030712,
+    color: 0x1a1714,
     roughness: 0.96,
   });
   const vomRailMat = new THREE.MeshStandardMaterial({
-    color: 0xe2e8f0,
+    color: 0x9ca3af,
     roughness: 0.28,
     metalness: 0.85,
   });
@@ -3999,12 +4038,7 @@ function buildModernBowlSweep(
     roughness: 0.3,
     metalness: 0.2,
   });
-  const ledRibbonMat = new THREE.MeshStandardMaterial({
-    color: 0x0f172a,
-    emissive: new THREE.Color(doc.colors.seatsSecondary),
-    emissiveIntensity: doc.lighting === 'day' ? 0.25 : 0.95,
-    roughness: 0.22,
-  });
+  const ledFasciaMat = createLedFasciaMaterial(doc.lighting === 'day');
   const vipGlassMat = new THREE.MeshPhysicalMaterial({
     map: vipTex,
     emissive: new THREE.Color(doc.lighting === 'day' ? 0x000000 : 0xf59e0b),
@@ -4043,18 +4077,14 @@ function buildModernBowlSweep(
         )
       );
 
-      const ledCurve = new THREE.CatmullRomCurve3(
-        runFascia.map((p) => new THREE.Vector3(p.x * 0.997, p.y - 0.28, p.z * 0.997)),
-        looped,
-        doc.shape === 'octagonal_arena' ? 'centripetal' : 'catmullrom',
-        doc.shape === 'octagonal_arena' ? 0.05 : 0.5
-      );
-      group.add(
-        new THREE.Mesh(
-          new THREE.TubeGeometry(ledCurve, Math.max(16, runFascia.length * 2), 0.16, 6, looped),
-          ledRibbonMat
-        )
-      );
+      // Band sits just pitch-side of the fascia tube (radius 0.4), toward the bowl centre.
+      const ledCentres = fCurve
+        .getPoints(Math.max(16, runFascia.length * 2))
+        .map((p) => {
+          const inward = new THREE.Vector3(-p.x, 0, -p.z).normalize().multiplyScalar(0.44);
+          return p.clone().add(inward);
+        });
+      group.add(buildLedFasciaBand(ledCentres, 0.88, ledFasciaMat));
 
       const gLen = runGlassTop.length;
       if (gLen >= 3) {

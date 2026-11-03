@@ -371,7 +371,74 @@ function addSlabDeckDetail(roof: THREE.Object3D): void {
       );
     });
     deck.add(buildCanopyDetail(spokes, false, deck.material as THREE.Material));
+    const rows = Math.max(1, Math.round(size.z / TRUSS_ROW_PITCH));
+    const soffit = spokes.map((spoke) =>
+      Array.from({ length: rows + 1 }, (_, k) =>
+        new THREE.Vector3(spoke[0].x, box.min.y, box.min.z + (size.z * k) / rows)
+      )
+    );
+    const truss = buildUndersideTruss(soffit, false);
+    if (truss) deck.add(truss);
   }
+}
+
+const TRUSS_NODE_PITCH = 3;
+const TRUSS_ROW_PITCH = 3.6;
+const TRUSS_DEPTH = 0.9;
+
+/**
+ * Exposed steel space frame hung under a canopy soffit: `spokes[i][k]` are soffit points
+ * (i along the span, k across the depth). Bottom chords run along the span at every k, zig-zag
+ * web diagonals climb to the soffit between nodes and transverse ties link the chords — the
+ * triangulated underside spectators see instead of a flat slab.
+ */
+function buildUndersideTruss(spokes: THREE.Vector3[][], closed: boolean): THREE.InstancedMesh | null {
+  const count = spokes.length;
+  if (count < 2) return null;
+  const segs = closed ? count : count - 1;
+  let frontLength = 0;
+  for (let i = 1; i < count; i++) frontLength += spokes[i][0].distanceTo(spokes[i - 1][0]);
+  const step = Math.max(1, Math.round(TRUSS_NODE_PITCH / Math.max(0.1, frontLength / segs)));
+  const nodes: number[] = [];
+  for (let i = 0; i < segs; i += step) nodes.push(i);
+  if (!closed && nodes[nodes.length - 1] !== count - 1) nodes.push(count - 1);
+
+  const down = new THREE.Vector3(0, -TRUSS_DEPTH, 0);
+  const bottom = (i: number, k: number) => spokes[i % count][k].clone().add(down);
+  const members: [THREE.Vector3, THREE.Vector3, number][] = [];
+  const spans = closed ? nodes.length : nodes.length - 1;
+  for (let n = 0; n < nodes.length; n++) {
+    const i = nodes[n];
+    const depthPts = spokes[i].length;
+    for (let k = 0; k < depthPts; k++) {
+      if (k > 0) members.push([bottom(i, k - 1), bottom(i, k), 0.04]);
+      if (n >= spans) continue;
+      const j = nodes[(n + 1) % nodes.length];
+      const mid = spokes[i][k].clone().lerp(spokes[j][k], 0.5);
+      members.push([bottom(i, k), bottom(j, k), 0.07]);
+      members.push([bottom(i, k), mid, 0.045]);
+      members.push([mid, bottom(j, k), 0.045]);
+    }
+  }
+
+  const mat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.42, metalness: 0.55 });
+  const mesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 5), mat, members.length);
+  const up = new THREE.Vector3(0, 1, 0);
+  const dir = new THREE.Vector3();
+  const q = new THREE.Quaternion();
+  const m = new THREE.Matrix4();
+  members.forEach(([a, b, r], idx) => {
+    dir.subVectors(b, a);
+    const len = dir.length();
+    q.setFromUnitVectors(up, dir.normalize());
+    m.compose(a.clone().add(b).multiplyScalar(0.5), q, new THREE.Vector3(r, len, r));
+    mesh.setMatrixAt(idx, m);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.computeBoundingSphere();
+  mesh.castShadow = true;
+  mesh.name = 'RoofUndersideTruss';
+  return mesh;
 }
 
 function buildAnnularCanopyMesh(
@@ -449,6 +516,8 @@ function buildAnnularCanopyMesh(
     return Array.from({ length: 6 }, (_, k) => a.clone().lerp(b, k / 5));
   });
   mesh.add(buildCanopyDetail(spokes, closed, mat));
+  const truss = buildUndersideTruss(spokes, closed);
+  if (truss) mesh.add(truss);
   return mesh;
 }
 
@@ -940,6 +1009,8 @@ function buildShapedCanopyMesh(
     })
   );
   mesh.add(buildCanopyDetail(spokes, closed, mat));
+  const truss = buildUndersideTruss(spokes, closed);
+  if (truss) mesh.add(truss);
   return mesh;
 }
 

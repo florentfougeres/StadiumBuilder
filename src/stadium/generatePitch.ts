@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {
   applyTurfCloseUpDetail,
   createGrassBladeNormalMap,
+  createLedSponsorRibbonTexture,
   createPlazaDetailNormalAndRoughness,
   createTrackPbrMaterial,
   getTurfPresetColors,
@@ -348,47 +349,6 @@ function createGoalNetTexture(): THREE.CanvasTexture {
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(6, 2.5);
-  tex.needsUpdate = true;
-  return tex;
-}
-
-/**
- * Generates vibrant stadium LED perimeter advertising ribbon texture.
- */
-function createLedSponsorRibbonTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 64;
-  const ctx = canvas.getContext('2d')!;
-
-  const panels = [
-    { bg: '#0284c7', accent: '#f8fafc' },
-    { bg: '#0f172a', accent: '#38bdf8' },
-    { bg: '#dc2626', accent: '#ffffff' },
-    { bg: '#059669', accent: '#ecfdf5' },
-    { bg: '#1e1b4b', accent: '#facc15' },
-  ];
-
-  const segW = 1024 / 8;
-  for (let i = 0; i < 8; i++) {
-    const p = panels[i % panels.length];
-    ctx.fillStyle = p.bg;
-    ctx.fillRect(i * segW, 0, segW - 2, 64);
-
-    ctx.fillStyle = p.accent;
-    ctx.fillRect(i * segW + 18, 20, segW - 52, 10);
-    ctx.fillRect(i * segW + 18, 36, (segW - 52) * 0.65, 7);
-
-    ctx.beginPath();
-    ctx.arc(i * segW + segW - 22, 32, 11, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.repeat.set(3, 1);
   tex.needsUpdate = true;
   return tex;
 }
