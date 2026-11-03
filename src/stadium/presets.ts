@@ -280,28 +280,28 @@ export const STADIUM_PRESETS: PresetDefinition[] = [
       },
       stands: {
         north: makeStand('north', 'Tribune Nord (3 étages)', {
-          rows: 61,
+          rows: 58,
           tiers: 3,
           slopeAngleDeg: 28,
           distanceToPitch: 6.5,
           aisleCount: 10,
         }),
         south: makeStand('south', 'Tribune Présidentielle Sud (3 étages)', {
-          rows: 62,
+          rows: 59,
           tiers: 3,
           slopeAngleDeg: 28.5,
           distanceToPitch: 6.5,
           aisleCount: 10,
         }),
         east: makeStand('east', 'Courbe Est (3 étages)', {
-          rows: 58,
+          rows: 55,
           tiers: 3,
           slopeAngleDeg: 27.5,
           distanceToPitch: 7.0,
           aisleCount: 8,
         }),
         west: makeStand('west', 'Courbe Ouest (3 étages)', {
-          rows: 58,
+          rows: 55,
           tiers: 3,
           slopeAngleDeg: 27.5,
           distanceToPitch: 7.0,
@@ -338,7 +338,7 @@ export const STADIUM_PRESETS: PresetDefinition[] = [
           id: 'obj-dugout-oly',
           type: 'dugout',
           name: 'Bancs Officiels',
-          position: [0, 0, 38.5],
+          position: [0, 0, 49.2],
           rotation: [0, Math.PI, 0],
           scale: [1.1, 1, 1],
         },
@@ -346,7 +346,7 @@ export const STADIUM_PRESETS: PresetDefinition[] = [
           id: 'obj-esp-oly',
           type: 'esplanade',
           name: 'Parvis Principal Sud',
-          position: [0, 0, 132],
+          position: [0, 0, 138],
           rotation: [0, 0, 0],
           scale: [1.8, 1, 1.2],
         },
@@ -1564,9 +1564,10 @@ export const STADIUM_PRESETS: PresetDefinition[] = [
         heightOffset: 4,
         coverageRatio: 1.0,
         opacity: 0.94,
+        overConcourse: true,
         coveredSides: ['north', 'south'],
       },
-      concourse: { width: 8, heightRatio: 0.45 },
+      concourse: { width: 8, heightRatio: 0.5 },
       colors: {
         seatsPrimary: '#15803d',
         seatsSecondary: '#fafafa',
@@ -1637,6 +1638,9 @@ export function createPresetDocument(presetId: string): StadiumDocument {
   const found =
     STADIUM_PRESETS.find((p) => p.id === normalizedId) ?? STADIUM_PRESETS[0];
   const doc = found.createDocument();
+  if (doc.roof.overConcourse === undefined) {
+    doc.roof.overConcourse = true;
+  }
   doc.id = `stadium-${Date.now().toString(36)}`;
   doc.updatedAt = Date.now();
   return doc;

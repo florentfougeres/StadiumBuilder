@@ -6,7 +6,12 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { registerViewportCaptureHandler } from '../export/exportPng';
 import { buildStadiumSceneGraph, disposeObject3D } from '../stadium/buildStadiumScene';
 import { calculateStandMetrics, getTrackRadialOffset } from '../stadium/capacity';
-import { CameraPresetMode, LightingMode, StadiumDocument } from '../stadium/schema';
+import {
+  CameraPresetMode,
+  LightingMode,
+  resolveFloodlightRig,
+  StadiumDocument,
+} from '../stadium/schema';
 import { computeStandSightlines } from '../stadium/sightlines';
 import { useStadiumStore } from '../state/useStadiumStore';
 
@@ -293,7 +298,7 @@ export const Viewport: React.FC = () => {
     keyLight.shadow.camera.bottom = -142;
     keyLight.shadow.camera.near = 14;
     keyLight.shadow.camera.far = 410;
-    keyLight.shadow.radius = 2.2;
+    keyLight.shadow.radius = 1.75;
     keyLight.shadow.bias = -0.00025;
     keyLight.shadow.normalBias = 0.015;
     scene.add(keyLight);
@@ -623,16 +628,20 @@ export const Viewport: React.FC = () => {
       engine.gridHelper.material.opacity = 0.14;
       engine.gridHelper.material.transparent = true;
 
+      const rigMode = resolveFloodlightRig(doc);
+      const rigIntensityFactor =
+        rigMode === 'none' ? 0.24 : rigMode === 'both' ? 1.22 : 1.0;
+
       if (mode === 'day') {
         engine.scene.environmentIntensity = 1.05;
         engine.scene.fog = new THREE.FogExp2(0xcbd5e1, 0.00068);
         engine.keyLight.color.setHex(0xfffbeb);
-        engine.keyLight.intensity = 2.45;
+        engine.keyLight.intensity = 2.55;
         engine.hemiLight.color.setHex(0xe0f2fe);
         engine.hemiLight.groundColor.setHex(0x334155);
-        engine.hemiLight.intensity = 0.92;
-        engine.rimLight.intensity = 0.55;
-        engine.arenaBowlLight.intensity = 0.28;
+        engine.hemiLight.intensity = 0.88;
+        engine.rimLight.intensity = 0.52;
+        engine.arenaBowlLight.intensity = 0.22;
       } else if (mode === 'dusk') {
         engine.scene.environmentIntensity = 0.92;
         engine.scene.fog = new THREE.FogExp2(0x1e1b4b, 0.00088);
@@ -643,7 +652,7 @@ export const Viewport: React.FC = () => {
         engine.hemiLight.intensity = 0.62;
         engine.rimLight.intensity = 0.85;
         engine.arenaBowlLight.color.setHex(0xf8fafc);
-        engine.arenaBowlLight.intensity = 1.45;
+        engine.arenaBowlLight.intensity = 1.45 * rigIntensityFactor;
       } else {
         engine.scene.environmentIntensity = 0.85;
         engine.scene.fog = new THREE.FogExp2(0x090f1d, 0.00095);
@@ -654,7 +663,7 @@ export const Viewport: React.FC = () => {
         engine.hemiLight.intensity = 0.45;
         engine.rimLight.intensity = 0.95;
         engine.arenaBowlLight.color.setHex(0xf8fafc);
-        engine.arenaBowlLight.intensity = 2.35;
+        engine.arenaBowlLight.intensity = 2.35 * rigIntensityFactor;
       }
     };
 

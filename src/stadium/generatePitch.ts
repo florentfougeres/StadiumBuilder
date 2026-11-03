@@ -6,7 +6,9 @@ import {
   getTurfPresetColors,
 } from './materials';
 import {
+  clampPitchToTrack,
   DEFAULT_STADIUM_MATERIALS,
+  getTrackGeometry,
   LightingMode,
   PitchConfig,
   PitchTurfMaterialId,
@@ -254,10 +256,10 @@ function createPitchTextures(
   ctx.lineWidth = Math.max(1.5, 0.1 * scaleX);
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
   const techW = 14 * scaleX;
-  const techD = Math.min(pitch.marginSide - 0.8, 3.6) * scaleY;
+  const techD = Math.min(effectiveMarginSide - 0.6, 3.6) * scaleY;
   if (techD > 0.5) {
-    ctx.strokeRect(midX - 18 * scaleX, py0 + ph + 0.7 * scaleY, techW, techD);
-    ctx.strokeRect(midX + 4 * scaleX, py0 + ph + 0.7 * scaleY, techW, techD);
+    ctx.strokeRect(midX - 18 * scaleX, py0 + ph + 0.5 * scaleY, techW, techD);
+    ctx.strokeRect(midX + 4 * scaleX, py0 + ph + 0.5 * scaleY, techW, techD);
   }
   ctx.restore();
 
@@ -636,20 +638,89 @@ function createHollowHorizontalFrameGeometry(
   return geo;
 }
 
+function createHollowStadiumFrameGeometry(
+  outerW: number,
+  outerH: number,
+  straightHalfLen: number,
+  holeRadius: number,
+  uvMode: 'normalized' | 'metric_004'
+): THREE.ShapeGeometry {
+  const hw = outerW * 0.5;
+  const hh = outerH * 0.5;
+  const shape = new THREE.Shape();
+  shape.moveTo(-hw, -hh);
+  shape.lineTo(hw, -hh);
+  shape.lineTo(hw, hh);
+  shape.lineTo(-hw, hh);
+  shape.closePath();
+
+  const hole = new THREE.Path();
+  hole.absarc(straightHalfLen, 0, holeRadius, -Math.PI / 2, Math.PI / 2, false);
+  hole.absarc(-straightHalfLen, 0, holeRadius, Math.PI / 2, Math.PI * 1.5, false);
+  hole.closePath();
+  shape.holes.push(hole);
+
+  const geo = new THREE.ShapeGeometry(shape, 56);
+  const posAttr = geo.attributes.position;
+  const uvAttr = geo.attributes.uv;
+  if (uvAttr) {
+    for (let i = 0; i < uvAttr.count; i++) {
+      const x = posAttr.getX(i);
+      const y = posAttr.getY(i);
+      if (uvMode === 'normalized') {
+        uvAttr.setXY(i, (x + hw) / outerW, (y + hh) / outerH);
+      } else {
+        uvAttr.setXY(i, x * 0.04, y * 0.04);
+      }
+    }
+    uvAttr.needsUpdate = true;
+  }
+  geo.rotateX(-Math.PI / 2);
+  return geo;
+}
+
+function createStadiumInfieldTurfGeometry(
+  straightHalfLen: number,
+  innerRadius: number,
+  totalLength: number,
+  totalWidth: number
+): THREE.ShapeGeometry {
+  const shape = new THREE.Shape();
+  shape.absarc(straightHalfLen, 0, innerRadius, -Math.PI / 2, Math.PI / 2, false);
+  shape.absarc(-straightHalfLen, 0, innerRadius, Math.PI / 2, Math.PI * 1.5, false);
+  shape.closePath();
+
+  const geo = new THREE.ShapeGeometry(shape, 56);
+  const posAttr = geo.attributes.position;
+  const uvAttr = geo.attributes.uv;
+  if (uvAttr) {
+    for (let i = 0; i < uvAttr.count; i++) {
+      const x = posAttr.getX(i);
+      const y = posAttr.getY(i);
+      uvAttr.setXY(
+        i,
+        (x + totalLength * 0.5) / totalLength,
+        (y + totalWidth * 0.5) / totalWidth
+      );
+    }
+    uvAttr.needsUpdate = true;
+  }
+  geo.rotateX(-Math.PI / 2);
+  return geo;
+}
+
 function createRunningTrackGroup(
   pitch: PitchConfig,
   mats: StadiumMaterialsConfig,
-  maxAnisotropy: number,
-  turfTotalLength: number,
-  turfTotalWidth: number
+  maxAnisotropy: number
 ): THREE.Group {
   const group = new THREE.Group();
-  const laneWidth = 1.22;
-  const trackTotalWidth = pitch.trackLanes * laneWidth + 1.5;
-
-  const straightHalfLen = pitch.length / 2;
-  const innerRadius = pitch.width / 2 + pitch.marginSide;
-  const outerRadius = innerRadius + trackTotalWidth;
+  group.name = 'RunningTrack400m';
+  const track = getTrackGeometry(pitch);
+  const straightHalfLen = track.straightHalfLength;
+  const innerRadius = track.innerRadius;
+  const outerRadius = track.outerRadius;
+  const laneWidth = track.laneWidth;
 
   const outerShape = new THREE.Shape();
   outerShape.absarc(straightHalfLen, 0, outerRadius, -Math.PI / 2, Math.PI / 2, false);
@@ -662,85 +733,71 @@ function createRunningTrackGroup(
   innerHole.closePath();
   outerShape.holes.push(innerHole);
 
-  const trackGeo = new THREE.ShapeGeometry(outerShape, 56);
-  trackGeo.rotateX(-Math.PI / 2);
-
-  // Normalize ShapeGeometry UVs so the granular EPDM rubber texture tiles at 1:1 physical scale
+  const trackGeo = new THREE.ShapeGeometry(outerShape, 64);
+  const posAttr = trackGeo.attributes.position;
   const uvAttr = trackGeo.attributes.uv;
   if (uvAttr) {
     for (let i = 0; i < uvAttr.count; i++) {
-      uvAttr.setXY(i, uvAttr.getX(i) * 0.04, uvAttr.getY(i) * 0.04);
+      uvAttr.setXY(i, posAttr.getX(i) * 0.04, posAttr.getY(i) * 0.04);
     }
     uvAttr.needsUpdate = true;
   }
+  trackGeo.rotateX(-Math.PI / 2);
 
   const trackMat = createTrackPbrMaterial(mats.trackSurface, maxAnisotropy);
   const trackMesh = new THREE.Mesh(trackGeo, trackMat);
+  trackMesh.name = 'AthleticsTrackSurface';
   trackMesh.position.y = 0.025;
   trackMesh.receiveShadow = true;
   group.add(trackMesh);
 
-  // Hollow grass infield collar around the turf rectangle (zero overlap under the pitch!)
-  const turfColors = getTurfPresetColors(mats.pitchTurf);
-  const dZoneMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(turfColors.surround),
-    roughness: 0.88,
-    metalness: 0.0,
-  });
-  const infieldShape = new THREE.Shape();
-  infieldShape.absarc(
-    straightHalfLen,
-    0,
-    innerRadius + 0.15,
-    -Math.PI / 2,
-    Math.PI / 2,
-    false
+  // Raised white inner kerb ("lice à la corde" at R = 36.50 m)
+  const kerbPath = new THREE.Path();
+  kerbPath.absarc(straightHalfLen, 0, innerRadius + 0.03, -Math.PI / 2, Math.PI / 2, false);
+  kerbPath.absarc(-straightHalfLen, 0, innerRadius + 0.03, Math.PI / 2, Math.PI * 1.5, false);
+  kerbPath.closePath();
+  const kerbPts = kerbPath
+    .getPoints(96)
+    .map((p) => new THREE.Vector3(p.x, 0.05, -p.y));
+  const kerbCurve = new THREE.CatmullRomCurve3(kerbPts, true);
+  const kerbMesh = new THREE.Mesh(
+    new THREE.TubeGeometry(kerbCurve, 128, 0.035, 5, true),
+    new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.45, metalness: 0.2 })
   );
-  infieldShape.absarc(
-    -straightHalfLen,
-    0,
-    innerRadius + 0.15,
-    Math.PI / 2,
-    Math.PI * 1.5,
-    false
-  );
-  infieldShape.closePath();
-
-  const turfCutout = new THREE.Path();
-  const cutHalfX = turfTotalLength * 0.5 - 0.12;
-  const cutHalfZ = turfTotalWidth * 0.5 - 0.12;
-  turfCutout.moveTo(-cutHalfX, -cutHalfZ);
-  turfCutout.lineTo(-cutHalfX, cutHalfZ);
-  turfCutout.lineTo(cutHalfX, cutHalfZ);
-  turfCutout.lineTo(cutHalfX, -cutHalfZ);
-  turfCutout.closePath();
-  infieldShape.holes.push(turfCutout);
-
-  const dGeo = new THREE.ShapeGeometry(infieldShape, 48);
-  dGeo.rotateX(-Math.PI / 2);
-  const dMesh = new THREE.Mesh(dGeo, dZoneMat);
-  dMesh.position.y = 0.022;
-  dMesh.receiveShadow = true;
-  group.add(dMesh);
+  kerbMesh.name = 'TrackInnerKerb';
+  group.add(kerbMesh);
 
   const lineMat = new THREE.LineBasicMaterial({
     color: 0xffffff,
     transparent: true,
-    opacity: 0.72,
+    opacity: 0.82,
   });
 
-  for (let l = 1; l <= pitch.trackLanes; l++) {
+  for (let l = 1; l <= track.lanes; l++) {
     const r = innerRadius + l * laneWidth;
     const lanePath = new THREE.Path();
     lanePath.absarc(straightHalfLen, 0, r, -Math.PI / 2, Math.PI / 2, false);
     lanePath.absarc(-straightHalfLen, 0, r, Math.PI / 2, Math.PI * 1.5, false);
     lanePath.closePath();
 
-    const pts2d = lanePath.getPoints(72);
-    const pts3d = pts2d.map((p) => new THREE.Vector3(p.x, 0.04, -p.y));
+    const pts2d = lanePath.getPoints(80);
+    const pts3d = pts2d.map((p) => new THREE.Vector3(p.x, 0.042, -p.y));
     const lineGeo = new THREE.BufferGeometry().setFromPoints(pts3d);
     group.add(new THREE.LineLoop(lineGeo, lineMat));
   }
+
+  // Official finish line at the end of the South home straight (`x = +42.195 m`)
+  const finishLine = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.14, track.lanesWidth),
+    new THREE.MeshBasicMaterial({ color: 0xffffff })
+  );
+  finishLine.rotation.x = -Math.PI / 2;
+  finishLine.position.set(
+    straightHalfLen,
+    0.044,
+    innerRadius + track.lanesWidth * 0.5
+  );
+  group.add(finishLine);
 
   return group;
 }
@@ -850,12 +907,14 @@ function createUrbanLandscapingContext(lighting: LightingMode): THREE.Group {
 }
 
 export function generatePitchGroup(
-  pitch: PitchConfig,
+  rawPitch: PitchConfig,
   _colors: StadiumColors,
   maxAnisotropy: number = 4,
   lighting: LightingMode = 'day',
   materials?: StadiumMaterialsConfig
 ): THREE.Group {
+  const pitch = clampPitchToTrack(rawPitch);
+  const track = pitch.hasTrack ? getTrackGeometry(pitch) : null;
   const mats: StadiumMaterialsConfig = {
     ...DEFAULT_STADIUM_MATERIALS,
     ...(materials ?? {}),
@@ -864,23 +923,31 @@ export function generatePitchGroup(
   const root = new THREE.Group();
   root.name = 'PitchAssembly';
 
-  const effectiveMarginEnd = pitch.hasTrack
-    ? Math.min(pitch.marginEnd, 2.2)
+  const effectiveMarginEnd = track
+    ? Math.max(2.0, track.infieldHalfLengthX - pitch.length * 0.5)
     : pitch.marginEnd;
-  const effectiveMarginSide = pitch.hasTrack
-    ? Math.min(pitch.marginSide, 3.6)
+  const effectiveMarginSide = track
+    ? Math.max(1.2, track.infieldHalfWidthZ - pitch.width * 0.5)
     : pitch.marginSide;
   const totalLength = pitch.length + effectiveMarginEnd * 2;
   const totalWidth = pitch.width + effectiveMarginSide * 2;
 
-  // 1. Mineral Esplanade / Granite Pavers / Urban Asphalt Site Ground (hollow cutout under pitch!)
-  const surroundGeo = createHollowHorizontalFrameGeometry(
-    620,
-    560,
-    totalLength - 0.24,
-    totalWidth - 0.24,
-    'normalized'
-  );
+  // 1. Mineral Esplanade / Granite Pavers / Urban Asphalt Site Ground (hollow cutout under pitch & track!)
+  const surroundGeo = track
+    ? createHollowStadiumFrameGeometry(
+        620,
+        560,
+        track.straightHalfLength,
+        track.outerRadius - 0.15,
+        'normalized'
+      )
+    : createHollowHorizontalFrameGeometry(
+        620,
+        560,
+        totalLength - 0.24,
+        totalWidth - 0.24,
+        'normalized'
+      );
   const siteTex = createUrbanSiteGroundTexture(mats.plazaSurface, maxAnisotropy);
   const plazaDetail = createPlazaDetailNormalAndRoughness(
     mats.plazaSurface,
@@ -918,13 +985,21 @@ export function generatePitchGroup(
   aoCtx.fillStyle = aoGrad;
   aoCtx.fillRect(0, 0, 256, 256);
   const aoTex = new THREE.CanvasTexture(aoCanvas);
-  const aoGeo = createHollowHorizontalFrameGeometry(
-    300,
-    240,
-    totalLength + 28,
-    totalWidth + 28,
-    'normalized'
-  );
+  const aoGeo = track
+    ? createHollowStadiumFrameGeometry(
+        340,
+        280,
+        track.straightHalfLength,
+        track.outerRadius + 12,
+        'normalized'
+      )
+    : createHollowHorizontalFrameGeometry(
+        300,
+        240,
+        totalLength + 28,
+        totalWidth + 28,
+        'normalized'
+      );
   const aoMesh = new THREE.Mesh(
     aoGeo,
     new THREE.MeshBasicMaterial({
@@ -939,7 +1014,7 @@ export function generatePitchGroup(
   root.add(aoMesh);
 
   // Hollow Perimeter Technical Pit Apron (frames the bowl moat with ZERO triangles underneath the pitch!)
-  if (!pitch.hasTrack) {
+  if (!track) {
     const pitApronGeo = createHollowHorizontalFrameGeometry(
       pitch.length + 56,
       pitch.width + 56,
@@ -955,9 +1030,19 @@ export function generatePitchGroup(
     root.add(pitApron);
   }
 
-  // 2. Main Turf Plane — the SOLE horizontal surface across the playing field (100% immune to Z-fighting!)
-  const turfGeo = new THREE.PlaneGeometry(totalLength, totalWidth);
-  turfGeo.rotateX(-Math.PI / 2);
+  // 2. Main Turf Plane — the SOLE horizontal surface across the playing field & D-zones (100% immune to Z-fighting!)
+  const turfGeo = track
+    ? createStadiumInfieldTurfGeometry(
+        track.straightHalfLength,
+        track.innerRadius,
+        totalLength,
+        totalWidth
+      )
+    : (() => {
+        const g = new THREE.PlaneGeometry(totalLength, totalWidth);
+        g.rotateX(-Math.PI / 2);
+        return g;
+      })();
 
   const { colorMap, roughnessMap } = createPitchTextures(
     pitch,
@@ -985,7 +1070,7 @@ export function generatePitchGroup(
   root.add(turfMesh);
 
   // 3. Concrete Perimeter Drainage Curb framing the pitch apron (on non-track stadiums)
-  if (!pitch.hasTrack) {
+  if (!track) {
     const curbMat = new THREE.MeshStandardMaterial({
       color: 0x94a3b8,
       roughness: 0.82,
@@ -1011,16 +1096,8 @@ export function generatePitchGroup(
     }
   }
 
-  if (pitch.hasTrack) {
-    root.add(
-      createRunningTrackGroup(
-        pitch,
-        mats,
-        maxAnisotropy,
-        totalLength,
-        totalWidth
-      )
-    );
+  if (track) {
+    root.add(createRunningTrackGroup(pitch, mats, maxAnisotropy));
   }
 
   // Two FIFA Goals with woven hexagonal nets
@@ -1078,10 +1155,13 @@ export function generatePitchGroup(
       metalness: 0.58,
     });
 
-    const adCornerR = 2.6;
-    const northZ = -(pitch.width / 2 + 2.8);
-    const southZ = pitch.width / 2 + 2.8;
-    const endX = pitch.length / 2 + 3.2;
+    const adCornerR = track ? 8.5 : 2.6;
+    const adSideOffset = track
+      ? Math.min(2.4, Math.max(1.15, track.innerRadius - pitch.width * 0.5 - 0.55))
+      : 2.8;
+    const northZ = -(pitch.width / 2 + adSideOffset);
+    const southZ = pitch.width / 2 + adSideOffset;
+    const endX = pitch.length / 2 + (track ? 2.6 : 3.2);
 
     const straightNorthLen = Math.max(20, (endX - adCornerR) * 2);
     const northBoard = new THREE.Mesh(

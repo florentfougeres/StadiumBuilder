@@ -16,18 +16,83 @@ import {
 import {
   createConcreteBowlMaterial,
   createRoofPbrMaterial,
+  createRoofShadowDepthMaterial,
   createStructurePbrMaterial,
   resolveStadiumMaterials,
 } from './materials';
 import {
+  clampPitchToTrack,
   getEffectiveSunkenDepth,
   isContinuousBowlShape,
   LightingMode,
+  resolveAllCorners,
+  resolveFloodlightRig,
   RoofStyle,
   StadiumDocument,
   StadiumShape,
   StandSide,
 } from './schema';
+
+function hasRoofGantryLights(doc: StadiumDocument): boolean {
+  const rig = resolveFloodlightRig(doc);
+  return rig === 'roof_gantry' || rig === 'both';
+}
+
+function buildCanopyMaterialBundle(
+  doc: StadiumDocument,
+  maxAnisotropy: number,
+  repeatU: number = 12,
+  repeatV: number = 2,
+  shadowRepeatU: number = 1,
+  opacityCap?: number
+): {
+  surfaceMat: THREE.MeshPhysicalMaterial;
+  shadowDepthMat: THREE.MeshDepthMaterial;
+} {
+  const mats = resolveStadiumMaterials(doc);
+  const effOpacity =
+    opacityCap !== undefined ? Math.min(opacityCap, doc.roof.opacity) : doc.roof.opacity;
+  const skyMode = doc.roof.skylightMode ?? 'none';
+  const skyRatio = doc.roof.skylightRatio ?? 0;
+
+  return {
+    surfaceMat: createRoofPbrMaterial(
+      mats.roof,
+      effOpacity,
+      doc.lighting,
+      doc.shape === 'octagonal_arena',
+      maxAnisotropy,
+      repeatU,
+      repeatV,
+      skyMode,
+      skyRatio
+    ),
+    shadowDepthMat: createRoofShadowDepthMaterial(
+      mats.roof,
+      effOpacity,
+      skyMode,
+      skyRatio,
+      shadowRepeatU,
+      1
+    ),
+  };
+}
+
+function createOrientedRoofBoxGeometry(
+  width: number,
+  height: number,
+  depth: number
+): THREE.BufferGeometry {
+  const geo = new THREE.BoxGeometry(width, height, depth);
+  const uv = geo.attributes.uv;
+  if (uv) {
+    for (let i = 0; i < uv.count; i++) {
+      uv.setY(i, 1 - uv.getY(i));
+    }
+    uv.needsUpdate = true;
+  }
+  return geo;
+}
 
 /**
  * Helper to create a cylinder strut connecting arbitrary 3D point A to point B.
@@ -53,6 +118,7 @@ function createStrutBetween(
 }
 
 export function computeStadiumRingBounds(doc: StadiumDocument) {
+  const safePitch = clampPitchToTrack(doc.pitch);
   const trackOffsets = getTrackRadialOffset(doc);
   const southMetrics = calculateStandMetrics(doc, 'south');
   const northMetrics = calculateStandMetrics(doc, 'north');
@@ -70,6 +136,7 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     southMetrics.totalDepth,
     northMetrics.totalDepth,
     eastMetrics.totalDepth,
+    westMetrics.totalDepth,
     18
   );
 
@@ -99,25 +166,53 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     return (wE * dE + wW * dW + wS * dS + wN * dN) / sum;
   };
 
+  const concourseWidth = Math.max(0, doc.concourse?.width ?? 0);
+  const hasConcourse = concourseWidth > 0.5;
+  const overConcourse = doc.roof.overConcourse !== false;
+
+  const canopyOuterOffsetAt = (
+    nx: number,
+    nz: number,
+    defaultExtra: number = 3.4
+  ): number => {
+    if (!hasConcourse) {
+      return avgDepth + defaultExtra;
+    }
+    const d = standDepthAtNormal(nx, nz);
+    return overConcourse ? d + concourseWidth + 0.45 : d + 0.8;
+  };
+
+  const nominalOuterOffset = (defaultExtra: number = 3.4): number => {
+    if (!hasConcourse) {
+      return avgDepth + defaultExtra;
+    }
+    return overConcourse ? avgDepth + concourseWidth + 0.45 : avgDepth + 0.8;
+  };
+
+  const exteriorSupportMinOffsetAt = (nx: number, nz: number): number => {
+    const d = standDepthAtNormal(nx, nz);
+    return hasConcourse ? d + concourseWidth + 1.6 : d + 2.2;
+  };
+
   const avgDistX =
     (doc.stands.east.distanceToPitch + doc.stands.west.distanceToPitch) * 0.5;
   const avgDistZ =
     (doc.stands.north.distanceToPitch + doc.stands.south.distanceToPitch) * 0.5;
 
   const innerHalfX =
-    doc.pitch.length / 2 + Math.max(4.5, avgDistX) + trackOffsets.endOffset;
+    safePitch.length / 2 + Math.max(4.5, avgDistX) + trackOffsets.endOffset;
   const innerHalfZ =
-    doc.pitch.width / 2 + Math.max(4.5, avgDistZ) + trackOffsets.sideOffset;
+    safePitch.width / 2 + Math.max(4.5, avgDistZ) + trackOffsets.sideOffset;
 
   const ring = buildShapeBowlRing(
     doc.shape,
-    doc.pitch.length,
-    doc.pitch.width,
+    safePitch.length,
+    safePitch.width,
     avgDistX,
     avgDistZ,
     trackOffsets.endOffset,
     trackOffsets.sideOffset,
-    doc.pitch.hasTrack
+    safePitch.hasTrack
   );
 
   return {
@@ -126,6 +221,12 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     innerHalfZ,
     maxStandH,
     avgDepth,
+    concourseWidth,
+    hasConcourse,
+    overConcourse,
+    canopyOuterOffsetAt,
+    nominalOuterOffset,
+    exteriorSupportMinOffsetAt,
     standHeightAtNormal,
     standDepthAtNormal,
     trackOffsets,
@@ -142,11 +243,12 @@ function buildAnnularCanopyMesh(
   ring: ReturnType<typeof buildShapeBowlRing>,
   shape: StadiumShape,
   innerOffset: number,
-  outerOffset: number,
+  outerOffset: number | ((nx: number, nz: number) => number),
   innerY: number,
   outerY: number,
   crossSectionClip: boolean,
-  mat: THREE.Material
+  mat: THREE.Material,
+  shadowDepthMat?: THREE.MeshDepthMaterial
 ): THREE.Mesh {
   const { tStart, tEnd, closed } = getBowlArcRange(shape, crossSectionClip);
   const arcFraction = Math.max(0.25, tEnd - tStart);
@@ -161,7 +263,9 @@ function buildAnnularCanopyMesh(
   for (let s = 0; s < ringCount; s++) {
     const t = tStart + (s / activeSegs) * (tEnd - tStart);
     const inPt = sampleRoundedBowlRing(ring, t, innerOffset);
-    const outPt = sampleRoundedBowlRing(ring, t, outerOffset);
+    const resolvedOuter =
+      typeof outerOffset === 'function' ? outerOffset(inPt.nx, inPt.nz) : outerOffset;
+    const outPt = sampleRoundedBowlRing(ring, t, resolvedOuter);
 
     const base = s * 6;
     positions[base] = inPt.x;
@@ -196,6 +300,10 @@ function buildAnnularCanopyMesh(
   geo.computeVertexNormals();
 
   const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'RoofCanopySurface';
+  if (shadowDepthMat) {
+    mesh.customDepthMaterial = shadowDepthMat;
+  }
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.renderOrder = 2;
@@ -208,9 +316,12 @@ function buildAnnularCatwalkFloodlights(
   innerOffset: number,
   catwalkY: number,
   lighting: LightingMode,
-  crossSectionClip: boolean
+  crossSectionClip: boolean,
+  enabled: boolean = true
 ): THREE.Group {
   const group = new THREE.Group();
+  if (!enabled) return group;
+  group.name = 'RoofFloodlightCatwalk';
   const { tStart, tEnd, closed } = getBowlArcRange(shape, crossSectionClip);
   const arcFraction = Math.max(0.25, tEnd - tStart);
   const segs = Math.max(24, Math.round(96 * arcFraction));
@@ -267,9 +378,12 @@ function buildStraightCatwalkFloodlights(
   roofSpan: number,
   frontZ: number,
   roofHeight: number,
-  lighting: LightingMode
+  lighting: LightingMode,
+  enabled: boolean = true
 ): THREE.Group {
   const group = new THREE.Group();
+  if (!enabled) return group;
+  group.name = 'RoofFloodlightCatwalk';
   const isLit = lighting !== 'day';
 
   const gantryMat = new THREE.MeshStandardMaterial({
@@ -322,32 +436,57 @@ function buildEnvelopingShellRoof(
 ): THREE.Group {
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
-  const { ring, maxStandH, avgDepth } = computeStadiumRingBounds(doc);
+  const {
+    ring,
+    maxStandH,
+    avgDepth,
+    hasConcourse,
+    overConcourse,
+    canopyOuterOffsetAt,
+    standHeightAtNormal,
+  } = computeStadiumRingBounds(doc);
   const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
   const arcFraction = Math.max(0.25, tEnd - tStart);
   const sunkenDepth = getEffectiveSunkenDepth(doc);
   const baseY = Math.min(sunkenDepth, maxStandH * 0.6);
   const roofTopY = maxStandH + doc.roof.heightOffset;
   const innerDripOffset = avgDepth * (1 - doc.roof.coverageRatio);
-  const outerBaseOffset = avgDepth + 3.2;
-  const outerBellyOffset = avgDepth + 8.6;
-
   const spanH = Math.max(4, roofTopY - baseY);
-  const shellProfile: [number, number][] = [
-    [outerBaseOffset, baseY],
-    [outerBellyOffset * 0.96, baseY + spanH * 0.25],
-    [outerBellyOffset, baseY + spanH * 0.56],
-    [outerBellyOffset * 0.95, baseY + spanH * 0.84],
-    [avgDepth + 2.2, roofTopY - 0.5],
-    [avgDepth * 0.62, roofTopY + 1.4],
-    [avgDepth * 0.28, roofTopY + 0.9],
-    [innerDripOffset, roofTopY - 0.15],
-  ];
+
+  const shellProfileAt = (nx: number, nz: number): [number, number][] => {
+    const localOuter = canopyOuterOffsetAt(nx, nz, 3.2);
+    if (hasConcourse && !overConcourse) {
+      const crestH = standHeightAtNormal(nx, nz);
+      const midY = (crestH + roofTopY) * 0.5;
+      return [
+        [localOuter, Math.max(baseY, crestH - 0.6)],
+        [localOuter + 0.15, crestH + (roofTopY - crestH) * 0.3],
+        [localOuter + 0.25, midY],
+        [localOuter + 0.15, roofTopY - 0.8],
+        [localOuter, roofTopY - 0.4],
+        [avgDepth * 0.62, roofTopY + 1.4],
+        [avgDepth * 0.28, roofTopY + 0.9],
+        [innerDripOffset, roofTopY - 0.15],
+      ];
+    }
+    const outerBaseOffset = hasConcourse ? localOuter + 0.2 : avgDepth + 3.2;
+    const outerBellyOffset = hasConcourse ? localOuter + 2.8 : avgDepth + 8.6;
+    return [
+      [outerBaseOffset, baseY],
+      [outerBellyOffset * 0.96, baseY + spanH * 0.25],
+      [outerBellyOffset, baseY + spanH * 0.56],
+      [outerBellyOffset * 0.95, baseY + spanH * 0.84],
+      [localOuter, roofTopY - 0.5],
+      [avgDepth * 0.62, roofTopY + 1.4],
+      [avgDepth * 0.28, roofTopY + 0.9],
+      [innerDripOffset, roofTopY - 0.15],
+    ];
+  };
 
   const segments = doc.shape === 'octagonal_arena' ? 160 : 128;
   const activeSegs = Math.max(32, Math.round(segments * arcFraction));
   const ringCount = closed ? activeSegs : activeSegs + 1;
-  const pCount = shellProfile.length;
+  const pCount = 8;
 
   const positions = new Float32Array(ringCount * pCount * 3);
   const uvs = new Float32Array(ringCount * pCount * 2);
@@ -355,8 +494,10 @@ function buildEnvelopingShellRoof(
 
   for (let s = 0; s < ringCount; s++) {
     const t = tStart + (s / activeSegs) * (tEnd - tStart);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const sliceProfile = shellProfileAt(n.nx, n.nz);
     for (let p = 0; p < pCount; p++) {
-      const [radOff, py] = shellProfile[p];
+      const [radOff, py] = sliceProfile[p];
       const pt = sampleRoundedBowlRing(ring, t, radOff);
       const base = (s * pCount + p) * 3;
       positions[base] = pt.x;
@@ -365,7 +506,7 @@ function buildEnvelopingShellRoof(
 
       const uvBase = (s * pCount + p) * 2;
       uvs[uvBase] = (s / activeSegs) * 14 * arcFraction;
-      uvs[uvBase + 1] = p / (pCount - 1);
+      uvs[uvBase + 1] = 1 - p / (pCount - 1);
     }
   }
 
@@ -387,17 +528,17 @@ function buildEnvelopingShellRoof(
   shellGeo.setIndex(indices);
   shellGeo.computeVertexNormals();
 
-  const shellMat = createRoofPbrMaterial(
-    mats.roof,
-    doc.roof.opacity,
-    doc.lighting,
-    doc.shape === 'octagonal_arena',
+  const { surfaceMat: shellMat, shadowDepthMat } = buildCanopyMaterialBundle(
+    doc,
     maxAnisotropy,
     12,
-    4
+    4,
+    1
   );
 
   const shellMesh = new THREE.Mesh(shellGeo, shellMat);
+  shellMesh.name = 'RoofCanopySurface';
+  shellMesh.customDepthMaterial = shadowDepthMat;
   shellMesh.castShadow = true;
   shellMesh.receiveShadow = true;
   shellMesh.renderOrder = 2;
@@ -409,7 +550,9 @@ function buildEnvelopingShellRoof(
   for (let i = 0; i < ribCount; i++) {
     const frac = closed ? i / ribCount : i / Math.max(1, ribCount - 1);
     const t = tStart + frac * (tEnd - tStart);
-    const ribPts = shellProfile.map(([rOff, ry]) => {
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const ribProfile = shellProfileAt(n.nx, n.nz);
+    const ribPts = ribProfile.map(([rOff, ry]) => {
       const p = sampleRoundedBowlRing(ring, t, rOff - 0.28);
       return new THREE.Vector3(p.x, ry, p.z);
     });
@@ -426,7 +569,8 @@ function buildEnvelopingShellRoof(
       innerDripOffset,
       roofTopY - 0.45,
       doc.lighting,
-      crossSectionClip
+      crossSectionClip,
+      hasRoofGantryLights(doc)
     )
   );
 
@@ -443,21 +587,25 @@ function buildSuspendedMastsRoof(
 ): THREE.Group {
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
-  const { ring, maxStandH, avgDepth, standHeightAtNormal, standDepthAtNormal } =
-    computeStadiumRingBounds(doc);
+  const {
+    ring,
+    maxStandH,
+    avgDepth,
+    canopyOuterOffsetAt,
+    exteriorSupportMinOffsetAt,
+    standHeightAtNormal,
+    standDepthAtNormal,
+  } = computeStadiumRingBounds(doc);
   const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
   const arcFraction = Math.max(0.25, tEnd - tStart);
   const sunkenDepth = getEffectiveSunkenDepth(doc);
   const groundY = Math.min(sunkenDepth, maxStandH * 0.6);
   const roofY = maxStandH + Math.max(4.5, doc.roof.heightOffset);
   const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
-  const outerOffset = avgDepth + 6.5;
+  const outerOffsetFn = (nx: number, nz: number) => canopyOuterOffsetAt(nx, nz, 6.5);
 
-  const canopyMat = createRoofPbrMaterial(
-    mats.roof,
-    doc.roof.opacity,
-    doc.lighting,
-    doc.shape === 'octagonal_arena',
+  const { surfaceMat: canopyMat, shadowDepthMat } = buildCanopyMaterialBundle(
+    doc,
     maxAnisotropy
   );
 
@@ -466,11 +614,12 @@ function buildSuspendedMastsRoof(
       ring,
       doc.shape,
       innerOffset,
-      outerOffset,
+      outerOffsetFn,
       roofY - 0.3,
       roofY + 0.4,
       crossSectionClip,
-      canopyMat
+      canopyMat,
+      shadowDepthMat
     ),
     buildAnnularCatwalkFloodlights(
       ring,
@@ -478,7 +627,8 @@ function buildSuspendedMastsRoof(
       innerOffset,
       roofY - 0.55,
       doc.lighting,
-      crossSectionClip
+      crossSectionClip,
+      hasRoofGantryLights(doc)
     )
   );
 
@@ -498,20 +648,16 @@ function buildSuspendedMastsRoof(
     const baseSample = sampleRoundedBowlRing(ring, t, 0);
     const localStandD = standDepthAtNormal(baseSample.nx, baseSample.nz);
     const localStandH = standHeightAtNormal(baseSample.nx, baseSample.nz);
+    const localOuter = outerOffsetFn(baseSample.nx, baseSample.nz);
+    const extMin = exteriorSupportMinOffsetAt(baseSample.nx, baseSample.nz);
+    const mastGroundOff = Math.max(extMin + 1.8, localOuter + 1.6);
+    const mastTopOff = Math.max(extMin + 1.0, localOuter + 0.8);
 
-    const mastGroundPt = sampleRoundedBowlRing(
-      ring,
-      t,
-      Math.max(avgDepth + 4.2, localStandD + 3.2)
-    );
-    const mastTopPt = sampleRoundedBowlRing(
-      ring,
-      t,
-      Math.max(avgDepth + 3.4, localStandD + 2.4)
-    );
+    const mastGroundPt = sampleRoundedBowlRing(ring, t, mastGroundOff);
+    const mastTopPt = sampleRoundedBowlRing(ring, t, mastTopOff);
     const innerAnchor = sampleRoundedBowlRing(ring, t, innerOffset + 2.2);
-    const midAnchor = sampleRoundedBowlRing(ring, t, (innerOffset + outerOffset) * 0.48);
-    const backstayGround = sampleRoundedBowlRing(ring, t, outerOffset + 10.5);
+    const midAnchor = sampleRoundedBowlRing(ring, t, (innerOffset + localOuter) * 0.48);
+    const backstayGround = sampleRoundedBowlRing(ring, t, mastGroundOff + 9.5);
     const standCrestPt = sampleRoundedBowlRing(ring, t, localStandD - 0.4);
 
     const pBase = new THREE.Vector3(mastGroundPt.x, groundY, mastGroundPt.z);
@@ -594,11 +740,12 @@ function buildShapedCanopyMesh(
   ring: ReturnType<typeof buildShapeBowlRing>,
   shape: StadiumShape,
   innerOffset: number,
-  outerOffset: number,
+  outerOffset: number | ((nx: number, nz: number) => number),
   surface: CanopySurface,
   crossSectionClip: boolean,
   segments: number,
-  mat: THREE.Material
+  mat: THREE.Material,
+  shadowDepthMat?: THREE.MeshDepthMaterial
 ): THREE.Mesh {
   const { tStart, tEnd, closed } = getBowlArcRange(shape, crossSectionClip);
   const activeSegs = Math.max(32, Math.round(segments * Math.max(0.25, tEnd - tStart)));
@@ -611,9 +758,12 @@ function buildShapedCanopyMesh(
   const indices: number[] = [];
   for (let s = 0; s < ringCount; s++) {
     const t = tStart + (s / activeSegs) * (tEnd - tStart);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const resolvedOuter =
+      typeof outerOffset === 'function' ? outerOffset(n.nx, n.nz) : outerOffset;
     for (let c = 0; c < cols; c++) {
       const f = c / depthSteps;
-      const pt = sampleRoundedBowlRing(ring, t, innerOffset + (outerOffset - innerOffset) * f);
+      const pt = sampleRoundedBowlRing(ring, t, innerOffset + (resolvedOuter - innerOffset) * f);
       const i = s * cols + c;
       positions.set([pt.x, surface(t, f), pt.z], i * 3);
       uvs.set([(s / activeSegs) * 14, f], i * 2);
@@ -633,6 +783,10 @@ function buildShapedCanopyMesh(
   geo.setIndex(indices);
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'RoofCanopySurface';
+  if (shadowDepthMat) {
+    mesh.customDepthMaterial = shadowDepthMat;
+  }
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.renderOrder = 2;
@@ -651,18 +805,24 @@ function buildPerimeterCanopyCrown(
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
   const bounds = computeStadiumRingBounds(doc);
-  const { ring, maxStandH, avgDepth, standHeightAtNormal, standDepthAtNormal } = bounds;
+  const {
+    ring,
+    maxStandH,
+    avgDepth,
+    canopyOuterOffsetAt,
+    nominalOuterOffset,
+    standHeightAtNormal,
+    standDepthAtNormal,
+  } = bounds;
   const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
   const arcFraction = Math.max(0.25, tEnd - tStart);
   const roofY = maxStandH + Math.max(4.0, doc.roof.heightOffset);
   const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
-  const outerOffset = avgDepth + 3.8;
+  const outerOffset = nominalOuterOffset(3.8);
+  const outerOffsetFn = (nx: number, nz: number) => canopyOuterOffsetAt(nx, nz, 3.8);
 
-  const canopyMat = createRoofPbrMaterial(
-    mats.roof,
-    doc.roof.opacity,
-    doc.lighting,
-    doc.shape === 'octagonal_arena',
+  const { surfaceMat: canopyMat, shadowDepthMat } = buildCanopyMaterialBundle(
+    doc,
     maxAnisotropy
   );
 
@@ -676,21 +836,23 @@ function buildPerimeterCanopyCrown(
           ring,
           doc.shape,
           innerOffset,
-          outerOffset,
+          outerOffsetFn,
           surface,
           crossSectionClip,
           shaped.segments,
-          canopyMat
+          canopyMat,
+          shadowDepthMat
         )
       : buildAnnularCanopyMesh(
           ring,
           doc.shape,
           innerOffset,
-          outerOffset,
+          outerOffsetFn,
           roofY + 1.8,
           roofY,
           crossSectionClip,
-          canopyMat
+          canopyMat,
+          shadowDepthMat
         ),
     buildAnnularCatwalkFloodlights(
       ring,
@@ -698,7 +860,8 @@ function buildPerimeterCanopyCrown(
       innerOffset,
       roofY + 1.45,
       doc.lighting,
-      crossSectionClip
+      crossSectionClip,
+      hasRoofGantryLights(doc)
     )
   );
 
@@ -713,11 +876,13 @@ function buildPerimeterCanopyCrown(
     const t0 = tStart + f0 * (tEnd - tStart);
     const t1 = tStart + f1 * (tEnd - tStart);
     const s0 = sampleRoundedBowlRing(ring, t0, 0);
+    const s1 = sampleRoundedBowlRing(ring, t1, 0);
     const d0 = standDepthAtNormal(s0.nx, s0.nz);
     const h0 = standHeightAtNormal(s0.nx, s0.nz);
+    const localOuter1 = outerOffsetFn(s1.nx, s1.nz);
 
     const wallBase = sampleRoundedBowlRing(ring, t0, d0 - 0.3);
-    const roofNode = sampleRoundedBowlRing(ring, t1, outerOffset - 0.8);
+    const roofNode = sampleRoundedBowlRing(ring, t1, localOuter1 - 0.8);
     group.add(
       createStrutBetween(
         new THREE.Vector3(wallBase.x, h0 - 0.6, wallBase.z),
@@ -730,7 +895,16 @@ function buildPerimeterCanopyCrown(
     );
   }
 
-  return { group, bounds, roofY, innerOffset, outerOffset, primaryStructMat, surface };
+  return {
+    group,
+    bounds,
+    roofY,
+    innerOffset,
+    outerOffset,
+    outerOffsetFn,
+    primaryStructMat,
+    surface,
+  };
 }
 
 /** Tube following the canopy surface across its depth at ring position `t`. */
@@ -763,7 +937,7 @@ function buildVaultedRingRoof(
   crossSectionClip: boolean,
   maxAnisotropy: number
 ): THREE.Group {
-  const { group, bounds, innerOffset, outerOffset, primaryStructMat, surface } =
+  const { group, bounds, innerOffset, outerOffsetFn, primaryStructMat, surface } =
     buildPerimeterCanopyCrown(doc, crossSectionClip, maxAnisotropy, {
       segments: 160,
       surface:
@@ -775,7 +949,18 @@ function buildVaultedRingRoof(
   const ribs = Math.max(12, Math.round(48 * Math.max(0.25, tEnd - tStart)));
   for (let i = 0; i < ribs; i++) {
     const t = tStart + (closed ? i / ribs : i / Math.max(1, ribs - 1)) * (tEnd - tStart);
-    group.add(buildCanopyRib(bounds.ring, t, innerOffset, outerOffset, surface, 0.32, primaryStructMat));
+    const n = sampleRoundedBowlRing(bounds.ring, t, 0);
+    group.add(
+      buildCanopyRib(
+        bounds.ring,
+        t,
+        innerOffset,
+        outerOffsetFn(n.nx, n.nz),
+        surface,
+        0.32,
+        primaryStructMat
+      )
+    );
   }
   return group;
 }
@@ -790,7 +975,7 @@ function buildFoldedPlateRoof(
   maxAnisotropy: number
 ): THREE.Group {
   let folds = 0;
-  const { group, bounds, innerOffset, outerOffset, primaryStructMat, surface } =
+  const { group, bounds, innerOffset, outerOffsetFn, primaryStructMat, surface } =
     buildPerimeterCanopyCrown(doc, crossSectionClip, maxAnisotropy, {
       segments: 320,
       surface: ({ roofY, perimeter }) => {
@@ -806,7 +991,18 @@ function buildFoldedPlateRoof(
   for (let k = 0; k < folds; k++) {
     const t = (k + 0.5) / folds;
     if (t < tStart || t > tEnd) continue;
-    group.add(buildCanopyRib(bounds.ring, t, innerOffset, outerOffset, surface, 0.22, primaryStructMat));
+    const n = sampleRoundedBowlRing(bounds.ring, t, 0);
+    group.add(
+      buildCanopyRib(
+        bounds.ring,
+        t,
+        innerOffset,
+        outerOffsetFn(n.nx, n.nz),
+        surface,
+        0.22,
+        primaryStructMat
+      )
+    );
   }
   return group;
 }
@@ -859,15 +1055,24 @@ function buildRetractableRoof(
   const travel = isClosed ? 0 : maxTravel;
   const leafY = roofY + 2.15;
 
+  const leafOpacity = isClosed ? Math.min(doc.roof.opacity, 0.84) : Math.min(doc.roof.opacity, 0.65);
   const leafMat = new THREE.MeshPhysicalMaterial({
     color: 0xe0f2fe,
     roughness: 0.12,
     metalness: 0.15,
     clearcoat: 0.9,
     transparent: true,
-    opacity: isClosed ? 0.84 : 0.65,
+    opacity: leafOpacity,
     side: THREE.DoubleSide,
   });
+  const leafShadowDepth = createRoofShadowDepthMaterial(
+    'polycarbonate_glass',
+    leafOpacity,
+    doc.roof.skylightMode ?? 'none',
+    doc.roof.skylightRatio ?? 0,
+    0.04,
+    0.04
+  );
 
   for (const xSign of [-1, 1] as const) {
     // Clamping a convex outline to one side of x = 0 yields that half of the opening.
@@ -880,6 +1085,8 @@ function buildRetractableRoof(
     const leafGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.55, bevelEnabled: false });
     leafGeo.rotateX(-Math.PI / 2);
     const leaf = new THREE.Mesh(leafGeo, leafMat);
+    leaf.name = 'RetractableRoofLeaf';
+    leaf.customDepthMaterial = leafShadowDepth;
     leaf.position.set(xSign * travel, leafY, 0);
     leaf.castShadow = true;
     leaf.renderOrder = 3;
@@ -931,7 +1138,7 @@ function buildTwinArchRoof(
     crossSectionClip,
     maxAnisotropy
   );
-  const { innerHalfX, innerHalfZ, avgDepth } = bounds;
+  const { innerHalfX, innerHalfZ, avgDepth, concourseWidth } = bounds;
   const cableSteelMat = new THREE.MeshStandardMaterial({
     color: 0x334155,
     roughness: 0.3,
@@ -939,7 +1146,7 @@ function buildTwinArchRoof(
   });
   const concreteMat = createConcreteBowlMaterial(maxAnisotropy);
 
-  const archHalfSpanX = innerHalfX + avgDepth + 24;
+  const archHalfSpanX = innerHalfX + avgDepth + concourseWidth + 24;
   const archApexY = roofY + 26;
   const archZPos = Math.max(24, innerHalfZ * 0.58);
   const archZOffsets = crossSectionClip ? [-archZPos] : [-archZPos, archZPos];
@@ -1079,6 +1286,8 @@ function buildGiantArchRoof(
     innerHalfZ,
     maxStandH,
     avgDepth,
+    concourseWidth,
+    canopyOuterOffsetAt,
     standHeightAtNormal,
     standDepthAtNormal,
   } = computeStadiumRingBounds(doc);
@@ -1087,13 +1296,10 @@ function buildGiantArchRoof(
 
   const roofY = maxStandH + Math.max(4.0, doc.roof.heightOffset);
   const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
-  const outerOffset = avgDepth + 3.6;
+  const outerOffsetFn = (nx: number, nz: number) => canopyOuterOffsetAt(nx, nz, 3.6);
 
-  const canopyMat = createRoofPbrMaterial(
-    mats.roof,
-    doc.roof.opacity,
-    doc.lighting,
-    doc.shape === 'octagonal_arena',
+  const { surfaceMat: canopyMat, shadowDepthMat } = buildCanopyMaterialBundle(
+    doc,
     maxAnisotropy
   );
 
@@ -1102,11 +1308,12 @@ function buildGiantArchRoof(
       ring,
       doc.shape,
       innerOffset,
-      outerOffset,
+      outerOffsetFn,
       roofY - 0.4,
       roofY + 0.5,
       crossSectionClip,
-      canopyMat
+      canopyMat,
+      shadowDepthMat
     ),
     buildAnnularCatwalkFloodlights(
       ring,
@@ -1114,7 +1321,8 @@ function buildGiantArchRoof(
       innerOffset,
       roofY - 0.72,
       doc.lighting,
-      crossSectionClip
+      crossSectionClip,
+      hasRoofGantryLights(doc)
     )
   );
 
@@ -1134,8 +1342,9 @@ function buildGiantArchRoof(
     const s0 = sampleRoundedBowlRing(ring, t, 0);
     const d0 = standDepthAtNormal(s0.nx, s0.nz);
     const h0 = standHeightAtNormal(s0.nx, s0.nz);
+    const localOuter = outerOffsetFn(s0.nx, s0.nz);
     const wallPt = sampleRoundedBowlRing(ring, t, d0 - 0.2);
-    const roofPt = sampleRoundedBowlRing(ring, t, outerOffset - 0.6);
+    const roofPt = sampleRoundedBowlRing(ring, t, localOuter - 0.6);
     group.add(
       createStrutBetween(
         new THREE.Vector3(wallPt.x, h0 - 0.5, wallPt.z),
@@ -1149,7 +1358,7 @@ function buildGiantArchRoof(
   }
 
   // Monumental 125m-class tilted 3-chord tubular lattice arch spanning East-to-West!
-  const archHalfSpanX = innerHalfX + avgDepth + 32;
+  const archHalfSpanX = innerHalfX + avgDepth + concourseWidth + 32;
   const archApexY = roofY + 46;
   const archBaseZ = -Math.max(16, innerHalfZ * 0.36);
   const archTiltZ = 14.5; // Tilts gracefully southward toward center pitch at apex
@@ -1258,6 +1467,7 @@ function buildBowstringArchRoof(
     innerHalfZ,
     maxStandH,
     avgDepth,
+    canopyOuterOffsetAt,
     standHeightAtNormal,
     standDepthAtNormal,
   } = computeStadiumRingBounds(doc);
@@ -1266,13 +1476,10 @@ function buildBowstringArchRoof(
 
   const roofY = maxStandH + Math.max(3.8, doc.roof.heightOffset);
   const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
-  const outerOffset = avgDepth + 3.4;
+  const outerOffsetFn = (nx: number, nz: number) => canopyOuterOffsetAt(nx, nz, 3.4);
 
-  const canopyMat = createRoofPbrMaterial(
-    mats.roof,
-    doc.roof.opacity,
-    doc.lighting,
-    doc.shape === 'octagonal_arena',
+  const { surfaceMat: canopyMat, shadowDepthMat } = buildCanopyMaterialBundle(
+    doc,
     maxAnisotropy
   );
 
@@ -1281,11 +1488,12 @@ function buildBowstringArchRoof(
       ring,
       doc.shape,
       innerOffset,
-      outerOffset,
+      outerOffsetFn,
       roofY - 0.5,
       roofY + 0.5,
       crossSectionClip,
-      canopyMat
+      canopyMat,
+      shadowDepthMat
     ),
     buildAnnularCatwalkFloodlights(
       ring,
@@ -1293,7 +1501,8 @@ function buildBowstringArchRoof(
       innerOffset,
       roofY - 0.78,
       doc.lighting,
-      crossSectionClip
+      crossSectionClip,
+      hasRoofGantryLights(doc)
     )
   );
 
@@ -1307,8 +1516,9 @@ function buildBowstringArchRoof(
     const s0 = sampleRoundedBowlRing(ring, t, 0);
     const d0 = standDepthAtNormal(s0.nx, s0.nz);
     const h0 = standHeightAtNormal(s0.nx, s0.nz);
+    const localOuter = outerOffsetFn(s0.nx, s0.nz);
     const wallPt = sampleRoundedBowlRing(ring, t, d0 - 0.2);
-    const roofPt = sampleRoundedBowlRing(ring, t, outerOffset - 0.6);
+    const roofPt = sampleRoundedBowlRing(ring, t, localOuter - 0.6);
     group.add(
       createStrutBetween(
         new THREE.Vector3(wallPt.x, h0 - 0.5, wallPt.z),
@@ -1385,20 +1595,23 @@ function buildBicycleWheelCableRoof(
 ): THREE.Group {
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
-  const { ring, maxStandH, avgDepth, standHeightAtNormal, standDepthAtNormal } =
-    computeStadiumRingBounds(doc);
+  const {
+    ring,
+    maxStandH,
+    avgDepth,
+    canopyOuterOffsetAt,
+    standHeightAtNormal,
+    standDepthAtNormal,
+  } = computeStadiumRingBounds(doc);
   const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
   const arcFraction = Math.max(0.25, tEnd - tStart);
   const roofY = maxStandH + Math.max(3.6, doc.roof.heightOffset);
 
   const innerDripOffset = avgDepth * (1 - doc.roof.coverageRatio);
-  const outerRingOffset = avgDepth + 3.2;
+  const outerRingOffsetFn = (nx: number, nz: number) => canopyOuterOffsetAt(nx, nz, 3.2);
 
-  const canopyMat = createRoofPbrMaterial(
-    mats.roof,
-    doc.roof.opacity,
-    doc.lighting,
-    doc.shape === 'octagonal_arena',
+  const { surfaceMat: canopyMat, shadowDepthMat } = buildCanopyMaterialBundle(
+    doc,
     maxAnisotropy
   );
 
@@ -1407,11 +1620,12 @@ function buildBicycleWheelCableRoof(
       ring,
       doc.shape,
       innerDripOffset,
-      outerRingOffset,
+      outerRingOffsetFn,
       roofY - 0.55,
       roofY + 0.35,
       crossSectionClip,
-      canopyMat
+      canopyMat,
+      shadowDepthMat
     ),
     buildAnnularCatwalkFloodlights(
       ring,
@@ -1419,7 +1633,8 @@ function buildBicycleWheelCableRoof(
       innerDripOffset,
       roofY - 0.85,
       doc.lighting,
-      crossSectionClip
+      crossSectionClip,
+      hasRoofGantryLights(doc)
     )
   );
 
@@ -1439,8 +1654,8 @@ function buildBicycleWheelCableRoof(
 
   for (let s = 0; s <= activeSegs; s++) {
     const t = tStart + (s / activeSegs) * (tEnd - tStart);
-    const outPt = sampleRoundedBowlRing(ring, t, outerRingOffset);
     const inPt = sampleRoundedBowlRing(ring, t, innerDripOffset + 0.5);
+    const outPt = sampleRoundedBowlRing(ring, t, outerRingOffsetFn(inPt.nx, inPt.nz));
 
     outerRingPts.push(new THREE.Vector3(outPt.x, roofY + 0.4, outPt.z));
     innerUpperPts.push(new THREE.Vector3(inPt.x, roofY + 2.0, inPt.z));
@@ -1473,6 +1688,7 @@ function buildBicycleWheelCableRoof(
 
     const sL = sampleRoundedBowlRing(ring, tLeft, 0);
     const sR = sampleRoundedBowlRing(ring, tRight, 0);
+    const sMid = sampleRoundedBowlRing(ring, tMid, 0);
     const dL = standDepthAtNormal(sL.nx, sL.nz);
     const dR = standDepthAtNormal(sR.nx, sR.nz);
     const hL = standHeightAtNormal(sL.nx, sL.nz);
@@ -1480,7 +1696,11 @@ function buildBicycleWheelCableRoof(
 
     const wallFootL = sampleRoundedBowlRing(ring, tLeft, dL - 0.1);
     const wallFootR = sampleRoundedBowlRing(ring, tRight, dR - 0.1);
-    const outApex = sampleRoundedBowlRing(ring, tMid, outerRingOffset);
+    const outApex = sampleRoundedBowlRing(
+      ring,
+      tMid,
+      outerRingOffsetFn(sMid.nx, sMid.nz)
+    );
     const inAnchor = sampleRoundedBowlRing(ring, tMid, innerDripOffset + 0.5);
 
     const pOut = new THREE.Vector3(outApex.x, roofY + 0.4, outApex.z);
@@ -1516,7 +1736,8 @@ function buildTensileNetMembraneRoof(
 ): THREE.Group {
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
-  const { ring, maxStandH, avgDepth } = computeStadiumRingBounds(doc);
+  const { ring, maxStandH, avgDepth, canopyOuterOffsetAt, exteriorSupportMinOffsetAt } =
+    computeStadiumRingBounds(doc);
   const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
   const arcFraction = Math.max(0.25, tEnd - tStart);
   const sunkenDepth = getEffectiveSunkenDepth(doc);
@@ -1524,7 +1745,7 @@ function buildTensileNetMembraneRoof(
 
   const baseRoofY = maxStandH + Math.max(3.5, doc.roof.heightOffset);
   const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
-  const outerOffset = avgDepth + 5.5;
+  const outerOffsetFn = (nx: number, nz: number) => canopyOuterOffsetAt(nx, nz, 5.5);
 
   const peakTotalFull = 12;
   const activePeaks = Math.max(4, Math.round(peakTotalFull * arcFraction));
@@ -1539,12 +1760,14 @@ function buildTensileNetMembraneRoof(
   for (let s = 0; s < ringCount; s++) {
     const frac = s / uSegs;
     const t = tStart + frac * (tEnd - tStart);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const localOuter = outerOffsetFn(n.nx, n.nz);
     const wavePhase = frac * activePeaks * Math.PI * 2;
     const peakWave = Math.pow(0.5 + 0.5 * Math.cos(wavePhase), 1.8); // 1 at mast peaks, 0 in valleys
 
     for (let v = 0; v <= vSegs; v++) {
       const vf = v / vSegs; // 0 = inner edge, 1 = outer edge
-      const radOff = innerOffset + vf * (outerOffset - innerOffset);
+      const radOff = innerOffset + vf * (localOuter - innerOffset);
       // Saddle-cone anticlastic height: peaks sharply near v=0.68 at mast stations, dips in valleys
       const radialCone = Math.exp(-Math.pow((vf - 0.65) / 0.34, 2));
       const catenarySag = Math.sin(vf * Math.PI) * -1.4;
@@ -1562,7 +1785,7 @@ function buildTensileNetMembraneRoof(
 
       const uvBase = (s * (vSegs + 1) + v) * 2;
       uvs[uvBase] = frac * 16 * arcFraction;
-      uvs[uvBase + 1] = vf * 3;
+      uvs[uvBase + 1] = vf;
     }
   }
 
@@ -1583,16 +1806,17 @@ function buildTensileNetMembraneRoof(
   netGeo.setIndex(indices);
   netGeo.computeVertexNormals();
 
-  const membraneMat = createRoofPbrMaterial(
-    mats.roof,
-    Math.min(0.92, doc.roof.opacity),
-    doc.lighting,
-    false,
+  const { surfaceMat: membraneMat, shadowDepthMat } = buildCanopyMaterialBundle(
+    doc,
     maxAnisotropy,
     14,
-    3
+    3,
+    1,
+    0.92
   );
   const netMesh = new THREE.Mesh(netGeo, membraneMat);
+  netMesh.name = 'RoofCanopySurface';
+  netMesh.customDepthMaterial = shadowDepthMat;
   netMesh.castShadow = true;
   netMesh.receiveShadow = true;
   netMesh.renderOrder = 2;
@@ -1632,13 +1856,19 @@ function buildTensileNetMembraneRoof(
   for (let p = 0; p < mastLimit; p++) {
     const frac = p / activePeaks;
     const t = tStart + frac * (tEnd - tStart);
-    const mastFoot = sampleRoundedBowlRing(ring, t, outerOffset + 3.2);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const localOuter = outerOffsetFn(n.nx, n.nz);
+    const mastFootOff = Math.max(
+      localOuter + 3.2,
+      exteriorSupportMinOffsetAt(n.nx, n.nz) + 1.6
+    );
+    const mastFoot = sampleRoundedBowlRing(ring, t, mastFootOff);
     const mastHead = sampleRoundedBowlRing(
       ring,
       t,
-      innerOffset + 0.65 * (outerOffset - innerOffset)
+      innerOffset + 0.65 * (localOuter - innerOffset)
     );
-    const anchorOut = sampleRoundedBowlRing(ring, t, outerOffset + 14.5);
+    const anchorOut = sampleRoundedBowlRing(ring, t, mastFootOff + 11.3);
     const inEdge = sampleRoundedBowlRing(ring, t, innerOffset);
 
     const pFoot = new THREE.Vector3(mastFoot.x, groundY, mastFoot.z);
@@ -1667,8 +1897,14 @@ function buildTensileNetMembraneRoof(
     // Valley tie-down cable halfway to next peak
     if (p < activePeaks) {
       const tVal = tStart + ((p + 0.5) / activePeaks) * (tEnd - tStart);
-      const valOut = sampleRoundedBowlRing(ring, tVal, outerOffset);
-      const valGround = sampleRoundedBowlRing(ring, tVal, outerOffset + 6.5);
+      const nVal = sampleRoundedBowlRing(ring, tVal, 0);
+      const valOuter = outerOffsetFn(nVal.nx, nVal.nz);
+      const valGroundOff = Math.max(
+        valOuter + 6.5,
+        exteriorSupportMinOffsetAt(nVal.nx, nVal.nz) + 4.5
+      );
+      const valOut = sampleRoundedBowlRing(ring, tVal, valOuter);
+      const valGround = sampleRoundedBowlRing(ring, tVal, valGroundOff);
       group.add(
         createStrutBetween(
           new THREE.Vector3(valOut.x, baseRoofY - 2.2, valOut.z),
@@ -1697,17 +1933,17 @@ function buildFixedDomeRoof(
 ): THREE.Group {
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
-  const { ring, maxStandH, avgDepth, standHeightAtNormal, standDepthAtNormal } =
+  const { ring, maxStandH, canopyOuterOffsetAt, standHeightAtNormal, standDepthAtNormal } =
     computeStadiumRingBounds(doc);
 
   const springY = maxStandH + Math.max(2.8, doc.roof.heightOffset * 0.7);
   const domeRise = 23.5;
-  const eaveOffset = avgDepth + 3.2;
 
-  // Dome surface point: the eave follows the bowl contour, and each higher course is that
+  // Dome surface point: the eave follows the bowl/concourse contour, and each higher course is that
   // contour scaled toward the centre, so the sides hug the stadium outline instead of an ellipse.
   const domePoint = (t: number, theta: number, yAdjust = 0): THREE.Vector3 => {
-    const eave = sampleRoundedBowlRing(ring, t, eaveOffset);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const eave = sampleRoundedBowlRing(ring, t, canopyOuterOffsetAt(n.nx, n.nz, 3.2));
     const scale = Math.cos(theta);
     return new THREE.Vector3(
       eave.x * scale,
@@ -1742,7 +1978,7 @@ function buildFixedDomeRoof(
 
       const uvIdx = (u * (vSegs + 1) + v) * 2;
       uvs[uvIdx] = (u / uSegs) * (crossSectionClip ? 8 : 16);
-      uvs[uvIdx + 1] = (v / vSegs) * 4;
+      uvs[uvIdx + 1] = 1 - v / vSegs;
     }
   }
 
@@ -1763,16 +1999,16 @@ function buildFixedDomeRoof(
   domeGeo.setIndex(indices);
   domeGeo.computeVertexNormals();
 
-  const domeMat = createRoofPbrMaterial(
-    mats.roof,
-    doc.roof.opacity,
-    doc.lighting,
-    false,
+  const { surfaceMat: domeMat, shadowDepthMat } = buildCanopyMaterialBundle(
+    doc,
     maxAnisotropy,
     14,
-    4
+    4,
+    1
   );
   const domeMesh = new THREE.Mesh(domeGeo, domeMat);
+  domeMesh.name = 'RoofCanopySurface';
+  domeMesh.customDepthMaterial = shadowDepthMat;
   domeMesh.castShadow = true;
   domeMesh.receiveShadow = true;
   domeMesh.renderOrder = 2;
@@ -1909,6 +2145,7 @@ function buildContinuousColumnOrGoalpostRoof(
     innerHalfZ,
     maxStandH,
     avgDepth,
+    canopyOuterOffsetAt,
     standHeightAtNormal,
     standDepthAtNormal,
   } = computeStadiumRingBounds(doc);
@@ -1917,13 +2154,10 @@ function buildContinuousColumnOrGoalpostRoof(
 
   const roofY = maxStandH + Math.max(2.6, doc.roof.heightOffset * 0.78);
   const innerOff = avgDepth * (1 - doc.roof.coverageRatio);
-  const outerOff = avgDepth + 3.2;
+  const outerOffFn = (nx: number, nz: number) => canopyOuterOffsetAt(nx, nz, 3.2);
 
-  const membraneMat = createRoofPbrMaterial(
-    mats.roof,
-    doc.roof.opacity,
-    doc.lighting,
-    doc.shape === 'octagonal_arena',
+  const { surfaceMat: membraneMat, shadowDepthMat } = buildCanopyMaterialBundle(
+    doc,
     maxAnisotropy
   );
   const primaryStructMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
@@ -1933,11 +2167,12 @@ function buildContinuousColumnOrGoalpostRoof(
       ring,
       doc.shape,
       innerOff,
-      outerOff,
+      outerOffFn,
       roofY + (style === 'column_supported' ? -0.4 : 0.4),
       roofY + 0.3,
       crossSectionClip,
-      membraneMat
+      membraneMat,
+      shadowDepthMat
     ),
     buildAnnularCatwalkFloodlights(
       ring,
@@ -1945,7 +2180,8 @@ function buildContinuousColumnOrGoalpostRoof(
       innerOff,
       roofY - 0.65,
       doc.lighting,
-      crossSectionClip
+      crossSectionClip,
+      hasRoofGantryLights(doc)
     )
   );
 
@@ -1957,8 +2193,9 @@ function buildContinuousColumnOrGoalpostRoof(
     const s0 = sampleRoundedBowlRing(ring, t, 0);
     const d0 = standDepthAtNormal(s0.nx, s0.nz);
     const h0 = standHeightAtNormal(s0.nx, s0.nz);
+    const localOuter = outerOffFn(s0.nx, s0.nz);
     const pRear = sampleRoundedBowlRing(ring, t, d0 - 0.3);
-    const pRoof = sampleRoundedBowlRing(ring, t, outerOff - 0.6);
+    const pRoof = sampleRoundedBowlRing(ring, t, localOuter - 0.6);
     group.add(
       createStrutBetween(
         new THREE.Vector3(pRear.x, h0 - 0.6, pRear.z),
@@ -2072,10 +2309,13 @@ function buildSingleStandRoofGroup(
   roofDepth: number,
   frontZ: number,
   rearZ: number,
+  standBackZ: number,
+  concourseWidth: number,
   standTopY: number,
   roofHeight: number,
   doc: StadiumDocument,
   membraneMat: THREE.Material,
+  shadowDepthMat: THREE.MeshDepthMaterial,
   primaryStructMat: THREE.Material,
   secondarySteelMat: THREE.Material,
   openNegEnd: boolean = true,
@@ -2083,6 +2323,9 @@ function buildSingleStandRoofGroup(
 ): THREE.Group {
   const standRoofGroup = new THREE.Group();
   const midZ = (rearZ + frontZ) / 2;
+  const gantryLights = hasRoofGantryLights(doc);
+  const crestSupportZ = Math.min(rearZ - 0.8, standBackZ - 0.6);
+  const groundSupportZ = Math.max(rearZ + 0.6, standBackZ + concourseWidth + 1.0);
 
   if (style === 'none') {
     return standRoofGroup;
@@ -2091,9 +2334,11 @@ function buildSingleStandRoofGroup(
   if (style === 'column_supported') {
     // Classic British / historic roof resting on slender columns planted in the upper rows!
     const deck = new THREE.Mesh(
-      new THREE.BoxGeometry(roofSpan, 0.32, roofDepth),
+      createOrientedRoofBoxGeometry(roofSpan, 0.32, roofDepth),
       membraneMat
     );
+    deck.name = 'RoofCanopySurface';
+    deck.customDepthMaterial = shadowDepthMat;
     deck.position.set(0, roofHeight - 0.2, midZ);
     deck.rotation.x = 0.035; // Slight pitched marquee slope
     deck.castShadow = true;
@@ -2109,7 +2354,13 @@ function buildSingleStandRoofGroup(
     standRoofGroup.add(valance);
 
     standRoofGroup.add(
-      buildStraightCatwalkFloodlights(roofSpan, frontZ, roofHeight - 0.25, doc.lighting)
+      buildStraightCatwalkFloodlights(
+        roofSpan,
+        frontZ,
+        roofHeight - 0.25,
+        doc.lighting,
+        gantryLights
+      )
     );
 
     const colCount = Math.max(6, Math.floor(roofSpan / 13.5));
@@ -2146,10 +2397,10 @@ function buildSingleStandRoofGroup(
           secondarySteelMat,
           4
         ),
-        // Rear support column on back wall
+        // Rear support column on stand crest -> rear roof
         createStrutBetween(
-          new THREE.Vector3(cx, Math.max(0, standTopY - 2.0), rearZ - 1.2),
-          new THREE.Vector3(cx, roofHeight + 0.1, rearZ - 1.2),
+          new THREE.Vector3(cx, Math.max(0, standTopY - 2.0), crestSupportZ),
+          new THREE.Vector3(cx, roofHeight + 0.1, rearZ - 1.0),
           0.26,
           0.3,
           primaryStructMat,
@@ -2164,16 +2415,18 @@ function buildSingleStandRoofGroup(
   if (style === 'goalpost_truss') {
     // Monumental "Poutre-portique" (Goalpost) box-girder resting on 2 corner mega-pylons!
     const deck = new THREE.Mesh(
-      new THREE.BoxGeometry(roofSpan, 0.38, roofDepth),
+      createOrientedRoofBoxGeometry(roofSpan, 0.38, roofDepth),
       membraneMat
     );
+    deck.name = 'RoofCanopySurface';
+    deck.customDepthMaterial = shadowDepthMat;
     deck.position.set(0, roofHeight, midZ);
     deck.castShadow = true;
     deck.receiveShadow = true;
     standRoofGroup.add(deck);
 
     standRoofGroup.add(
-      buildStraightCatwalkFloodlights(roofSpan, frontZ, roofHeight, doc.lighting)
+      buildStraightCatwalkFloodlights(roofSpan, frontZ, roofHeight, doc.lighting, gantryLights)
     );
 
     const pylonX = roofSpan / 2 + 1.8;
@@ -2185,7 +2438,7 @@ function buildSingleStandRoofGroup(
     for (const sSign of [-1, 1] as const) {
       const isOpenEnd = sSign === -1 ? openNegEnd : openPosEnd;
       const px = sSign * (isOpenEnd ? pylonX : roofSpan * 0.5 - 0.6);
-      const pylonZ = isOpenEnd ? girderZ : rearZ + 1.2;
+      const pylonZ = isOpenEnd ? girderZ : groundSupportZ + 0.6;
       const pylon = new THREE.Mesh(
         new THREE.BoxGeometry(3.0, girderTopY + 1.4, 3.2),
         primaryStructMat
@@ -2196,7 +2449,11 @@ function buildSingleStandRoofGroup(
 
       standRoofGroup.add(
         createStrutBetween(
-          new THREE.Vector3(px, isOpenEnd ? 0 : standTopY, isOpenEnd ? rearZ + 1.5 : rearZ - 0.5),
+          new THREE.Vector3(
+            px,
+            isOpenEnd ? 0 : standTopY,
+            isOpenEnd ? groundSupportZ + 0.9 : crestSupportZ
+          ),
           new THREE.Vector3(px, girderTopY, girderZ),
           0.38,
           0.48,
@@ -2251,7 +2508,7 @@ function buildSingleStandRoofGroup(
           secondarySteelMat,
           5
         ),
-        // Transverse roof rafter back to rear stand crest
+        // Transverse roof rafter back to rear canopy edge
         createStrutBetween(
           new THREE.Vector3(xm, roofHeight + 0.2, frontZ + 0.5),
           new THREE.Vector3(xm, roofHeight + 0.2, rearZ - 0.5),
@@ -2261,8 +2518,8 @@ function buildSingleStandRoofGroup(
           5
         ),
         createStrutBetween(
-          new THREE.Vector3(xm, Math.max(0, standTopY - 1.8), rearZ - 1.4),
-          new THREE.Vector3(xm, roofHeight + 0.2, rearZ - 1.4),
+          new THREE.Vector3(xm, Math.max(0, standTopY - 1.8), crestSupportZ),
+          new THREE.Vector3(xm, roofHeight + 0.2, rearZ - 1.0),
           0.26,
           0.3,
           primaryStructMat,
@@ -2276,16 +2533,18 @@ function buildSingleStandRoofGroup(
 
   if (style === 'truss') {
     const deck = new THREE.Mesh(
-      new THREE.BoxGeometry(roofSpan, 0.36, roofDepth),
+      createOrientedRoofBoxGeometry(roofSpan, 0.36, roofDepth),
       membraneMat
     );
+    deck.name = 'RoofCanopySurface';
+    deck.customDepthMaterial = shadowDepthMat;
     deck.position.set(0, roofHeight, midZ);
     deck.castShadow = true;
     deck.receiveShadow = true;
     standRoofGroup.add(deck);
 
     standRoofGroup.add(
-      buildStraightCatwalkFloodlights(roofSpan, frontZ, roofHeight, doc.lighting)
+      buildStraightCatwalkFloodlights(roofSpan, frontZ, roofHeight, doc.lighting, gantryLights)
     );
 
     const rearCols = Math.max(6, Math.floor(roofSpan / 13));
@@ -2293,8 +2552,8 @@ function buildSingleStandRoofGroup(
       const cx = -roofSpan / 2 + 2 + (c * (roofSpan - 4)) / Math.max(1, rearCols - 1);
       standRoofGroup.add(
         createStrutBetween(
-          new THREE.Vector3(cx, Math.max(0, standTopY - 2.2), rearZ - 1.6),
-          new THREE.Vector3(cx, roofHeight + 0.2, rearZ - 1.6),
+          new THREE.Vector3(cx, Math.max(0, standTopY - 2.2), crestSupportZ),
+          new THREE.Vector3(cx, roofHeight + 0.2, rearZ - 1.0),
           0.28,
           0.32,
           primaryStructMat,
@@ -2337,8 +2596,8 @@ function buildSingleStandRoofGroup(
           6
         ),
         createStrutBetween(
-          new THREE.Vector3(gx, 0, rearZ - 0.8),
-          new THREE.Vector3(gx, roofHeight + 0.4, rearZ - 0.8),
+          new THREE.Vector3(gx, 0, groundSupportZ - 0.4),
+          new THREE.Vector3(gx, roofHeight + 0.4, rearZ - 0.6),
           0.42,
           0.52,
           primaryStructMat,
@@ -2396,9 +2655,11 @@ function buildSingleStandRoofGroup(
   // Default stand roof: `cantilever` (rear-anchored cantilever frames without front columns)
   const tiltAngle = -0.055;
   const deckSlab = new THREE.Mesh(
-    new THREE.BoxGeometry(roofSpan, 0.42, roofDepth),
+    createOrientedRoofBoxGeometry(roofSpan, 0.42, roofDepth),
     membraneMat
   );
+  deckSlab.name = 'RoofCanopySurface';
+  deckSlab.customDepthMaterial = shadowDepthMat;
   deckSlab.position.set(0, roofHeight + 0.4, midZ);
   deckSlab.rotation.x = tiltAngle;
   deckSlab.castShadow = true;
@@ -2406,16 +2667,19 @@ function buildSingleStandRoofGroup(
   standRoofGroup.add(deckSlab);
 
   standRoofGroup.add(
-    buildStraightCatwalkFloodlights(roofSpan, frontZ, roofHeight + 0.4, doc.lighting)
+    buildStraightCatwalkFloodlights(roofSpan, frontZ, roofHeight + 0.4, doc.lighting, gantryLights)
   );
 
+  const anchorOnStandCrest = concourseWidth > 0.5 && doc.roof.overConcourse === false;
   const frameCount = Math.max(7, Math.floor(roofSpan / 11));
   for (let i = 0; i < frameCount; i++) {
     const rx = -roofSpan / 2 + 2.5 + (i * (roofSpan - 5)) / Math.max(1, frameCount - 1);
+    const rearPostFootY = anchorOnStandCrest ? Math.max(0, standTopY - 2.2) : 0;
+    const rearPostFootZ = anchorOnStandCrest ? rearZ - 0.1 : groundSupportZ;
 
     standRoofGroup.add(
       createStrutBetween(
-        new THREE.Vector3(rx, 0, rearZ + 0.6),
+        new THREE.Vector3(rx, rearPostFootY, rearPostFootZ),
         new THREE.Vector3(rx, roofHeight + 3.4, rearZ - 0.2),
         0.34,
         0.46,
@@ -2423,8 +2687,8 @@ function buildSingleStandRoofGroup(
         6
       ),
       createStrutBetween(
-        new THREE.Vector3(rx, standTopY - 1.2, rearZ - 2.6),
-        new THREE.Vector3(rx, roofHeight + 0.3, rearZ - 2.6),
+        new THREE.Vector3(rx, standTopY - 1.2, crestSupportZ),
+        new THREE.Vector3(rx, roofHeight + 0.3, crestSupportZ),
         0.26,
         0.26,
         secondarySteelMat,
@@ -2497,6 +2761,16 @@ function clipRoofToSides(doc: StadiumDocument, roof: THREE.Group, sides: StandSi
         return c;
       });
       mesh.material = Array.isArray(mesh.material) ? clipped : clipped[0];
+      if (mesh.customDepthMaterial) {
+        let cd = clones.get(mesh.customDepthMaterial);
+        if (!cd) {
+          cd = mesh.customDepthMaterial.clone();
+          cd.clippingPlanes = sectorPlanes[side];
+          cd.clipShadows = true;
+          clones.set(mesh.customDepthMaterial, cd);
+        }
+        mesh.customDepthMaterial = cd;
+      }
     });
     result.add(sector);
   }
@@ -2610,14 +2884,13 @@ function buildRoofAssembly(
   }
 
   const mats = resolveStadiumMaterials(doc);
-  const membraneMat = createRoofPbrMaterial(
-    mats.roof,
-    doc.roof.opacity,
-    doc.lighting,
-    doc.shape === 'octagonal_arena',
+  const isContShape = isContinuousBowlShape(doc.shape);
+  const { surfaceMat: membraneMat, shadowDepthMat } = buildCanopyMaterialBundle(
+    doc,
     maxAnisotropy,
-    10,
-    2
+    isContShape ? 10 : 4,
+    2,
+    isContShape ? 1 : 4
   );
   const primaryStructMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
   const secondarySteelMat = new THREE.MeshStandardMaterial({
@@ -2627,26 +2900,37 @@ function buildRoofAssembly(
   });
 
   // Continuous Bowl / Octagon / Horseshoe External Spine Cantilever (or Truss fallback on continuous bowl)
-  if (isContinuousBowlShape(doc.shape)) {
-    const { ring, maxStandH, avgDepth, standDepthAtNormal } = computeStadiumRingBounds(doc);
+  if (isContShape) {
+    const {
+      ring,
+      maxStandH,
+      avgDepth,
+      hasConcourse,
+      overConcourse,
+      standHeightAtNormal,
+      canopyOuterOffsetAt,
+      exteriorSupportMinOffsetAt,
+    } = computeStadiumRingBounds(doc);
     const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
     const arcFraction = Math.max(0.25, tEnd - tStart);
     const sunkenDepth = getEffectiveSunkenDepth(doc);
     const groundY = Math.min(sunkenDepth, maxStandH * 0.6);
     const roofY = maxStandH + Math.max(2.2, doc.roof.heightOffset * 0.75);
     const innerOff = avgDepth * (1 - doc.roof.coverageRatio);
-    const outerOff = avgDepth + 3.2;
+    const outerOffFn = (nx: number, nz: number) => canopyOuterOffsetAt(nx, nz, 3.2);
+    const crestAnchored = hasConcourse && !overConcourse;
 
     root.add(
       buildAnnularCanopyMesh(
         ring,
         doc.shape,
         innerOff,
-        outerOff,
+        outerOffFn,
         roofY + 0.9,
         roofY - 0.2,
         crossSectionClip,
-        membraneMat
+        membraneMat,
+        shadowDepthMat
       ),
       buildAnnularCatwalkFloodlights(
         ring,
@@ -2654,7 +2938,8 @@ function buildRoofAssembly(
         innerOff,
         roofY + 0.55,
         doc.lighting,
-        crossSectionClip
+        crossSectionClip,
+        hasRoofGantryLights(doc)
       )
     );
 
@@ -2663,16 +2948,27 @@ function buildRoofAssembly(
       const frac = closed ? i / frameCount : i / Math.max(1, frameCount - 1);
       const t = tStart + frac * (tEnd - tStart);
       const s0 = sampleRoundedBowlRing(ring, t, 0);
-      const localD = standDepthAtNormal(s0.nx, s0.nz);
+      const localOuter = outerOffFn(s0.nx, s0.nz);
+      const minExt = exteriorSupportMinOffsetAt(s0.nx, s0.nz);
 
-      const pGround = sampleRoundedBowlRing(ring, t, Math.max(outerOff + 1.2, localD + 2.2));
-      const pKnee = sampleRoundedBowlRing(ring, t, outerOff + 0.5);
-      const pMid = sampleRoundedBowlRing(ring, t, (innerOff + outerOff) * 0.52);
+      const footOff = crestAnchored
+        ? localOuter + 0.35
+        : Math.max(localOuter + 1.2, minExt);
+      const kneeOff = crestAnchored
+        ? localOuter + 0.2
+        : Math.max(localOuter + 0.5, minExt - 0.4);
+      const footY = crestAnchored
+        ? Math.max(groundY, standHeightAtNormal(s0.nx, s0.nz) - 2.0)
+        : groundY;
+
+      const pGround = sampleRoundedBowlRing(ring, t, footOff);
+      const pKnee = sampleRoundedBowlRing(ring, t, kneeOff);
+      const pMid = sampleRoundedBowlRing(ring, t, (innerOff + localOuter) * 0.52);
       const pTip = sampleRoundedBowlRing(ring, t, innerOff + 1.2);
 
       const spineCurve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(pGround.x, groundY, pGround.z),
-        new THREE.Vector3(pKnee.x, groundY + (roofY - groundY) * 0.72, pKnee.z),
+        new THREE.Vector3(pGround.x, footY, pGround.z),
+        new THREE.Vector3(pKnee.x, footY + (roofY - footY) * 0.72, pKnee.z),
         new THREE.Vector3(pKnee.x, roofY + 3.2, pKnee.z),
         new THREE.Vector3(pMid.x, roofY + 2.6, pMid.z),
         new THREE.Vector3(pTip.x, roofY + 1.1, pTip.z),
@@ -2700,13 +2996,19 @@ function buildRoofAssembly(
   }
 
   // Stand-by-Stand Anchored Roofs (`cantilever`, `truss`, `column_supported`, `goalpost_truss`)
+  const safePitch = clampPitchToTrack(doc.pitch);
+  const concourseWidth = Math.max(0, doc.concourse?.width ?? 0);
+  const hasConcourse = concourseWidth > 0.5;
+  const overConcourse = doc.roof.overConcourse !== false;
   const trackOffsets = getTrackRadialOffset(doc);
+  const cornerModes = resolveAllCorners(doc);
   const rectLayout = computeRectangularCornerLayout({
     shape: doc.shape,
     cornerFill: doc.cornerFill,
+    cornerModes,
     crossSectionClip,
-    pitchLength: doc.pitch.length,
-    pitchWidth: doc.pitch.width,
+    pitchLength: safePitch.length,
+    pitchWidth: safePitch.width,
     endTrackOffset: trackOffsets.endOffset,
     sideTrackOffset: trackOffsets.sideOffset,
     stands: {
@@ -2724,6 +3026,7 @@ function buildRoofAssembly(
         style: RoofStyle;
         frontZ: number;
         rearZ: number;
+        standBackZ: number;
         standTopY: number;
         roofHeight: number;
       }
@@ -2745,14 +3048,22 @@ function buildRoofAssembly(
 
     const standTopY = metrics.maxHeight;
     const roofHeight = standTopY + Math.max(2.4, doc.roof.heightOffset * 0.72);
-    const roofDepth = Math.max(12, metrics.totalDepth * doc.roof.coverageRatio + 3.6);
-    const rearZ = metrics.totalDepth + 2.8;
-    const frontZ = rearZ - roofDepth;
+    const standBackZ = metrics.totalDepth;
+    const baseRearZ = standBackZ + 2.8;
+    const frontZ =
+      baseRearZ - Math.max(12, standBackZ * doc.roof.coverageRatio + 3.6);
+    const rearZ = !hasConcourse
+      ? baseRearZ
+      : overConcourse
+      ? standBackZ + concourseWidth + 0.45
+      : standBackZ + 0.8;
+    const roofDepth = Math.max(8, rearZ - frontZ);
 
     standRoofBounds[side] = {
       style: effectiveStyle,
       frontZ,
       rearZ,
+      standBackZ,
       standTopY,
       roofHeight,
     };
@@ -2763,10 +3074,13 @@ function buildRoofAssembly(
       roofDepth,
       frontZ,
       rearZ,
+      standBackZ,
+      concourseWidth,
       standTopY,
       roofHeight,
       doc,
       membraneMat,
+      shadowDepthMat,
       primaryStructMat,
       secondarySteelMat,
       spanSpec.capNegLocalX,
@@ -2789,16 +3103,25 @@ function buildRoofAssembly(
     root.add(standRoofGroup);
   }
 
-  // Seamless 3D Corner Roof Canopy Quadrants + Hip Cantilever Rafters when corners are closed
-  if (rectLayout.closedCornersMode) {
-    const cornerOrder: CornerQuadrantId[] = ['se', 'sw', 'nw', 'ne'];
-    for (const cId of cornerOrder) {
-      const corner = rectLayout.corners[cId];
-      if (!corner.active) continue;
+  // Seamless 3D Corner Roof Canopy Quadrants + Hip Cantilever Rafters on `filled` & `building` corners
+  const cornerRoofShadowDepth = createRoofShadowDepthMaterial(
+    mats.roof,
+    doc.roof.opacity,
+    doc.roof.skylightMode ?? 'none',
+    doc.roof.skylightRatio ?? 0,
+    1,
+    1
+  );
+  const cornerOrder: CornerQuadrantId[] = ['se', 'sw', 'nw', 'ne'];
+  for (const cId of cornerOrder) {
+    const corner = rectLayout.corners[cId];
+    if (!corner.active || (corner.mode !== 'filled' && corner.mode !== 'building')) {
+      continue;
+    }
 
-      const bA = standRoofBounds[corner.sideA];
-      const bB = standRoofBounds[corner.sideB];
-      if (!bA && !bB) continue;
+    const bA = standRoofBounds[corner.sideA];
+    const bB = standRoofBounds[corner.sideB];
+    if (!bA && !bB) continue;
 
       const boundA = bA ?? bB!;
       const boundB = bB ?? bA!;
@@ -2814,6 +3137,7 @@ function buildRoofAssembly(
       const sliceBounds: {
         frontD: number;
         rearD: number;
+        standBackD: number;
         frontY: number;
         rearY: number;
         standTopY: number;
@@ -2825,12 +3149,14 @@ function buildRoofAssembly(
 
         const frontD = boundA.frontZ + (boundB.frontZ - boundA.frontZ) * w;
         const rearD = boundA.rearZ + (boundB.rearZ - boundA.rearZ) * w;
+        const standBackD =
+          boundA.standBackZ + (boundB.standBackZ - boundA.standBackZ) * w;
         const baseRoofH = boundA.roofHeight + (boundB.roofHeight - boundA.roofHeight) * w;
         const standTopY = boundA.standTopY + (boundB.standTopY - boundA.standTopY) * w;
 
         const frontY = baseRoofH + 0.65;
         const rearY = baseRoofH + 0.05;
-        sliceBounds.push({ frontD, rearD, frontY, rearY, standTopY });
+        sliceBounds.push({ frontD, rearD, standBackD, frontY, rearY, standTopY });
 
         const pIn = sampleCornerQuadrantPoint(corner, u, frontD);
         const pOut = sampleCornerQuadrantPoint(corner, u, rearD);
@@ -2866,25 +3192,33 @@ function buildRoofAssembly(
       canopyGeo.setIndex(idx);
       canopyGeo.computeVertexNormals();
       const canopyMesh = new THREE.Mesh(canopyGeo, membraneMat);
+      canopyMesh.name = 'RoofCanopySurface';
+      canopyMesh.customDepthMaterial = cornerRoofShadowDepth;
       canopyMesh.castShadow = true;
       canopyMesh.receiveShadow = true;
       canopyMesh.renderOrder = 2;
       cornerRoofGroup.add(canopyMesh);
 
       // Radial Hip Cantilever Frames & Rear Structural Columns
+      const cornerCrestAnchored = hasConcourse && !overConcourse;
       const hipCount = corner.facetedThreeBay ? 4 : 5;
       for (let h = 0; h < hipCount; h++) {
         const u = corner.facetedThreeBay ? h / 3 : (h + 0.5) / hipCount;
         const sIdx = Math.min(segs, Math.round(u * segs));
         const sb = sliceBounds[sIdx];
-        const pRearFoot = sampleCornerQuadrantPoint(corner, u, sb.rearD + 0.3);
-        const pRearCrest = sampleCornerQuadrantPoint(corner, u, sb.rearD - 2.2);
+        const groundFootOff = cornerCrestAnchored
+          ? sb.rearD - 0.1
+          : Math.max(sb.rearD + 0.3, sb.standBackD + concourseWidth + 0.8);
+        const rearFootY = cornerCrestAnchored ? Math.max(0, sb.standTopY - 2.2) : 0;
+        const crestOff = Math.min(sb.rearD - 0.8, sb.standBackD - 0.6);
+        const pRearFoot = sampleCornerQuadrantPoint(corner, u, groundFootOff);
+        const pRearCrest = sampleCornerQuadrantPoint(corner, u, crestOff);
         const pMid = sampleCornerQuadrantPoint(corner, u, (sb.frontD + sb.rearD) * 0.5);
         const pFront = sampleCornerQuadrantPoint(corner, u, sb.frontD + 1.8);
 
         cornerRoofGroup.add(
           createStrutBetween(
-            new THREE.Vector3(pRearFoot.x, 0, pRearFoot.z),
+            new THREE.Vector3(pRearFoot.x, rearFootY, pRearFoot.z),
             new THREE.Vector3(pRearFoot.x, sb.rearY + 3.0, pRearFoot.z),
             0.32,
             0.44,
@@ -2919,7 +3253,7 @@ function buildRoofAssembly(
       }
 
       // Corner Catwalk Gantry + Floodlight Pods
-      if (catwalkPts.length >= 3) {
+      if (hasRoofGantryLights(doc) && catwalkPts.length >= 3) {
         const gantryMat = new THREE.MeshStandardMaterial({
           color: 0x1e293b,
           roughness: 0.38,
@@ -2960,7 +3294,6 @@ function buildRoofAssembly(
       }
 
       root.add(cornerRoofGroup);
-    }
   }
 
   return root;

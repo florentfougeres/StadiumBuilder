@@ -1,30 +1,47 @@
 import React, { useMemo } from 'react';
 import {
   calculateStadiumMetrics,
+  getTrackRadialOffset,
   resolveStandRoofStyle,
 } from '../stadium/capacity';
 import {
+  computeRoofShadowDensity,
+  CORNER_MODE_CATALOG,
   ENVELOPE_STYLE_CATALOG,
   FACADE_MATERIAL_CATALOG,
+  FACADE_PATTERN_CATALOG,
+  FLOODLIGHT_RIG_CATALOG,
   PLAZA_MATERIAL_CATALOG,
   resolveStadiumMaterials,
   ROOF_MATERIAL_CATALOG,
   SEAT_CLUB_PALETTES,
   SEAT_MATERIAL_CATALOG,
+  SKYLIGHT_MODE_CATALOG,
   STRUCTURE_MATERIAL_CATALOG,
   TRACK_MATERIAL_CATALOG,
   TURF_MATERIAL_CATALOG,
 } from '../stadium/materials';
 import {
+  CornerId,
+  CornerMode,
   getEffectiveSunkenDepth,
+  getMaxPitchLengthForTrack,
   isContinuousBowlShape,
+  resolveAllCorners,
+  resolveFloodlightRig,
+  resolveStandVomitories,
   RoofStyle,
   SeatingType,
   slopeDegFromRiser,
   StadiumShape,
   StandSide,
+  TRACK_MAX_PITCH_WIDTH_M,
 } from '../stadium/schema';
-import { computeStandSightlines } from '../stadium/sightlines';
+import {
+  computeStandSightlines,
+  DEFAULT_TIER_OVERHANG_M,
+  resolveStandTiers,
+} from '../stadium/sightlines';
 import { useStadiumStore } from '../state/useStadiumStore';
 import { ObjectList } from './ObjectList';
 import { ProjectsPanel } from './ProjectsPanel';
@@ -511,18 +528,32 @@ const fr = (n: number) => n.toLocaleString('fr-FR');
 const fr1 = (n: number) =>
   n.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
+const CORNER_COMPASS_GRID: { id: CornerId; label: string; eastSide?: boolean }[] = [
+  { id: 'nw', label: 'Nord-Ouest' },
+  { id: 'ne', label: 'Nord-Est', eastSide: true },
+  { id: 'sw', label: 'Sud-Ouest' },
+  { id: 'se', label: 'Sud-Est', eastSide: true },
+];
+
 const BowlInspector: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const setShape = useStadiumStore((s) => s.setShape);
   const setSunkenDepth = useStadiumStore((s) => s.setSunkenDepth);
-  const setCornerFill = useStadiumStore((s) => s.setCornerFill);
+  const setCornerMode = useStadiumStore((s) => s.setCornerMode);
+  const setAllCorners = useStadiumStore((s) => s.setAllCorners);
   const updatePitch = useStadiumStore((s) => s.updatePitch);
   const applyTargetCapacity = useStadiumStore((s) => s.applyTargetCapacity);
   const updateConcourse = useStadiumStore((s) => s.updateConcourse);
+  const updateRoof = useStadiumStore((s) => s.updateRoof);
   const metrics = useMemo(() => calculateStadiumMetrics(doc), [doc]);
+  const resolvedCorners = useMemo(() => resolveAllCorners(doc), [doc]);
   const sunken = getEffectiveSunkenDepth(doc);
   const concourseWidth = doc.concourse?.width ?? 0;
-  const concourseHeight = doc.concourse?.heightRatio ?? 1;
+  const concourseHeight = doc.concourse?.heightRatio ?? 0.5;
+  const maxPitchWidth = doc.pitch.hasTrack ? TRACK_MAX_PITCH_WIDTH_M : 75;
+  const maxPitchLength = doc.pitch.hasTrack
+    ? Math.min(115, getMaxPitchLengthForTrack(doc.pitch.width))
+    : 115;
 
   return (
     <>
@@ -534,6 +565,63 @@ const BowlInspector: React.FC = () => {
           onChange={setShape}
           options={SHAPE_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
         />
+      </PanelSection>
+      <PanelSection title="Coins personnalisés">
+        <div className="grid grid-cols-4 gap-1" role="group" aria-label="Appliquer aux quatre coins">
+          {CORNER_MODE_CATALOG.map((cm) => {
+            const allMatch = (['nw', 'ne', 'sw', 'se'] as CornerId[]).every(
+              (cid) => resolvedCorners[cid] === cm.id
+            );
+            return (
+              <button
+                key={cm.id}
+                type="button"
+                aria-pressed={allMatch}
+                onClick={() => setAllCorners(cm.id)}
+                className={`h-7 px-1.5 text-2xs truncate ${choiceClass(allMatch)} ${
+                  allMatch ? 'font-medium' : ''
+                }`}
+              >
+                {cm.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="grid grid-cols-2 gap-2 pt-1">
+          {CORNER_COMPASS_GRID.map((corner) => {
+            const disabled = doc.shape === 'horseshoe' && Boolean(corner.eastSide);
+            const val: CornerMode = disabled ? 'open' : resolvedCorners[corner.id];
+            return (
+              <div
+                key={corner.id}
+                className="p-2 rounded border border-line bg-canvas/50 space-y-1.5"
+              >
+                <div className="flex items-center justify-between text-2xs">
+                  <span className="font-medium text-ink">{corner.label}</span>
+                  <span className="text-ink-faint uppercase tabular-nums">{corner.id}</span>
+                </div>
+                <select
+                  aria-label={`Coin ${corner.label}`}
+                  disabled={disabled}
+                  value={val}
+                  onChange={(e) =>
+                    setCornerMode(corner.id, e.target.value as CornerMode)
+                  }
+                  className="w-full h-7 px-1.5 rounded bg-surface border border-line text-xs text-ink focus:outline-none focus:border-accent disabled:opacity-40"
+                >
+                  {CORNER_MODE_CATALOG.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-2xs text-ink-faint">
+          Configurez chaque angle indépendamment : ouvert, gradins continus, pavillon de loges vitré ou écran géant sur portique.
+        </p>
       </PanelSection>
       <PanelSection title="Capacité">
         <SliderField
@@ -580,12 +668,24 @@ const BowlInspector: React.FC = () => {
           display={concourseHeight >= 0.98 ? 'Jusqu’en haut des tribunes' : `${Math.round(concourseHeight * 100)} %`}
           onChange={(v) => updateConcourse({ heightRatio: v })}
         />
+        <ToggleField
+          label="Toit au-dessus de la coursive"
+          hint="Prolonge le bord extérieur de toutes les toitures jusqu’à la façade"
+          disabled={concourseWidth <= 0 || doc.roof.style === 'none'}
+          checked={doc.roof.overConcourse !== false}
+          onChange={(overConcourse) => updateRoof({ overConcourse })}
+        />
       </PanelSection>
       <PanelSection title="Terrain">
         <SliderField
           label="Longueur"
+          hint={
+            doc.pitch.hasTrack
+              ? `Limitée à ${maxPitchLength} m pour rester dans la corde de 36,5 m`
+              : undefined
+          }
           min={95}
-          max={115}
+          max={maxPitchLength}
           step={1}
           value={doc.pitch.length}
           display={`${doc.pitch.length} m`}
@@ -593,8 +693,13 @@ const BowlInspector: React.FC = () => {
         />
         <SliderField
           label="Largeur"
+          hint={
+            doc.pitch.hasTrack
+              ? `Limitée à ${TRACK_MAX_PITCH_WIDTH_M} m à l’intérieur de la piste`
+              : undefined
+          }
           min={60}
-          max={75}
+          max={maxPitchWidth}
           step={1}
           value={doc.pitch.width}
           display={`${doc.pitch.width} m`}
@@ -612,22 +717,26 @@ const BowlInspector: React.FC = () => {
         />
         <ToggleField
           label="Piste d’athlétisme"
+          hint="400 m officiel (droites 84,39 m · rayon 36,5 m · couloirs 1,22 m)"
           checked={doc.pitch.hasTrack}
           onChange={(v) => updatePitch({ hasTrack: v })}
         />
+        {doc.pitch.hasTrack && (
+          <SliderField
+            label="Couloirs de la piste"
+            min={6}
+            max={9}
+            step={1}
+            value={doc.pitch.trackLanes}
+            display={`${doc.pitch.trackLanes} couloirs · 400 m`}
+            onChange={(trackLanes) => updatePitch({ trackLanes })}
+          />
+        )}
         <ToggleField
           label="Panneaux LED publicitaires"
           checked={doc.pitch.adBoards}
           onChange={(v) => updatePitch({ adBoards: v })}
         />
-        {doc.shape === 'english_rectangular' && (
-          <ToggleField label="Virages dans les coins" checked={doc.cornerFill} onChange={setCornerFill} />
-        )}
-        {doc.shape === 'compact_urban' && (
-          <p className="text-2xs text-ink-faint">
-            Les coins sont fermés par des virages étagés et des tours d’accès.
-          </p>
-        )}
       </PanelSection>
     </>
   );
@@ -680,7 +789,10 @@ const SightlineProfile: React.FC<{
 const StandInspector: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const side = useStadiumStore((s) => s.activeStandTab);
+  const setActiveStandTab = useStadiumStore((s) => s.setActiveStandTab);
   const updateStand = useStadiumStore((s) => s.updateStand);
+  const updateStandTier = useStadiumStore((s) => s.updateStandTier);
+  const resetStandTiersUniform = useStadiumStore((s) => s.resetStandTiersUniform);
   const updateAllStands = useStadiumStore((s) => s.updateAllStands);
   const convertStandToKopWall = useStadiumStore((s) => s.convertStandToKopWall);
   const metrics = useMemo(() => calculateStadiumMetrics(doc), [doc]);
@@ -690,15 +802,20 @@ const StandInspector: React.FC = () => {
   const roofStyle = resolveStandRoofStyle(doc, side);
   const slope = stand.slopeAngleDeg ?? slopeDegFromRiser(stand.riserHeight, stand.rowDepth);
   const off = !stand.enabled;
+  const resolvedTiers = useMemo(() => resolveStandTiers(stand), [stand]);
+  const vomSpec = useMemo(() => resolveStandVomitories(stand), [stand]);
+  const tierOverhang = stand.tierOverhang ?? DEFAULT_TIER_OVERHANG_M;
+  const hasAsymmetricTiers = Boolean(stand.tierConfigs && stand.tierConfigs.length > 0);
+
+  const trackOffsets = useMemo(() => getTrackRadialOffset(doc), [doc]);
+  const trackExtra =
+    side === 'north' || side === 'south'
+      ? trackOffsets.sideOffset
+      : trackOffsets.endOffset;
 
   const sightlines = useMemo(
-    () =>
-      computeStandSightlines(
-        stand,
-        doc.pitch.hasTrack ? doc.pitch.trackLanes * 1.22 + 2.5 : 0,
-        roofStyle
-      ),
-    [stand, doc.pitch.hasTrack, doc.pitch.trackLanes, roofStyle]
+    () => computeStandSightlines(stand, trackExtra, roofStyle),
+    [stand, trackExtra, roofStyle]
   );
 
   const tallestOther = (['north', 'south', 'east', 'west'] as StandSide[])
@@ -722,7 +839,16 @@ const StandInspector: React.FC = () => {
           />
         }
       />
-      <PanelSection title="Profil">
+      <div className="px-4 py-2 border-b border-line">
+        <Segmented
+          label="Sélection de la tribune"
+          size="sm"
+          value={side}
+          onChange={setActiveStandTab}
+          options={STAND_TABS}
+        />
+      </div>
+      <PanelSection title="Profil général">
         <FieldRow label="Niveaux">
           <Segmented
             label="Nombre de niveaux"
@@ -734,10 +860,10 @@ const StandInspector: React.FC = () => {
           />
         </FieldRow>
         <SliderField
-          label="Pente"
+          label="Pente globale"
           hint="28° est la norme courante ; au-delà de 35° la tribune devient un mur"
-          min={18}
-          max={38}
+          min={16}
+          max={42}
           step={0.5}
           disabled={off}
           value={slope}
@@ -745,7 +871,7 @@ const StandInspector: React.FC = () => {
           onChange={(v) => updateStand(side, { slopeAngleDeg: v })}
         />
         <SliderField
-          label="Rangs"
+          label="Rangs totaux"
           min={8}
           max={108}
           step={1}
@@ -763,6 +889,155 @@ const StandInspector: React.FC = () => {
           value={stand.distanceToPitch}
           display={`${fr1(stand.distanceToPitch)} m`}
           onChange={(v) => updateStand(side, { distanceToPitch: v })}
+        />
+        {stand.tiers >= 2 && (
+          <SliderField
+            label="Avancée en encorbellement"
+            hint="Avance les niveaux supérieurs au-dessus du niveau inférieur pour rapprocher le public"
+            min={0}
+            max={7.5}
+            step={0.25}
+            disabled={off}
+            value={tierOverhang}
+            display={tierOverhang > 0 ? `+${fr1(tierOverhang)} m` : 'Aligné'}
+            onChange={(v) => updateStand(side, { tierOverhang: v })}
+          />
+        )}
+      </PanelSection>
+      {stand.tiers >= 2 && (
+        <PanelSection title="Gradins asymétriques (par niveau)">
+          <div className="flex items-center justify-between text-2xs">
+            <span className="text-ink-faint">
+              {hasAsymmetricTiers
+                ? 'Profil indépendant actif par anneau'
+                : 'Réglage séparé des rangs, pentes et surplombs'}
+            </span>
+            {hasAsymmetricTiers && (
+              <Button disabled={off} onClick={() => resetStandTiersUniform(side)}>
+                Réuniformiser
+              </Button>
+            )}
+          </div>
+          <div className="space-y-2">
+            {resolvedTiers.map((tSpec) => (
+              <div
+                key={tSpec.tierIndex}
+                className="p-2.5 rounded border border-line bg-canvas/50 space-y-2"
+              >
+                <div className="flex items-baseline justify-between text-xs">
+                  <span className="font-medium text-ink">
+                    Niveau {tSpec.tierIndex + 1}
+                    {tSpec.tierIndex === 0
+                      ? ' (bas)'
+                      : tSpec.tierIndex === resolvedTiers.length - 1
+                      ? ' (haut)'
+                      : ''}
+                  </span>
+                  <span className="text-2xs text-ink-faint tabular-nums">
+                    {tSpec.rows} rangs · {fr1(tSpec.slopeAngleDeg)}° · marche{' '}
+                    {Math.round(tSpec.riserHeight * 100)} cm
+                  </span>
+                </div>
+                <SliderField
+                  label={`Rangs N${tSpec.tierIndex + 1}`}
+                  min={4}
+                  max={60}
+                  step={1}
+                  disabled={off}
+                  value={tSpec.rows}
+                  display={`${tSpec.rows} rangs`}
+                  onChange={(r) =>
+                    updateStandTier(side, tSpec.tierIndex, { rows: r })
+                  }
+                />
+                <SliderField
+                  label={`Pente N${tSpec.tierIndex + 1}`}
+                  min={16}
+                  max={42}
+                  step={0.5}
+                  disabled={off}
+                  value={tSpec.slopeAngleDeg}
+                  display={`${fr1(tSpec.slopeAngleDeg)}°`}
+                  onChange={(ang) =>
+                    updateStandTier(side, tSpec.tierIndex, { slopeAngleDeg: ang })
+                  }
+                />
+                {tSpec.tierIndex > 0 && (
+                  <SliderField
+                    label={`Encorbellement N${tSpec.tierIndex + 1}`}
+                    min={0}
+                    max={7.5}
+                    step={0.25}
+                    disabled={off}
+                    value={tSpec.overhang}
+                    display={tSpec.overhang > 0 ? `+${fr1(tSpec.overhang)} m` : '0,0 m'}
+                    onChange={(ov) =>
+                      updateStandTier(side, tSpec.tierIndex, { overhang: ov })
+                    }
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </PanelSection>
+      )}
+      <PanelSection title="Vomitoires et escaliers">
+        <SliderField
+          label="Nombre de vomitoires"
+          hint="Ouvertures réelles découpées dans les gradins vers les coursives"
+          min={0}
+          max={10}
+          step={1}
+          disabled={off}
+          value={vomSpec.count}
+          display={vomSpec.count === 0 ? 'Aucun' : `${vomSpec.count} ouvertures`}
+          onChange={(v) => updateStand(side, { vomitoryCount: v })}
+        />
+        <SliderField
+          label="Position verticale"
+          min={0.2}
+          max={0.8}
+          step={0.05}
+          scale={100}
+          disabled={off || vomSpec.count === 0}
+          value={vomSpec.rowRatio}
+          display={`${Math.round(vomSpec.rowRatio * 100)} % du niveau`}
+          onChange={(v) => updateStand(side, { vomitoryRowRatio: v })}
+        />
+        <SliderField
+          label="Décalage latéral"
+          min={-0.25}
+          max={0.25}
+          step={0.05}
+          scale={100}
+          disabled={off || vomSpec.count === 0}
+          value={vomSpec.offsetRatio}
+          display={
+            Math.abs(vomSpec.offsetRatio) < 0.01
+              ? 'Centré'
+              : `${vomSpec.offsetRatio > 0 ? '+' : ''}${Math.round(vomSpec.offsetRatio * 100)} %`
+          }
+          onChange={(v) => updateStand(side, { vomitoryOffsetRatio: v })}
+        />
+        <SliderField
+          label="Escaliers radiaux"
+          min={0}
+          max={16}
+          step={1}
+          disabled={off}
+          value={stand.aisleCount}
+          display={stand.aisleCount === 0 ? 'Aucun' : `${stand.aisleCount} volées`}
+          onChange={(v) => updateStand(side, { aisleCount: v })}
+        />
+        <SliderField
+          label="Largeur d’escalier"
+          min={0.9}
+          max={2.4}
+          step={0.1}
+          disabled={off || stand.aisleCount === 0}
+          value={stand.aisleWidth}
+          display={`${fr1(stand.aisleWidth)} m`}
+          onChange={(v) => updateStand(side, { aisleWidth: v })}
         />
       </PanelSection>
       <PanelSection title="Places">
@@ -810,6 +1085,10 @@ const StandInspector: React.FC = () => {
             <span className="text-ink-faint tabular-nums"> · moy. {sightlines.avgCValueMm} mm</span>
           </span>
         </div>
+        <div className="flex items-baseline justify-between text-xs">
+          <span className="text-ink-muted">Distance moy. au terrain</span>
+          <span className="text-ink tabular-nums">{fr1(sightlines.avgDistanceM)} m</span>
+        </div>
         <SightlineProfile points={sightlines.points} />
       </PanelSection>
       <PanelSection title="Avancé" defaultOpen={false}>
@@ -835,16 +1114,6 @@ const StandInspector: React.FC = () => {
           scale={100}
           onChange={(v) => updateStand(side, { seatWidth: v })}
         />
-        <SliderField
-          label="Allées et vomitoires"
-          min={2}
-          max={14}
-          step={1}
-          disabled={off}
-          value={stand.aisleCount}
-          display={`${stand.aisleCount} · marche ${Math.round(stand.riserHeight * 100)} cm`}
-          onChange={(v) => updateStand(side, { aisleCount: v })}
-        />
         <div className="flex flex-wrap gap-2 pt-1">
           <Button
             disabled={off}
@@ -858,6 +1127,14 @@ const StandInspector: React.FC = () => {
                 seatWidth: stand.seatWidth,
                 distanceToPitch: stand.distanceToPitch,
                 aisleCount: stand.aisleCount,
+                aisleWidth: stand.aisleWidth,
+                vomitoryCount: stand.vomitoryCount,
+                vomitoryRowRatio: stand.vomitoryRowRatio,
+                vomitoryOffsetRatio: stand.vomitoryOffsetRatio,
+                tierOverhang: stand.tierOverhang,
+                tierConfigs: stand.tierConfigs
+                  ? stand.tierConfigs.map((tc) => ({ ...tc }))
+                  : undefined,
               })
             }
           >
@@ -883,22 +1160,52 @@ const StandInspector: React.FC = () => {
 const COVERED_SIDE_ORDER: StandSide[] = ['north', 'south', 'east', 'west'];
 
 const RoofInspector: React.FC = () => {
-  const roof = useStadiumStore((s) => s.doc.roof);
-  const shape = useStadiumStore((s) => s.doc.shape);
+  const doc = useStadiumStore((s) => s.doc);
+  const roof = doc.roof;
+  const shape = doc.shape;
   const updateRoof = useStadiumStore((s) => s.updateRoof);
+  const updateMaterials = useStadiumStore((s) => s.updateMaterials);
+  const setFloodlightRig = useStadiumStore((s) => s.setFloodlightRig);
+  const mats = useMemo(() => resolveStadiumMaterials(doc), [doc]);
+  const rigMode = resolveFloodlightRig(doc);
   const none = roof.style === 'none';
   const covered = roof.coveredSides ?? COVERED_SIDE_ORDER;
+  const skyMode = roof.skylightMode ?? 'none';
+  const skyRatio = roof.skylightRatio ?? 0.35;
+
   const toggleSide = (side: StandSide) => {
     const next = covered.includes(side) ? covered.filter((s) => s !== side) : [...covered, side];
-    // Keep at least one stand covered; "Découverte" is the way to remove the roof entirely.
     if (next.length === 0) return;
     updateRoof({ coveredSides: next.length === 4 ? undefined : COVERED_SIDE_ORDER.filter((s) => next.includes(s)) });
   };
 
+  const baseShadowDensity = none ? 0 : computeRoofShadowDensity(mats.roof, roof.opacity);
+  const skyOpenShare = skyMode === 'none' ? 0 : Math.min(0.68, skyRatio * 0.82);
+  const solarTransmissionPct = none
+    ? 100
+    : Math.round(
+        ((1 - baseShadowDensity) * (1 - skyOpenShare) + 0.94 * skyOpenShare) * 100
+      );
+
   return (
     <>
-      <PanelHeader title="Toiture" meta={ROOF_OPTIONS.find((o) => o.id === roof.style)?.label} />
-      <PanelSection title="Système">
+      <PanelHeader
+        title="Toiture et éclairage"
+        meta={ROOF_OPTIONS.find((o) => o.id === roof.style)?.label}
+      />
+      <PanelSection title="Éclairage du terrain">
+        <OptionList
+          label="Système de projecteurs"
+          value={rigMode}
+          onChange={setFloodlightRig}
+          options={FLOODLIGHT_RIG_CATALOG.map((o) => ({
+            id: o.id,
+            label: o.label,
+            detail: o.subtitle,
+          }))}
+        />
+      </PanelSection>
+      <PanelSection title="Système de toiture">
         <OptionList
           label="Système de toiture"
           value={roof.style}
@@ -936,6 +1243,96 @@ const RoofInspector: React.FC = () => {
           </p>
         </PanelSection>
       )}
+      <PanelSection title="Transparence et percées de lumière">
+        <SliderField
+          label="Opacité de la couverture"
+          hint="Baissez pour du verre ou de l’ETFE translucide laissant filtrer le soleil sur la pelouse"
+          min={0.15}
+          max={1}
+          step={0.05}
+          disabled={none}
+          value={roof.opacity}
+          display={`${Math.round(roof.opacity * 100)} %`}
+          scale={100}
+          onChange={(v) => updateRoof({ opacity: v })}
+        />
+        <div className="grid grid-cols-3 gap-1" role="group" aria-label="Vitrages rapides">
+          <button
+            type="button"
+            disabled={none}
+            onClick={() => {
+              updateMaterials({ roof: 'polycarbonate_glass' });
+              updateRoof({ opacity: 0.35 });
+            }}
+            className={`h-7 px-1.5 text-2xs truncate ${choiceClass(
+              mats.roof === 'polycarbonate_glass' && roof.opacity <= 0.45
+            )} disabled:opacity-40`}
+          >
+            Verre clair
+          </button>
+          <button
+            type="button"
+            disabled={none}
+            onClick={() => {
+              updateMaterials({ roof: 'etfe_cushions' });
+              updateRoof({ opacity: 0.55 });
+            }}
+            className={`h-7 px-1.5 text-2xs truncate ${choiceClass(
+              mats.roof === 'etfe_cushions' && roof.opacity <= 0.65
+            )} disabled:opacity-40`}
+          >
+            Coussins ETFE
+          </button>
+          <button
+            type="button"
+            disabled={none}
+            onClick={() => {
+              updateMaterials({ roof: 'ptfe_membrane' });
+              updateRoof({ opacity: 0.92 });
+            }}
+            className={`h-7 px-1.5 text-2xs truncate ${choiceClass(
+              mats.roof === 'ptfe_membrane' && roof.opacity >= 0.85
+            )} disabled:opacity-40`}
+          >
+            Membrane PTFE
+          </button>
+        </div>
+        <OptionList
+          label="Percées de lumière"
+          disabled={none}
+          value={skyMode}
+          onChange={(mode) =>
+            updateRoof({
+              skylightMode: mode,
+              skylightRatio:
+                mode !== 'none' && (!roof.skylightRatio || roof.skylightRatio < 0.1)
+                  ? 0.35
+                  : roof.skylightRatio,
+            })
+          }
+          options={SKYLIGHT_MODE_CATALOG.map((o) => ({
+            id: o.id,
+            label: o.label,
+            detail: o.subtitle,
+          }))}
+        />
+        {skyMode !== 'none' && !none && (
+          <SliderField
+            label="Ouverture des percées"
+            min={0.1}
+            max={0.7}
+            step={0.05}
+            scale={100}
+            value={skyRatio}
+            display={`${Math.round(skyRatio * 100)} %`}
+            onChange={(v) => updateRoof({ skylightRatio: v })}
+          />
+        )}
+        <div className="flex items-baseline justify-between pt-1 text-xs">
+          <span className="text-ink-muted">Lumière transmise sous toiture</span>
+          <span className="text-ink tabular-nums">{solarTransmissionPct} %</span>
+        </div>
+      </PanelSection>
       <PanelSection title="Dimensions">
         <SliderField
           label="Hauteur au-dessus des gradins"
@@ -958,16 +1355,12 @@ const RoofInspector: React.FC = () => {
           scale={100}
           onChange={(v) => updateRoof({ coverageRatio: v })}
         />
-        <SliderField
-          label="Opacité de la membrane"
-          min={0.5}
-          max={1}
-          step={0.05}
+        <ToggleField
+          label="Toit au-dessus de la coursive"
+          hint="Quand activé, prolonge le bord extérieur de la toiture jusqu’à la façade"
           disabled={none}
-          value={roof.opacity}
-          display={`${Math.round(roof.opacity * 100)} %`}
-          scale={100}
-          onChange={(v) => updateRoof({ opacity: v })}
+          checked={roof.overConcourse !== false}
+          onChange={(overConcourse) => updateRoof({ overConcourse })}
         />
       </PanelSection>
     </>
@@ -990,10 +1383,45 @@ const MaterialsInspector: React.FC = () => {
   const updateMaterials = useStadiumStore((s) => s.updateMaterials);
   const updateColors = useStadiumStore((s) => s.updateColors);
   const mats = useMemo(() => resolveStadiumMaterials(doc), [doc]);
+  const pattern = mats.facadePattern ?? 'none';
+  const density = mats.facadeDensity ?? 1.0;
+  const depth = mats.facadeDepth ?? 0.85;
 
   return (
     <>
       <PanelHeader title="Façade et matériaux" />
+      <PanelSection title="Façade paramétrique">
+        <OptionList
+          label="Motif géométrique 3D"
+          value={pattern}
+          onChange={(facadePattern) => updateMaterials({ facadePattern })}
+          options={FACADE_PATTERN_CATALOG.map((o) => ({
+            id: o.id,
+            label: o.label,
+            detail: o.subtitle,
+          }))}
+        />
+        <SliderField
+          label="Densité du motif"
+          min={0.4}
+          max={2.2}
+          step={0.1}
+          disabled={pattern === 'none'}
+          value={density}
+          display={`${fr1(density)}×`}
+          onChange={(facadeDensity) => updateMaterials({ facadeDensity })}
+        />
+        <SliderField
+          label="Profondeur du relief"
+          min={0.15}
+          max={2.4}
+          step={0.05}
+          disabled={pattern === 'none'}
+          value={depth}
+          display={`${fr1(depth)} m`}
+          onChange={(facadeDepth) => updateMaterials({ facadeDepth })}
+        />
+      </PanelSection>
       <PanelSection title="Enveloppe">
         <OptionList
           label="Enveloppe extérieure"

@@ -12,12 +12,18 @@ import {
 import { createPresetDocument } from '../stadium/presets';
 import {
   CameraPresetMode,
+  clampPitchToTrack,
+  ConcourseConfig,
+  CornerId,
+  CornerMode,
   DEFAULT_STADIUM_MATERIALS,
+  FloodlightRigMode,
   LightingMode,
   PitchConfig,
   PlacedObject,
   PlacedObjectType,
-  ConcourseConfig,
+  resolveAllCorners,
+  riserFromSlopeDeg,
   RoofConfig,
   StadiumColors,
   StadiumDocument,
@@ -25,8 +31,10 @@ import {
   StadiumShape,
   StandConfig,
   StandSide,
+  StandTierConfig,
   TransformMode,
 } from '../stadium/schema';
+import { resolveStandTiers } from '../stadium/sightlines';
 import {
   deleteProjectFromDb,
   listProjectsFromDb,
@@ -83,9 +91,18 @@ export interface StadiumStoreState {
   setShape: (shape: StadiumShape) => void;
   setSunkenDepth: (depth: number) => void;
   setCornerFill: (fill: boolean) => void;
+  setCornerMode: (corner: CornerId, mode: CornerMode) => void;
+  setAllCorners: (mode: CornerMode) => void;
+  setFloodlightRig: (mode: FloodlightRigMode) => void;
   setLighting: (lighting: LightingMode) => void;
   updatePitch: (patch: Partial<PitchConfig>) => void;
   updateStand: (side: StandSide, patch: Partial<StandConfig>) => void;
+  updateStandTier: (
+    side: StandSide,
+    tierIndex: number,
+    patch: Partial<StandTierConfig>
+  ) => void;
+  resetStandTiersUniform: (side: StandSide) => void;
   convertStandToKopWall: (side: StandSide) => void;
   updateAllStands: (patch: Partial<StandConfig>) => void;
   applyTargetCapacity: (targetCapacity: number) => void;
@@ -152,14 +169,23 @@ function sanitizeLegacyNames(doc: StadiumDocument): void {
   });
 }
 
-/** Upgrades documents saved by older versions (renamed roof styles, missing materials). */
-function migrateLegacyDocument(doc: StadiumDocument): StadiumDocument {
+/**
+ * Upgrades documents saved by older versions:
+ * - renames legacy roof styles
+ * - fills missing PBR materials and `overConcourse = true` default
+ * - clamps pitch dimensions inside the 400 m track kerb when `hasTrack` is enabled
+ */
+export function normalizeStadiumDocument(doc: StadiumDocument): StadiumDocument {
   const legacyRoofStyle = doc.roof.style as string;
   if (legacyRoofStyle === 'bowl_canopy') {
     doc.roof.style = 'bicycle_wheel';
   } else if (legacyRoofStyle === 'retractable_arch') {
     doc.roof.style = 'retractable';
   }
+  if (doc.roof.overConcourse === undefined) {
+    doc.roof.overConcourse = true;
+  }
+  doc.pitch = clampPitchToTrack(doc.pitch);
   doc.materials = {
     ...DEFAULT_STADIUM_MATERIALS,
     ...(doc.materials ?? {}),
@@ -201,7 +227,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     initFromDb: async () => {
       const projects = await listProjectsFromDb();
       if (projects.length > 0) {
-        const restored = migrateLegacyDocument(cloneDocument(projects[0].document));
+        const restored = normalizeStadiumDocument(cloneDocument(projects[0].document));
         set({
           doc: restored,
           savedProjects: projects,
@@ -237,7 +263,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     loadDocument: (incoming) => {
       const { doc, history } = get();
       const nextHistory = pushHistorySnapshot(history, doc);
-      const clean = migrateLegacyDocument(cloneDocument(incoming));
+      const clean = normalizeStadiumDocument(cloneDocument(incoming));
       clean.updatedAt = Date.now();
       set({
         doc: clean,
@@ -274,6 +300,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
       commitChange((d) => {
         const prevShape = d.shape;
         d.shape = shape;
+        d.corners = undefined;
 
         if (prevShape === 'horseshoe' && shape !== 'horseshoe') {
           d.stands.east.enabled = true;
@@ -348,6 +375,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
           d.cornerFill = false;
           if (d.roof.style === 'bicycle_wheel') d.roof.style = 'truss';
         }
+        d.pitch = clampPitchToTrack(d.pitch);
       }),
 
     setSunkenDepth: (depth) =>
@@ -358,6 +386,32 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     setCornerFill: (fill) =>
       commitChange((d) => {
         d.cornerFill = fill;
+        if (d.corners) {
+          const mode: CornerMode = fill ? 'filled' : 'open';
+          d.corners = { nw: mode, ne: mode, sw: mode, se: mode };
+        }
+      }),
+
+    setCornerMode: (corner, mode) =>
+      commitChange((d) => {
+        const current = resolveAllCorners(d);
+        const nextCorners: Record<CornerId, CornerMode> = {
+          ...current,
+          [corner]: mode,
+        };
+        d.corners = nextCorners;
+        d.cornerFill = Object.values(nextCorners).some((m) => m !== 'open');
+      }),
+
+    setAllCorners: (mode) =>
+      commitChange((d) => {
+        d.corners = { nw: mode, ne: mode, sw: mode, se: mode };
+        d.cornerFill = mode !== 'open';
+      }),
+
+    setFloodlightRig: (mode) =>
+      commitChange((d) => {
+        d.floodlightRig = mode;
       }),
 
     setLighting: (lighting) =>
@@ -367,7 +421,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
 
     updatePitch: (patch) =>
       commitChange((d) => {
-        d.pitch = { ...d.pitch, ...patch };
+        d.pitch = clampPitchToTrack({ ...d.pitch, ...patch });
       }),
 
     updateStand: (side, patch) =>
@@ -376,22 +430,57 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
         const next = { ...prev, ...patch };
         if (patch.tiers !== undefined && patch.rows === undefined && patch.tiers !== prev.tiers) {
           if (patch.tiers === 1 && prev.tiers > 1) {
-            // Keep wall/Kop height generous when switching to a single continuous ring
             const kopPatch = computeKopWallStandPatch(
               d,
               side,
               next.seatingType ?? 'seated'
             );
             next.rows = kopPatch.rows ?? prev.rows;
+            next.tierConfigs = undefined;
           } else {
             const deltaRows = (patch.tiers - prev.tiers) * 14;
             next.rows = Math.max(patch.tiers * 8, Math.min(108, prev.rows + deltaRows));
+            if (prev.tierConfigs && prev.tierConfigs.length > 0) {
+              const resized: StandTierConfig[] = prev.tierConfigs
+                .slice(0, patch.tiers)
+                .map((tc) => ({ ...tc }));
+              while (resized.length < patch.tiers) {
+                const idx = resized.length;
+                resized.push({
+                  rows: 14,
+                  slopeAngleDeg: Math.min(40, (prev.slopeAngleDeg ?? 28) + idx * 1.8),
+                });
+              }
+              next.tierConfigs = resized;
+              next.rows = resized.reduce((sum, tc) => sum + tc.rows, 0);
+            }
+          }
+        } else if (
+          prev.tierConfigs &&
+          prev.tierConfigs.length === next.tiers &&
+          patch.tierConfigs === undefined
+        ) {
+          if (patch.rows !== undefined && patch.rows !== prev.rows) {
+            const prevSum = Math.max(1, prev.tierConfigs.reduce((s, tc) => s + tc.rows, 0));
+            const scale = patch.rows / prevSum;
+            next.tierConfigs = prev.tierConfigs.map((tc) => ({
+              ...tc,
+              rows: Math.max(3, Math.round(tc.rows * scale)),
+            }));
+            next.rows = next.tierConfigs.reduce((s, tc) => s + tc.rows, 0);
+          }
+          if (patch.slopeAngleDeg !== undefined && prev.slopeAngleDeg !== undefined) {
+            const deltaSlope = patch.slopeAngleDeg - prev.slopeAngleDeg;
+            next.tierConfigs = (next.tierConfigs ?? prev.tierConfigs).map((tc) => ({
+              ...tc,
+              slopeAngleDeg: Number(
+                Math.max(15, Math.min(42, tc.slopeAngleDeg + deltaSlope)).toFixed(1)
+              ),
+            }));
           }
         }
         if (patch.slopeAngleDeg !== undefined) {
-          next.riserHeight = Number(
-            (Math.tan((patch.slopeAngleDeg * Math.PI) / 180) * next.rowDepth).toFixed(3)
-          );
+          next.riserHeight = riserFromSlopeDeg(patch.slopeAngleDeg, next.rowDepth);
         } else if (patch.riserHeight !== undefined || patch.rowDepth !== undefined) {
           next.slopeAngleDeg = Number(
             ((Math.atan2(next.riserHeight, next.rowDepth) * 180) / Math.PI).toFixed(1)
@@ -400,12 +489,57 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
         d.stands[side] = next;
       }),
 
+    updateStandTier: (side, tierIndex, patch) =>
+      commitChange((d) => {
+        const prev = d.stands[side];
+        const resolved = resolveStandTiers(prev);
+        const configs: StandTierConfig[] = resolved.map((spec, idx) => ({
+          rows: spec.rows,
+          slopeAngleDeg: spec.slopeAngleDeg,
+          overhang: prev.tierConfigs?.[idx]?.overhang,
+        }));
+        if (tierIndex < 0 || tierIndex >= configs.length) return;
+
+        const target = { ...configs[tierIndex], ...patch };
+        target.rows = Math.max(3, Math.min(72, Math.round(target.rows)));
+        target.slopeAngleDeg = Number(
+          Math.max(15, Math.min(42, target.slopeAngleDeg)).toFixed(1)
+        );
+        if (target.overhang !== undefined) {
+          target.overhang = Number(Math.max(0, Math.min(8, target.overhang)).toFixed(2));
+        }
+        configs[tierIndex] = target;
+
+        const totalRows = configs.reduce((sum, tc) => sum + tc.rows, 0);
+        const weightedSlope =
+          configs.reduce((sum, tc) => sum + tc.slopeAngleDeg * tc.rows, 0) /
+          Math.max(1, totalRows);
+        const roundedSlope = Number(weightedSlope.toFixed(1));
+
+        d.stands[side] = {
+          ...prev,
+          rows: totalRows,
+          slopeAngleDeg: roundedSlope,
+          riserHeight: riserFromSlopeDeg(roundedSlope, prev.rowDepth),
+          tierConfigs: configs,
+        };
+      }),
+
+    resetStandTiersUniform: (side) =>
+      commitChange((d) => {
+        d.stands[side] = {
+          ...d.stands[side],
+          tierConfigs: undefined,
+        };
+      }),
+
     convertStandToKopWall: (side) =>
       commitChange((d) => {
         const kopPatch = computeKopWallStandPatch(d, side, 'safe_standing');
         d.stands[side] = {
           ...d.stands[side],
           ...kopPatch,
+          tierConfigs: undefined,
         };
       }),
 
@@ -483,7 +617,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
 
     updateConcourse: (patch) =>
       commitChange((d) => {
-        d.concourse = { width: 0, heightRatio: 1, ...d.concourse, ...patch };
+        d.concourse = { width: 0, heightRatio: 0.5, ...d.concourse, ...patch };
       }),
 
     updateColors: (patch) =>

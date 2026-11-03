@@ -1,6 +1,8 @@
 import { jsPDF } from 'jspdf';
 import { calculateStadiumMetrics, getTrackRadialOffset } from '../stadium/capacity';
 import {
+  clampPitchToTrack,
+  getTrackGeometry,
   isContinuousBowlShape,
   STADIUM_SHAPE_LABELS,
   StadiumDocument,
@@ -60,6 +62,8 @@ export function exportArchitecturalPlanPdf(doc: StadiumDocument): void {
   const cy = planY + planH / 2;
   const scale = 0.56; // 1 meter = 0.56 mm
 
+  const safePitch = clampPitchToTrack(doc.pitch);
+  const track = getTrackGeometry(safePitch);
   const trackOffsets = getTrackRadialOffset(doc);
 
   // 1. Draw Stands / Bowl in 2D Plan
@@ -69,20 +73,26 @@ export function exportArchitecturalPlanPdf(doc: StadiumDocument): void {
 
   if (isContinuousBowlShape(doc.shape)) {
     const rxInner =
-      (doc.pitch.length / 2 + doc.stands.east.distanceToPitch + trackOffsets.endOffset) *
+      (safePitch.length / 2 + doc.stands.east.distanceToPitch + trackOffsets.endOffset) *
       scale;
     const ryInner =
-      (doc.pitch.width / 2 + doc.stands.south.distanceToPitch + trackOffsets.sideOffset) *
+      (safePitch.width / 2 + doc.stands.south.distanceToPitch + trackOffsets.sideOffset) *
       scale;
     const depthMm = Math.max(metrics.stands.south.totalDepth, 16) * scale;
     const cornerInnerMm = Math.max(
       8 * scale,
-      Math.min(
-        doc.stands.east.distanceToPitch + trackOffsets.endOffset,
-        doc.stands.south.distanceToPitch + trackOffsets.sideOffset
-      ) * scale
+      safePitch.hasTrack
+        ? (ryInner - (doc.stands.south.distanceToPitch > 0 ? 0 : 0)) -
+            Math.max(0, rxInner - ryInner - (track.straightHalfLength * scale - 0))
+        : Math.min(
+            doc.stands.east.distanceToPitch + trackOffsets.endOffset,
+            doc.stands.south.distanceToPitch + trackOffsets.sideOffset
+          ) * scale
     );
-    const cornerOuterMm = cornerInnerMm + depthMm;
+    const clampedCornerInnerMm = safePitch.hasTrack
+      ? Math.min(ryInner, (track.outerRadius + doc.stands.south.distanceToPitch) * scale)
+      : cornerInnerMm;
+    const cornerOuterMm = clampedCornerInnerMm + depthMm;
 
     pdf.setFillColor(203, 213, 225);
     pdf.roundedRect(
@@ -100,8 +110,8 @@ export function exportArchitecturalPlanPdf(doc: StadiumDocument): void {
       cy - ryInner,
       rxInner * 2,
       ryInner * 2,
-      cornerInnerMm,
-      cornerInnerMm,
+      clampedCornerInnerMm,
+      clampedCornerInnerMm,
       'FD'
     );
     if (doc.shape === 'horseshoe') {
@@ -120,7 +130,7 @@ export function exportArchitecturalPlanPdf(doc: StadiumDocument): void {
     if (doc.stands.north.enabled) {
       const m = metrics.stands.north;
       const dist =
-        (doc.pitch.width / 2 + doc.stands.north.distanceToPitch + trackOffsets.sideOffset) *
+        (safePitch.width / 2 + doc.stands.north.distanceToPitch + trackOffsets.sideOffset) *
         scale;
       const w = m.effectiveLength * scale;
       const d = m.totalDepth * scale;
@@ -130,7 +140,7 @@ export function exportArchitecturalPlanPdf(doc: StadiumDocument): void {
     if (doc.stands.south.enabled) {
       const m = metrics.stands.south;
       const dist =
-        (doc.pitch.width / 2 + doc.stands.south.distanceToPitch + trackOffsets.sideOffset) *
+        (safePitch.width / 2 + doc.stands.south.distanceToPitch + trackOffsets.sideOffset) *
         scale;
       const w = m.effectiveLength * scale;
       const d = m.totalDepth * scale;
@@ -140,7 +150,7 @@ export function exportArchitecturalPlanPdf(doc: StadiumDocument): void {
     if (doc.stands.east.enabled) {
       const m = metrics.stands.east;
       const dist =
-        (doc.pitch.length / 2 + doc.stands.east.distanceToPitch + trackOffsets.endOffset) *
+        (safePitch.length / 2 + doc.stands.east.distanceToPitch + trackOffsets.endOffset) *
         scale;
       const h = m.effectiveLength * scale;
       const d = m.totalDepth * scale;
@@ -150,7 +160,7 @@ export function exportArchitecturalPlanPdf(doc: StadiumDocument): void {
     if (doc.stands.west.enabled) {
       const m = metrics.stands.west;
       const dist =
-        (doc.pitch.length / 2 + doc.stands.west.distanceToPitch + trackOffsets.endOffset) *
+        (safePitch.length / 2 + doc.stands.west.distanceToPitch + trackOffsets.endOffset) *
         scale;
       const h = m.effectiveLength * scale;
       const d = m.totalDepth * scale;
@@ -158,18 +168,50 @@ export function exportArchitecturalPlanPdf(doc: StadiumDocument): void {
     }
   }
 
-  // 2. Athletics Track if enabled
-  if (doc.pitch.hasTrack) {
-    const trW = (doc.pitch.length + trackOffsets.endOffset * 1.6) * scale;
-    const trH = (doc.pitch.width + trackOffsets.sideOffset * 2) * scale;
+  // 2. Official 400 m World Athletics Track (84.39 m straights, 36.50 m inner kerb radius)
+  if (safePitch.hasTrack) {
+    const outerHalfX = (track.straightHalfLength + track.outerRadius) * scale;
+    const outerHalfZ = track.outerRadius * scale;
     pdf.setFillColor(217, 119, 6);
     pdf.setDrawColor(146, 64, 14);
-    pdf.roundedRect(cx - trW / 2, cy - trH / 2, trW, trH, trH / 2, trH / 2, 'FD');
+    pdf.setLineWidth(0.3);
+    pdf.roundedRect(
+      cx - outerHalfX,
+      cy - outerHalfZ,
+      outerHalfX * 2,
+      outerHalfZ * 2,
+      outerHalfZ,
+      outerHalfZ,
+      'FD'
+    );
+
+    // Mid-lane reference line
+    const midR = (track.innerRadius + track.lanesWidth * 0.5) * scale;
+    const midHalfX = track.straightHalfLength * scale + midR;
+    pdf.setDrawColor(254, 243, 199);
+    pdf.setLineWidth(0.15);
+    pdf.roundedRect(cx - midHalfX, cy - midR, midHalfX * 2, midR * 2, midR, midR, 'S');
+
+    // Inner kerb ("à la corde" R = 36.50 m) + grass D-zones
+    const kerbR = track.innerRadius * scale;
+    const kerbHalfX = track.infieldHalfLengthX * scale;
+    pdf.setFillColor(42, 138, 68);
+    pdf.setDrawColor(255, 255, 255);
+    pdf.setLineWidth(0.3);
+    pdf.roundedRect(
+      cx - kerbHalfX,
+      cy - kerbR,
+      kerbHalfX * 2,
+      kerbR * 2,
+      kerbR,
+      kerbR,
+      'FD'
+    );
   }
 
   // 3. FIFA Pitch & Markings
-  const pw = doc.pitch.length * scale;
-  const ph = doc.pitch.width * scale;
+  const pw = safePitch.length * scale;
+  const ph = safePitch.width * scale;
   pdf.setFillColor(34, 128, 62);
   pdf.setDrawColor(255, 255, 255);
   pdf.setLineWidth(0.35);
@@ -254,8 +296,11 @@ export function exportArchitecturalPlanPdf(doc: StadiumDocument): void {
 
   addRow('Projet', doc.name.slice(0, 26));
   addRow('Morphologie', STADIUM_SHAPE_LABELS[doc.shape].slice(0, 24));
-  addRow('Terrain FIFA', `${doc.pitch.length} × ${doc.pitch.width} m`);
-  addRow('Piste Athlétisme', doc.pitch.hasTrack ? `Oui (${doc.pitch.trackLanes} couloirs)` : 'Non');
+  addRow('Terrain FIFA', `${safePitch.length} × ${safePitch.width} m`);
+  addRow(
+    'Piste Athlétisme',
+    safePitch.hasTrack ? `Oui (${safePitch.trackLanes} couloirs · 400 m)` : 'Non'
+  );
   addRow('Capacité Totale', `${metrics.totalCapacity.toLocaleString('fr-FR')} places`);
   addRow('Hauteur Toiture', `${metrics.maxRoofHeight} m`);
   addRow('Emprise Bâtie', `${metrics.builtFootprintM2.toLocaleString('fr-FR')} m²`);

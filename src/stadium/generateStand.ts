@@ -23,20 +23,35 @@ import {
   resolveStadiumMaterials,
 } from './materials';
 import {
+  buildParametricFacadeOnRail,
+  buildStraightParametricFacade,
+  FacadeRailSample,
+} from './parametricFacade';
+import {
+  clampPitchToTrack,
+  CornerId,
+  CornerMode,
   EnvelopeStyle,
   getEffectiveSunkenDepth,
   isContinuousBowlShape,
+  resolveAllCorners,
+  resolveStandVomitories,
   StadiumDocument,
   StandConfig,
   StandSide,
 } from './schema';
-import { getTierStartRows, tierRiserHeight, UPPER_TIER_STEEPENING } from './sightlines';
+import {
+  getTierStartRows,
+  resolveStandTiers,
+  UPPER_TIER_STEEPENING,
+} from './sightlines';
 
 interface RowSample {
   d: number;
   y: number;
   tierIdx: number;
   riser: number;
+  treadSegIdx: number;
 }
 
 interface BalconySample {
@@ -45,6 +60,9 @@ interface BalconySample {
   tierIdx: number;
   loggiaD: number;
   loggiaY: number;
+  recessD: number;
+  soffitY: number;
+  overhangSpan: number;
   hasVipGlass: boolean;
 }
 
@@ -54,6 +72,7 @@ interface TierBandSample {
   yStart: number;
   dEnd: number;
   yEnd: number;
+  treadSegIndices: number[];
 }
 
 interface StandProfile {
@@ -89,8 +108,8 @@ function createStrut(
 }
 
 /**
- * Builds the 2D cross-section profile of a stand (1 to 5 tiers) with cantilevered
- * upper-tier overhangs, optional VIP skybox loggias, and optional hollow structural soffit
+ * Builds the 2D cross-section profile of a stand (1 to 5 asymmetric tiers) with adjustable
+ * cantilevered upper-tier overhangs, optional VIP skybox loggias, and optional hollow structural soffit
  * when `hollowUnderside === true` (for `exposed_structure` and `colonnade_forest` envelopes).
  */
 function buildStandProfilePoints(
@@ -104,18 +123,20 @@ function buildStandProfilePoints(
   const balconies: BalconySample[] = [];
   const tierBands: TierBandSample[] = [];
 
-  const tierStarts = getTierStartRows(stand.rows, stand.tiers);
-  const hasVipLoges = stand.tiers >= 2 && stand.vipLoges !== false;
+  const tierSpecs = resolveStandTiers(stand);
+  const hasVipLoges = tierSpecs.length >= 2 && stand.vipLoges !== false;
 
   const pushStart = (x: number, y: number) => {
     shape.moveTo(x, y);
     profilePts.push([x, y]);
   };
 
-  const pushSeg = (x: number, y: number, isSeatTread: boolean) => {
+  const pushSeg = (x: number, y: number, isSeatTread: boolean): number => {
+    const segIdx = isSeatSegmentMask.length;
     shape.lineTo(x, y);
     profilePts.push([x, y]);
     isSeatSegmentMask.push(isSeatTread);
+    return segIdx;
   };
 
   pushStart(0, 0);
@@ -130,29 +151,14 @@ function buildStandProfilePoints(
   let curY = stand.elevationStart;
   let maxOutwardD = curD;
 
-  let bandStartD = curD;
-  let bandStartY = curY;
-  let bandRows = 0;
-  let currentBandTier = 0;
+  for (let tierIdx = 0; tierIdx < tierSpecs.length; tierIdx++) {
+    const spec = tierSpecs[tierIdx];
 
-  for (let r = 0; r < stand.rows; r++) {
-    const tierIdx = tierStarts.findIndex((sr, idx) =>
-      idx === tierStarts.length - 1 ? r >= sr : r >= sr && r < tierStarts[idx + 1]
-    );
-    const safeTierIdx = Math.max(0, tierIdx);
-
-    if (r > 0 && tierStarts.includes(r)) {
-      tierBands.push({
-        tierIdx: currentBandTier,
-        dStart: bandStartD,
-        yStart: bandStartY,
-        dEnd: curD,
-        yEnd: curY,
-      });
-
-      const recessD = curD + (hasVipLoges ? 1.45 : 0.75);
+    if (tierIdx > 0) {
+      const recessStep = hasVipLoges ? 1.45 : 0.75;
+      const recessD = curD + recessStep;
       const loggiaH = hasVipLoges ? 1.95 : 0.95;
-      const balconyOverhangD = Math.max(2.2, curD - 1.15);
+      const balconyOverhangD = Math.max(1.8, recessD - spec.overhang);
       const balconyFasciaH = hasVipLoges ? 0.9 : 0.65;
 
       pushSeg(recessD, curY, false);
@@ -162,9 +168,12 @@ function buildStandProfilePoints(
       balconies.push({
         d: balconyOverhangD,
         y: curY + loggiaH + balconyFasciaH * 0.5,
-        tierIdx: safeTierIdx,
+        tierIdx,
         loggiaD: recessD - 0.15,
         loggiaY: curY + loggiaH * 0.5,
+        recessD,
+        soffitY: curY + loggiaH,
+        overhangSpan: Math.max(0, recessD - balconyOverhangD),
         hasVipGlass: hasVipLoges,
       });
 
@@ -173,40 +182,44 @@ function buildStandProfilePoints(
       maxOutwardD = Math.max(maxOutwardD, recessD);
       curD = balconyOverhangD;
       curY += loggiaH + balconyFasciaH;
-
-      bandStartD = curD;
-      bandStartY = curY;
-      bandRows = 0;
-      currentBandTier = safeTierIdx;
     }
 
-    const riser = tierRiserHeight(stand.riserHeight, safeTierIdx);
+    const bandStartD = curD;
+    const bandStartY = curY;
+    const treadSegIndices: number[] = [];
 
-    rowPositions.push({
-      d: curD + stand.rowDepth * 0.52,
-      y: curY,
-      tierIdx: safeTierIdx,
-      riser,
-    });
+    for (let tr = 0; tr < spec.rows; tr++) {
+      const riser = spec.riserHeight;
+      const rowMidD = curD + stand.rowDepth * 0.52;
+      const rowY = curY;
 
-    curD += stand.rowDepth;
-    maxOutwardD = Math.max(maxOutwardD, curD);
-    pushSeg(curD, curY, true);
+      curD += stand.rowDepth;
+      maxOutwardD = Math.max(maxOutwardD, curD);
+      const treadIdx = pushSeg(curD, curY, true);
+      treadSegIndices.push(treadIdx);
 
-    curY += riser;
-    pushSeg(curD, curY, false);
+      rowPositions.push({
+        d: rowMidD,
+        y: rowY,
+        tierIdx,
+        riser,
+        treadSegIdx: treadIdx,
+      });
 
-    bandRows++;
-  }
+      curY += riser;
+      pushSeg(curD, curY, false);
+    }
 
-  if (bandRows > 0) {
-    tierBands.push({
-      tierIdx: currentBandTier,
-      dStart: bandStartD,
-      yStart: bandStartY,
-      dEnd: curD,
-      yEnd: curY,
-    });
+    if (spec.rows > 0) {
+      tierBands.push({
+        tierIdx,
+        dStart: bandStartD,
+        yStart: bandStartY,
+        dEnd: curD,
+        yEnd: curY,
+        treadSegIndices,
+      });
+    }
   }
 
   const outerWallD = Math.max(curD, maxOutwardD) + 2.8;
@@ -422,40 +435,137 @@ function buildStraightTelescopicModule(
   return modGroup;
 }
 
+/**
+ * Builds a recessed 3D concourse vomitory tunnel fitting cleanly inside a physically carved
+ * terrace opening (`[0 .. openDepth]` in local +Z, `[0 .. openRise]` in local +Y).
+ */
+function createCarvedVomitoryTunnel(
+  width: number,
+  openDepth: number,
+  openRise: number,
+  portalMat: THREE.Material,
+  darkMouthMat: THREE.Material,
+  railMat: THREE.Material,
+  isNight: boolean = false
+): THREE.Group {
+  const unit = new THREE.Group();
+  unit.name = 'VomitoryOpeningPortal';
+
+  const safeW = Math.max(1.4, width);
+  const safeD = Math.max(1.8, openDepth);
+  const safeH = Math.max(1.4, openRise);
+  const cheekThick = 0.2;
+
+  // Horizontal walk-in concourse landing floor inside the carved steps
+  const floorSlab = new THREE.Mesh(
+    new THREE.BoxGeometry(safeW + cheekThick, 0.2, safeD + 0.35),
+    portalMat
+  );
+  floorSlab.position.set(0, -0.08, safeD * 0.5 + 0.1);
+  floorSlab.receiveShadow = true;
+  unit.add(floorSlab);
+
+  // Left & right triangular/stepped concrete cheek walls sealing the cut terrace profile
+  const cheekShape = new THREE.Shape();
+  cheekShape.moveTo(0, -0.12);
+  cheekShape.lineTo(safeD + 0.25, -0.12);
+  cheekShape.lineTo(safeD + 0.25, safeH + 0.28);
+  cheekShape.lineTo(safeD * 0.35, safeH * 0.55 + 0.24);
+  cheekShape.lineTo(0, 0.22);
+  cheekShape.closePath();
+
+  const cheekExtrude = new THREE.ExtrudeGeometry(cheekShape, {
+    depth: cheekThick,
+    bevelEnabled: false,
+  });
+  cheekExtrude.rotateY(-Math.PI * 0.5);
+  // After -90° Y rotation: shape X -> +Z, shape Y -> +Y, extrude Z -> -X
+  const leftCheek = new THREE.Mesh(cheekExtrude, portalMat);
+  leftCheek.position.set(-safeW * 0.5 + cheekThick * 0.5, 0, 0);
+  leftCheek.castShadow = true;
+  leftCheek.receiveShadow = true;
+
+  const rightCheek = new THREE.Mesh(cheekExtrude, portalMat);
+  rightCheek.position.set(safeW * 0.5 + cheekThick * 0.5, 0, 0);
+  rightCheek.castShadow = true;
+  rightCheek.receiveShadow = true;
+  unit.add(leftCheek, rightCheek);
+
+  // Rear concrete lintel hood at top of the carved opening
+  const hood = new THREE.Mesh(
+    new THREE.BoxGeometry(safeW + cheekThick * 2, 0.28, 0.95),
+    portalMat
+  );
+  hood.position.set(0, safeH + 0.14, safeD - 0.2);
+  hood.castShadow = true;
+  unit.add(hood);
+
+  // Deep dark concourse throat recessed at the rear of the opening
+  const throatH = Math.max(1.25, safeH - 0.08);
+  const darkThroat = new THREE.Mesh(
+    new THREE.BoxGeometry(safeW - cheekThick * 0.8, throatH, 0.9),
+    darkMouthMat
+  );
+  darkThroat.position.set(0, throatH * 0.5, safeD + 0.08);
+  unit.add(darkThroat);
+
+  if (isNight) {
+    const warmCeilingMat = new THREE.MeshBasicMaterial({
+      color: 0xfde68a,
+    });
+    const lightStrip = new THREE.Mesh(
+      new THREE.BoxGeometry((safeW - 0.5) * 0.8, 0.08, 0.35),
+      warmCeilingMat
+    );
+    lightStrip.position.set(0, throatH - 0.08, safeD - 0.12);
+    unit.add(lightStrip);
+  }
+
+  // Tubular galvanized safety guardrails around the rear brow & side flanks
+  const browY = safeH + 0.82;
+  const browZ = safeD + 0.08;
+  const rearGuard = new THREE.Mesh(
+    new THREE.BoxGeometry(safeW + 0.16, 0.055, 0.055),
+    railMat
+  );
+  rearGuard.position.set(0, browY, browZ);
+  const midRearGuard = new THREE.Mesh(
+    new THREE.BoxGeometry(safeW + 0.16, 0.04, 0.04),
+    railMat
+  );
+  midRearGuard.position.set(0, safeH + 0.48, browZ);
+  unit.add(rearGuard, midRearGuard);
+
+  for (const sx of [-safeW * 0.5, safeW * 0.5]) {
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.03, 0.03, 0.62, 6),
+      railMat
+    );
+    post.position.set(sx, safeH + 0.52, browZ);
+    unit.add(post);
+
+    // Inclined side guardrail along cheek wall
+    unit.add(
+      createStrut(
+        new THREE.Vector3(sx, 0.72, 0.18),
+        new THREE.Vector3(sx, browY, browZ),
+        0.028,
+        0.028,
+        railMat,
+        6
+      )
+    );
+  }
+
+  return unit;
+}
+
 function createVomitoryPortalUnit(
   portalMat: THREE.Material,
   darkMouthMat: THREE.Material,
   railMat: THREE.Material
 ): THREE.Group {
-  const unit = new THREE.Group();
-
-  // Precast architectural concrete vomitory hood & side cheeks
-  const hood = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.24, 1.55), portalMat);
-  hood.position.set(0, 1.52, 0.35);
-  hood.castShadow = true;
-
-  const leftCheek = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.55, 1.55), portalMat);
-  leftCheek.position.set(-0.96, 0.77, 0.35);
-  leftCheek.castShadow = true;
-
-  const rightCheek = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.55, 1.55), portalMat);
-  rightCheek.position.set(0.96, 0.77, 0.35);
-  rightCheek.castShadow = true;
-
-  // Deep recessed concourse tunnel mouth
-  const darkMouth = new THREE.Mesh(new THREE.BoxGeometry(1.72, 1.38, 1.58), darkMouthMat);
-  darkMouth.position.set(0, 0.71, 0.38);
-
-  // Tubular galvanized safety handrail above vomitory brow
-  const topGuard = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.06, 0.06), railMat);
-  topGuard.position.set(0, 1.98, -0.35);
-  const leftPost = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.38, 6), railMat);
-  leftPost.position.set(-1.02, 1.8, -0.35);
-  const rightPost = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.38, 6), railMat);
-  rightPost.position.set(1.02, 1.8, -0.35);
-
-  unit.add(hood, leftCheek, rightCheek, darkMouth, topGuard, leftPost, rightPost);
-  return unit;
+  return createCarvedVomitoryTunnel(2.2, 2.2, 1.65, portalMat, darkMouthMat, railMat, false);
 }
 
 function buildStraightStandMesh(
@@ -477,6 +587,7 @@ function buildStraightStandMesh(
   const isHollow =
     doc.roof.style !== 'enveloping_shell' &&
     (envelope === 'exposed_structure' || envelope === 'colonnade_forest');
+  const isNight = doc.lighting !== 'day';
 
   const {
     shape,
@@ -491,22 +602,119 @@ function buildStraightStandMesh(
 
   const sunkenDepth = getEffectiveSunkenDepth(doc);
   const gradeY = Math.min(sunkenDepth, Math.max(0, topHeight * 0.68));
+  const totalRowsCount = Math.max(1, rowPositions.length);
+
+  // Resolve vomitory openings & longitudinal slice breaks so openings are physically carved into the stand mesh
+  const vomSpec = resolveStandVomitories(stand);
+  const vomHalfW = Math.min(1.3, Math.max(0.85, spanLength / Math.max(18, vomSpec.count * 6)));
+
+  interface CarvedVomitoryZone {
+    tierIdx: number;
+    vx: number;
+    xMin: number;
+    xMax: number;
+    dStart: number;
+    yStart: number;
+    dEnd: number;
+    yEnd: number;
+    segSet: Set<number>;
+  }
+
+  const carvedZones: CarvedVomitoryZone[] = [];
+  if (vomSpec.count > 0 && spanLength > 10) {
+    for (const band of tierBands) {
+      const nBandRows = band.treadSegIndices.length;
+      if (nBandRows < 5 || band.dEnd - band.dStart < 3.6) continue;
+
+      const openRows = Math.min(5, Math.max(3, Math.round(nBandRows * 0.24)));
+      const centerRow = Math.min(
+        nBandRows - 2,
+        Math.max(1, Math.round((nBandRows - 1) * vomSpec.rowRatio))
+      );
+      const rStart = Math.max(1, Math.min(nBandRows - openRows, centerRow - Math.floor(openRows * 0.5)));
+      const rEnd = Math.min(nBandRows - 1, rStart + openRows - 1);
+
+      const segSet = new Set<number>();
+      for (let r = rStart; r <= rEnd; r++) {
+        const tSeg = band.treadSegIndices[r];
+        segSet.add(tSeg); // horizontal tread
+        segSet.add(tSeg + 1); // vertical riser behind tread
+      }
+      const firstSeg = band.treadSegIndices[rStart];
+      const lastSeg = band.treadSegIndices[rEnd];
+      const [dOpenStart, yOpenStart] = profilePts[firstSeg];
+      const [dOpenEnd, yOpenEnd] = profilePts[Math.min(profilePts.length - 1, lastSeg + 2)];
+
+      for (const posFrac of vomSpec.positions) {
+        const vx = -spanLength * 0.5 + posFrac * spanLength;
+        if (stand.id === 'south' && band.tierIdx === 0 && Math.abs(vx) < 6.4) {
+          continue;
+        }
+        const xMin = Math.max(-spanLength * 0.5 + 0.8, vx - vomHalfW);
+        const xMax = Math.min(spanLength * 0.5 - 0.8, vx + vomHalfW);
+        if (xMax - xMin < 1.2) continue;
+
+        carvedZones.push({
+          tierIdx: band.tierIdx,
+          vx: (xMin + xMax) * 0.5,
+          xMin,
+          xMax,
+          dStart: dOpenStart,
+          yStart: yOpenStart,
+          dEnd: dOpenEnd,
+          yEnd: yOpenEnd,
+          segSet,
+        });
+      }
+    }
+  }
+
+  // Build descending X slice coordinates `[+span/2 ... -span/2]` with exact cuts at every vomitory cheek
+  const rawXs: number[] = [spanLength * 0.5, -spanLength * 0.5];
+  for (const cz of carvedZones) {
+    rawXs.push(cz.xMin, cz.xMax);
+  }
+  rawXs.sort((a, b) => b - a);
+  const sliceXs: number[] = [];
+  for (const x of rawXs) {
+    if (sliceXs.length === 0 || Math.abs(sliceXs[sliceXs.length - 1] - x) > 0.08) {
+      sliceXs.push(x);
+    }
+  }
+  if (sliceXs.length < 2) {
+    sliceXs.length = 0;
+    sliceXs.push(spanLength * 0.5, -spanLength * 0.5);
+  }
+
+  const sliceRingCount = sliceXs.length;
+  const sliceActiveSegs = sliceRingCount - 1;
+  const profilePtsPerSlice = Array.from({ length: sliceRingCount }, () => profilePts);
+
+  const isHoleQuad = (s: number, p: number): boolean => {
+    if (carvedZones.length === 0) return false;
+    const xMid = (sliceXs[s] + sliceXs[s + 1]) * 0.5;
+    for (const cz of carvedZones) {
+      if (xMid > cz.xMin + 0.02 && xMid < cz.xMax - 0.02 && cz.segSet.has(p)) {
+        return true;
+      }
+    }
+    return false;
+  };
 
   // 1. Multi-material stepped concrete + 1:1 life-size seat terrace bowl (`+Y` upward treads, `-Z` pitch risers)
   const uRepeat = Math.max(1, Math.round(spanLength / 46));
-  const vRepeat = Math.max(1.0, stand.rows / 24);
+  const vRepeat = Math.max(1.0, totalRowsCount / 24);
   const straightBowlGeo = buildMultiMaterialSweptStandGeometry(
-    2,
-    1,
+    sliceRingCount,
+    sliceActiveSegs,
     false,
-    [profilePts, profilePts],
-    (s, radD, py) => {
-      const lx = s === 0 ? spanLength * 0.5 : -spanLength * 0.5;
-      return [lx, py, radD];
-    },
+    profilePtsPerSlice,
+    (s, radD, py) => [sliceXs[s], py, radD],
     isSeatSegmentMask,
     uRepeat,
-    vRepeat
+    vRepeat,
+    isHoleQuad,
+    (s) => (spanLength * 0.5 - sliceXs[s]) / Math.max(1e-5, spanLength)
   );
 
   const seats3d = mats.seats3d !== false;
@@ -517,11 +725,11 @@ function buildStraightStandMesh(
 
   if (seats3d && stand.seatingType !== 'safe_standing') {
     const seats = buildSweepSeatInstances({
-      ringCount: 2,
-      activeSegments: 1,
+      ringCount: sliceRingCount,
+      activeSegments: sliceActiveSegs,
       closed: false,
-      profilePtsPerSlice: [profilePts, profilePts],
-      sampleWorldPoint: (s, radD, py) => [s === 0 ? spanLength * 0.5 : -spanLength * 0.5, py, radD],
+      profilePtsPerSlice,
+      sampleWorldPoint: (s, radD, py) => [sliceXs[s], py, radD],
       isSeatSegmentMask,
       rowDepth: stand.rowDepth,
       seatWidth: stand.seatWidth,
@@ -529,12 +737,12 @@ function buildStraightStandMesh(
       aisleWidth: stand.aisleWidth,
       primaryHex: doc.colors.seatsPrimary,
       secondaryHex: doc.colors.seatsSecondary,
+      isHoleQuad,
     });
     if (seats) group.add(seats);
   }
 
   // 2. Open-End Concrete Gable Walls & Stepped Side Safety Balustrades ONLY on genuinely open ends!
-  //    (Never emitted inside closed corners -> 0 concrete wall artifacts in corners!)
   if (capNegLocalX || capPosLocalX) {
     const capWallMat = concreteMat.clone();
     capWallMat.side = THREE.DoubleSide;
@@ -569,7 +777,6 @@ function buildStraightStandMesh(
       capMesh.receiveShadow = true;
       group.add(capMesh);
 
-      // Stepped side safety balustrade along open terrace flanks
       for (const band of tierBands) {
         const pStart = new THREE.Vector3(
           endSpec.lx + (endSpec.lx > 0 ? -0.12 : 0.12),
@@ -586,7 +793,7 @@ function buildStraightStandMesh(
     }
   }
 
-  // 3. Pitch-Side Laminated Glass Safety Guardrail + Stainless Stanchions
+  // 3. Pitch-Side Laminated Glass Safety Guardrail
   const glassRailMat = new THREE.MeshPhysicalMaterial({
     color: 0xe0f2fe,
     roughness: 0.08,
@@ -631,7 +838,7 @@ function buildStraightStandMesh(
     group.add(instancedBackrests);
   }
 
-  // 5. 3D Precast Architectural Vomitory Portals & Concourse Tunnels
+  // 5. Recessed 3D Vomitory Tunnel Portals inside each carved terrace opening + 3D Stepped Radial Stairs
   const vomPortalMat = new THREE.MeshStandardMaterial({
     color: 0xdbe2ea,
     roughness: 0.72,
@@ -647,22 +854,157 @@ function buildStraightStandMesh(
     metalness: 0.85,
   });
 
-  const vomCount = Math.max(3, Math.min(8, Math.round(spanLength / 18)));
-  for (const band of tierBands) {
-    if (band.dEnd - band.dStart < 5.2 || band.yEnd - band.yStart < 2.2) continue;
-    const vomFrac = 0.44;
-    const vd = band.dStart + (band.dEnd - band.dStart) * vomFrac;
-    const vy = band.yStart + (band.yEnd - band.yStart) * vomFrac;
-    for (let v = 0; v < vomCount; v++) {
-      const vx = -spanLength * 0.5 + ((v + 0.5) / vomCount) * spanLength;
-      if (stand.id === 'south' && band.tierIdx === 0 && Math.abs(vx) < 6.5) continue;
-      const portal = createVomitoryPortalUnit(vomPortalMat, darkVomMat, vomRailMat);
-      portal.position.set(vx, vy, vd);
-      group.add(portal);
-    }
+  for (const cz of carvedZones) {
+    const portal = createCarvedVomitoryTunnel(
+      cz.xMax - cz.xMin,
+      cz.dEnd - cz.dStart,
+      cz.yEnd - cz.yStart,
+      vomPortalMat,
+      darkVomMat,
+      vomRailMat,
+      isNight
+    );
+    portal.position.set(cz.vx, cz.yStart, cz.dStart);
+    group.add(portal);
   }
 
   const dummy = new THREE.Object3D();
+
+  // 5b. 3D Stepped Radial Stair Flights + Yellow Safety Nosings + Central Handrails along aisles
+  if (stand.aisleCount > 0 && rowPositions.length > 0) {
+    const stairStepMatrices: THREE.Matrix4[] = [];
+    const nosingMatrices: THREE.Matrix4[] = [];
+    const stairW = Math.max(0.85, stand.aisleWidth * 0.84);
+    const halfStepD = stand.rowDepth * 0.48;
+
+    for (let a = 0; a < stand.aisleCount; a++) {
+      // Match buildSweepSeatInstances X coordinates (`s=0` is `+span/2`, `s=end` is `-span/2`)
+      const ax = spanLength * 0.5 - ((a + 0.5) / stand.aisleCount) * spanLength;
+
+      for (const rp of rowPositions) {
+        if (stand.id === 'south' && rp.tierIdx === 0 && Math.abs(ax) < 4.2 && rp.y < stand.elevationStart + 2.8) {
+          continue;
+        }
+        const inCarvedVom = carvedZones.some(
+          (cz) =>
+            cz.tierIdx === rp.tierIdx &&
+            ax > cz.xMin - stairW * 0.45 &&
+            ax < cz.xMax + stairW * 0.45 &&
+            cz.segSet.has(rp.treadSegIdx)
+        );
+        if (inCarvedVom) continue;
+
+        const halfRise = rp.riser * 0.5;
+        const rowFrontZ = rp.d - stand.rowDepth * 0.52;
+
+        // Intermediate half-step block creating real 2-riser-per-row stair steps
+        dummy.position.set(
+          ax,
+          rp.y + halfRise * 0.5,
+          rowFrontZ + stand.rowDepth * 0.74
+        );
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(stairW, Math.max(0.08, halfRise), halfStepD);
+        dummy.updateMatrix();
+        stairStepMatrices.push(dummy.matrix.clone());
+
+        // High-visibility safety nosing on both stair steps
+        for (const [ny, nz] of [
+          [rp.y + 0.018, rowFrontZ + 0.05],
+          [rp.y + halfRise + 0.018, rowFrontZ + stand.rowDepth * 0.52],
+        ]) {
+          dummy.position.set(ax, ny, nz);
+          dummy.rotation.set(0, 0, 0);
+          dummy.scale.set(stairW * 0.94, 0.032, 0.065);
+          dummy.updateMatrix();
+          nosingMatrices.push(dummy.matrix.clone());
+        }
+      }
+
+      // Central brushed-steel stair handrail per tier band (split cleanly around any carved vomitory)
+      for (const band of tierBands) {
+        const hitZone = carvedZones.find(
+          (cz) =>
+            cz.tierIdx === band.tierIdx &&
+            ax > cz.xMin - 0.35 &&
+            ax < cz.xMax + 0.35
+        );
+        if (hitZone) {
+          if (hitZone.dStart - band.dStart > 1.2) {
+            group.add(
+              createStrut(
+                new THREE.Vector3(ax, band.yStart + 0.85, band.dStart + 0.25),
+                new THREE.Vector3(ax, hitZone.yStart + 0.85, hitZone.dStart - 0.15),
+                0.028,
+                0.028,
+                vomRailMat,
+                6
+              )
+            );
+          }
+          if (band.dEnd - hitZone.dEnd > 1.2) {
+            group.add(
+              createStrut(
+                new THREE.Vector3(ax, hitZone.yEnd + 0.85, hitZone.dEnd + 0.25),
+                new THREE.Vector3(ax, band.yEnd + 0.85, band.dEnd - 0.25),
+                0.028,
+                0.028,
+                vomRailMat,
+                6
+              )
+            );
+          }
+        } else if (band.dEnd - band.dStart > 1.8) {
+          group.add(
+            createStrut(
+              new THREE.Vector3(ax, band.yStart + 0.85, band.dStart + 0.25),
+              new THREE.Vector3(ax, band.yEnd + 0.85, band.dEnd - 0.25),
+              0.028,
+              0.028,
+              vomRailMat,
+              6
+            )
+          );
+        }
+      }
+    }
+
+    if (stairStepMatrices.length > 0) {
+      const stepGeom = new THREE.BoxGeometry(1, 1, 1);
+      const stepMesh = new THREE.InstancedMesh(
+        stepGeom,
+        vomPortalMat,
+        stairStepMatrices.length
+      );
+      stepMesh.name = 'RadialStairSteps';
+      for (let i = 0; i < stairStepMatrices.length; i++) {
+        stepMesh.setMatrixAt(i, stairStepMatrices[i]);
+      }
+      stepMesh.instanceMatrix.needsUpdate = true;
+      stepMesh.receiveShadow = true;
+      group.add(stepMesh);
+    }
+
+    if (nosingMatrices.length > 0) {
+      const nosingMat = new THREE.MeshStandardMaterial({
+        color: 0xeab308,
+        roughness: 0.52,
+        metalness: 0.08,
+      });
+      const nosingGeom = new THREE.BoxGeometry(1, 1, 1);
+      const nosingMesh = new THREE.InstancedMesh(
+        nosingGeom,
+        nosingMat,
+        nosingMatrices.length
+      );
+      nosingMesh.name = 'RadialStairNosings';
+      for (let i = 0; i < nosingMatrices.length; i++) {
+        nosingMesh.setMatrixAt(i, nosingMatrices[i]);
+      }
+      nosingMesh.instanceMatrix.needsUpdate = true;
+      group.add(nosingMesh);
+    }
+  }
 
   // Safe Standing Continuous Steel Crush-Barrier Rails (`seatingType === 'safe_standing'`)
   if (stand.seatingType === 'safe_standing') {
@@ -701,7 +1043,7 @@ function buildStraightStandMesh(
     }
   }
 
-  // Stacked Cantilevered Balconies + Optional Glazed VIP Skyboxes
+  // Stacked Cantilevered Balconies + Structural Cantilever Brackets + Glazed VIP Skyboxes
   if (balconies.length > 0) {
     const fasciaSlabMat = new THREE.MeshStandardMaterial({
       color: 0xf1f5f9,
@@ -749,6 +1091,24 @@ function buildStraightStandMesh(
         skyboxGlass.position.set(0, bal.loggiaY, bal.loggiaD);
         group.add(skyboxGlass);
       }
+
+      // Structural tapered cantilever soffit beams underneath deep cantilevered upper tiers
+      if (bal.overhangSpan > 1.5) {
+        const bracketCount = Math.max(4, Math.floor(spanLength / 9.5));
+        for (let b = 0; b <= bracketCount; b++) {
+          const bx = -spanLength * 0.47 + (b / bracketCount) * (spanLength * 0.94);
+          group.add(
+            createStrut(
+              new THREE.Vector3(bx, bal.soffitY - Math.min(1.35, bal.overhangSpan * 0.22), bal.recessD - 0.15),
+              new THREE.Vector3(bx, bal.soffitY - 0.06, bal.d + 0.22),
+              0.11,
+              0.24,
+              structureMat,
+              4
+            )
+          );
+        }
+      }
     }
   }
 
@@ -758,7 +1118,6 @@ function buildStraightStandMesh(
 
   // Exterior Envelope Architecture (above `gradeY`)
   const wallH = Math.max(2.0, topHeight - gradeY);
-  const isNight = doc.lighting !== 'day';
   const extOverhang = capNegLocalX && capPosLocalX ? 2.4 : 0.0;
 
   if (doc.roof.style !== 'enveloping_shell') {
@@ -934,6 +1293,27 @@ function buildStraightStandMesh(
       colInstanced.computeBoundingSphere();
       group.add(colInstanced);
     }
+
+    // 3D Parametric Facade Relief on straight stand exterior when concourse ring is not wrapping it
+    const facadePattern = mats.facadePattern ?? 'none';
+    if (facadePattern !== 'none' && (doc.concourse?.width ?? 0) <= 0.5) {
+      const lobbyTop = envelope !== 'exposed_structure' ? Math.min(3.4, wallH * 0.85) + 0.35 : 0;
+      const relief = buildStraightParametricFacade({
+        span: spanLength,
+        rearWallZ: totalDepth + 0.65,
+        yBottom: gradeY + lobbyTop,
+        yTop: topHeight - 0.15,
+        pattern: facadePattern,
+        density: mats.facadeDensity ?? 1.0,
+        depth: mats.facadeDepth ?? 0.85,
+        primaryMat: facadeMat,
+        accentMat: structureMat,
+        name: `StandParametricFacade_${stand.id}`,
+      });
+      if (relief) {
+        group.add(relief);
+      }
+    }
   }
 
   // Concourse Entrance Plinth & Turnstiles (`Y = gradeY .. gradeY + 3.4m`)
@@ -976,7 +1356,9 @@ function buildMultiMaterialSweptStandGeometry(
   sampleWorldPoint: (sliceIdx: number, radD: number, py: number) => [number, number, number],
   isSeatSegmentMask: boolean[],
   uRepeat: number,
-  vRepeat: number = 2.2
+  vRepeat: number = 2.2,
+  isHoleQuad?: (sliceIdx: number, profileSegIdx: number) => boolean,
+  uFractionAtSlice?: (sliceIdx: number) => number
 ): THREE.BufferGeometry {
   const pCount = profilePtsPerSlice[0].length;
   const positions = new Float32Array(ringCount * pCount * 3);
@@ -988,6 +1370,9 @@ function buildMultiMaterialSweptStandGeometry(
   for (let s = 0; s < ringCount; s++) {
     const pts = profilePtsPerSlice[s];
     let seatProgress = 0;
+    const uFrac = uFractionAtSlice
+      ? uFractionAtSlice(s)
+      : s / Math.max(1, activeSegments);
     for (let p = 0; p < pCount; p++) {
       const [radD, py] = pts[p];
       const [wx, wy, wz] = sampleWorldPoint(s, radD, py);
@@ -1002,7 +1387,7 @@ function buildMultiMaterialSweptStandGeometry(
       }
 
       const uvBase = (s * pCount + p) * 2;
-      uvs[uvBase] = (s / Math.max(1, activeSegments)) * uRepeat;
+      uvs[uvBase] = uFrac * uRepeat;
       uvs[uvBase + 1] =
         seatSegTotal > 0 ? (seatProgress / seatSegTotal) * vRepeat : p / (pCount - 1);
     }
@@ -1014,6 +1399,9 @@ function buildMultiMaterialSweptStandGeometry(
   for (let s = 0; s < activeSegments; s++) {
     const nextS = closed ? (s + 1) % ringCount : s + 1;
     for (let p = 0; p < pCount - 1; p++) {
+      if (isHoleQuad && isHoleQuad(s, p)) {
+        continue;
+      }
       const a = s * pCount + p;
       const b = nextS * pCount + p;
       const c = nextS * pCount + (p + 1);
@@ -1065,7 +1453,7 @@ function getSeatMaterial(): THREE.MeshStandardMaterial {
 /**
  * Places individual seats on every seat tread of a swept stand, using the same profile slices and
  * world mapping as `buildMultiMaterialSweptStandGeometry`. Seats are spaced by `seatWidth`, leave
- * radial aisles empty, fill deep treads with several rows, and alternate club colours per tier.
+ * radial aisles and carved vomitory openings empty, fill deep treads with several rows, and alternate club colours per tier.
  */
 function buildSweepSeatInstances(opts: {
   ringCount: number;
@@ -1080,6 +1468,7 @@ function buildSweepSeatInstances(opts: {
   aisleWidth: number;
   primaryHex: string;
   secondaryHex: string;
+  isHoleQuad?: (sliceIdx: number, profileSegIdx: number) => boolean;
 }): THREE.InstancedMesh | null {
   const {
     ringCount,
@@ -1094,6 +1483,7 @@ function buildSweepSeatInstances(opts: {
     aisleWidth,
     primaryHex,
     secondaryHex,
+    isHoleQuad,
   } = opts;
   const pitch = Math.max(0.42, seatWidth);
   const nextSlice = (s: number) => (closed ? (s + 1) % ringCount : s + 1);
@@ -1145,23 +1535,29 @@ function buildSweepSeatInstances(opts: {
       segLens.push(len);
       total += len;
     }
-    const aisleAt = Array.from({ length: Math.max(0, aisleCount) }, (_, k) => ((k + 0.5) / aisleCount) * total);
+    const aisleAt = Array.from(
+      { length: Math.max(0, aisleCount) },
+      (_, k) => ((k + 0.5) / aisleCount) * total
+    );
 
     let run = 0;
     let carry = pitch * 0.5;
     for (let s = 0; s < activeSegments; s++) {
       const len = segLens[s];
-      const a = pointAt(s, row);
-      const b = pointAt(nextSlice(s), row);
-      const front = pointAt(s, row, -0.5);
-      const zAxis = new THREE.Vector3().subVectors(a, front).setY(0).normalize();
-      const xAxis = new THREE.Vector3().crossVectors(up, zAxis).normalize();
-      for (let along = carry; along < len; along += pitch) {
-        const at = run + along;
-        if (aisleAt.some((x) => Math.abs(x - at) < aisleWidth * 0.5 + pitch * 0.4)) continue;
-        const pos = new THREE.Vector3().lerpVectors(a, b, along / len);
-        const m = new THREE.Matrix4().makeBasis(xAxis, up, zAxis).setPosition(pos);
-        placements.push({ m, tier: tierOfSegment[row.p] });
+      const holeHere = isHoleQuad ? isHoleQuad(s, row.p) : false;
+      if (!holeHere && len > 1e-4) {
+        const a = pointAt(s, row);
+        const b = pointAt(nextSlice(s), row);
+        const front = pointAt(s, row, -0.5);
+        const zAxis = new THREE.Vector3().subVectors(a, front).setY(0).normalize();
+        const xAxis = new THREE.Vector3().crossVectors(up, zAxis).normalize();
+        for (let along = carry; along < len; along += pitch) {
+          const at = run + along;
+          if (aisleAt.some((x) => Math.abs(x - at) < aisleWidth * 0.5 + pitch * 0.4)) continue;
+          const pos = new THREE.Vector3().lerpVectors(a, b, along / len);
+          const m = new THREE.Matrix4().makeBasis(xAxis, up, zAxis).setPosition(pos);
+          placements.push({ m, tier: tierOfSegment[row.p] });
+        }
       }
       // Carry the spacing into the next slice so seats stay evenly spaced across slice joins.
       if (len < carry) carry -= len;
@@ -1177,8 +1573,7 @@ function buildSweepSeatInstances(opts: {
   const tint = new THREE.Color();
   placements.forEach(({ m, tier: t }, i) => {
     mesh.setMatrixAt(i, m);
-    // Slight per-seat value drift reads as sun-faded plastic instead of a flat fill.
-    const jitter = 0.92 + ((Math.sin(i * 12.9898) * 43758.5453) % 1 + 1) % 1 * 0.14;
+    const jitter = 0.92 + (((Math.sin(i * 12.9898) * 43758.5453) % 1) + 1) % 1 * 0.14;
     tint.copy(t % 2 === 0 ? primary : secondary).multiplyScalar(jitter);
     mesh.setColorAt(i, tint);
   });
@@ -2031,9 +2426,623 @@ function buildCornerVirageQuadrant(
         )
       );
     }
+
+    if (
+      (doc.concourse?.width ?? 0) <= 0.5 &&
+      mats.facadePattern &&
+      mats.facadePattern !== 'none'
+    ) {
+      const cornerFacadeRail: FacadeRailSample[] = [];
+      for (let s = 0; s <= segs; s++) {
+        const cr = crestPerSlice[s];
+        const pt = sampleCornerQuadrantPoint(corner, s / segs, cr.outerD + 0.15);
+        cornerFacadeRail.push({
+          x: pt.x,
+          z: pt.z,
+          nx: pt.nx,
+          nz: pt.nz,
+          yBottom: cr.gradeY + 0.2,
+          yTop: Math.max(cr.gradeY + 1.8, cr.topH - 0.15),
+        });
+      }
+      const patGroup = buildParametricFacadeOnRail({
+        samples: cornerFacadeRail,
+        closed: false,
+        pattern: mats.facadePattern,
+        density: mats.facadeDensity ?? 1.0,
+        depth: mats.facadeDepth ?? 0.85,
+        primaryMat: facadeMat,
+        accentMat: structureMat,
+      });
+      if (patGroup) group.add(patGroup);
+    }
   }
 
   return group;
+}
+
+let cornerScoreboardTexCache: THREE.CanvasTexture | null = null;
+function getCornerScoreboardTexture(): THREE.CanvasTexture {
+  if (cornerScoreboardTexCache) return cornerScoreboardTexCache;
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 288;
+  const ctx = canvas.getContext('2d')!;
+
+  const bg = ctx.createLinearGradient(0, 0, 0, 288);
+  bg.addColorStop(0, '#071326');
+  bg.addColorStop(0.55, '#0b223e');
+  bg.addColorStop(1, '#061527');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, 512, 288);
+
+  // Subtle LED pixel matrix scanlines
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.08)';
+  for (let y = 0; y < 288; y += 6) {
+    ctx.fillRect(0, y, 512, 2);
+  }
+
+  // Top telemetry header bar
+  ctx.fillStyle = '#0ea5e9';
+  ctx.fillRect(24, 20, 464, 34);
+  ctx.fillStyle = '#04101f';
+  ctx.font = 'bold 20px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('DIRECT  •  67:42', 256, 44);
+
+  // Home / Away neutral badges & score
+  ctx.fillStyle = '#1e3a5f';
+  ctx.fillRect(36, 76, 132, 132);
+  ctx.fillRect(344, 76, 132, 132);
+
+  ctx.fillStyle = '#38bdf8';
+  ctx.fillRect(58, 98, 88, 88);
+  ctx.fillStyle = '#f59e0b';
+  ctx.fillRect(366, 98, 88, 88);
+
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = 'bold 84px monospace';
+  ctx.fillText('2 : 1', 256, 168);
+
+  // Bottom match metrics strip
+  ctx.fillStyle = '#0f2942';
+  ctx.fillRect(24, 228, 464, 38);
+  ctx.fillStyle = '#34d399';
+  ctx.fillRect(36, 242, 248, 10);
+  ctx.fillStyle = '#f59e0b';
+  ctx.fillRect(290, 242, 186, 10);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  cornerScoreboardTexCache = tex;
+  return tex;
+}
+
+/**
+ * Builds a glazed multi-storey corner hospitality / club offices / media pavilion (`mode === 'building'`).
+ * Every vertex stays strictly at `radialOffset >= 1.2`, guaranteeing zero pitch intrusion.
+ */
+function buildCornerBuildingPavilion(
+  corner: RectangularCornerSpec,
+  doc: StadiumDocument,
+  concreteMat: THREE.MeshStandardMaterial,
+  facadeMat: THREE.Material,
+  structureMat: THREE.Material,
+  vipTex: THREE.CanvasTexture,
+  turnstileTex: THREE.CanvasTexture
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = `CornerBuilding_${corner.id.toUpperCase()}`;
+
+  const mats = resolveStadiumMaterials(doc);
+  const isNight = doc.lighting !== 'day';
+  const sunkenDepth = getEffectiveSunkenDepth(doc);
+
+  const standA = doc.stands[corner.sideA];
+  const standB = doc.stands[corner.sideB];
+  const profA = buildStandProfilePoints(standA, false);
+  const profB = buildStandProfilePoints(standB, false);
+
+  const segs = corner.facetedThreeBay ? 15 : 22;
+  const frontOff = 1.45;
+  const sliceSpecs: { outerD: number; topH: number; gradeY: number }[] = [];
+
+  for (let s = 0; s <= segs; s++) {
+    const u = s / segs;
+    const w = u * u * (3 - 2 * u);
+    const dA = standA.enabled ? profA.totalDepth : profB.totalDepth;
+    const dB = standB.enabled ? profB.totalDepth : profA.totalDepth;
+    const hA = standA.enabled ? profA.topHeight : profB.topHeight;
+    const hB = standB.enabled ? profB.topHeight : profA.topHeight;
+    const outerD = Math.max(frontOff + 10.5, dA + (dB - dA) * w);
+    const topH = Math.max(10.5, hA + (hB - hA) * w);
+    const gradeY = Math.min(sunkenDepth, Math.max(0, topH * 0.55));
+    sliceSpecs.push({ outerD, topH, gradeY });
+  }
+
+  const buildSweptWall = (
+    radFn: (s: number) => number,
+    yBotFn: (s: number) => number,
+    yTopFn: (s: number) => number,
+    mat: THREE.Material,
+    uRep: number = 4,
+    vRep: number = 2
+  ) => {
+    const pos = new Float32Array((segs + 1) * 2 * 3);
+    const uvs = new Float32Array((segs + 1) * 2 * 2);
+    const idx: number[] = [];
+    for (let s = 0; s <= segs; s++) {
+      const pt = sampleCornerQuadrantPoint(corner, s / segs, radFn(s));
+      const b = s * 6;
+      pos[b] = pt.x;
+      pos[b + 1] = yBotFn(s);
+      pos[b + 2] = pt.z;
+      pos[b + 3] = pt.x;
+      pos[b + 4] = yTopFn(s);
+      pos[b + 5] = pt.z;
+
+      const u = (s / segs) * uRep;
+      uvs[s * 4] = u;
+      uvs[s * 4 + 1] = 0;
+      uvs[s * 4 + 2] = u;
+      uvs[s * 4 + 3] = vRep;
+    }
+    for (let s = 0; s < segs; s++) {
+      const a = s * 2;
+      const b = (s + 1) * 2;
+      const c = b + 1;
+      const d = a + 1;
+      idx.push(a, d, b, b, d, c);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return mesh;
+  };
+
+  const buildSweptDeck = (
+    radInFn: (s: number) => number,
+    radOutFn: (s: number) => number,
+    yFn: (s: number) => number,
+    mat: THREE.Material
+  ) => {
+    const pos = new Float32Array((segs + 1) * 2 * 3);
+    const uvs = new Float32Array((segs + 1) * 2 * 2);
+    const idx: number[] = [];
+    for (let s = 0; s <= segs; s++) {
+      const pIn = sampleCornerQuadrantPoint(corner, s / segs, radInFn(s));
+      const pOut = sampleCornerQuadrantPoint(corner, s / segs, radOutFn(s));
+      const py = yFn(s);
+      const b = s * 6;
+      pos[b] = pIn.x;
+      pos[b + 1] = py;
+      pos[b + 2] = pIn.z;
+      pos[b + 3] = pOut.x;
+      pos[b + 4] = py;
+      pos[b + 5] = pOut.z;
+      uvs[s * 4] = (s / segs) * 4;
+      uvs[s * 4 + 1] = 0;
+      uvs[s * 4 + 2] = (s / segs) * 4;
+      uvs[s * 4 + 3] = 1;
+    }
+    for (let s = 0; s < segs; s++) {
+      const a = s * 2;
+      const b = (s + 1) * 2;
+      const c = b + 1;
+      const d = a + 1;
+      idx.push(a, b, d, b, c, d);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return mesh;
+  };
+
+  const curtainGlassMat = new THREE.MeshPhysicalMaterial({
+    map: vipTex,
+    emissive: new THREE.Color(isNight ? 0xf59e0b : 0x0ea5e9),
+    emissiveMap: vipTex,
+    emissiveIntensity: isNight ? 0.72 : 0.14,
+    roughness: 0.08,
+    metalness: 0.32,
+    clearcoat: 0.94,
+    side: THREE.DoubleSide,
+  });
+
+  const balconyGlassMat = new THREE.MeshPhysicalMaterial({
+    color: 0xdbeafe,
+    roughness: 0.08,
+    metalness: 0.12,
+    clearcoat: 0.95,
+    transparent: true,
+    opacity: 0.56,
+    side: THREE.DoubleSide,
+  });
+
+  // 1. Pitch-facing panoramic glazed curtain wall (`radialOffset = frontOff + 1.15`, recessed behind balconies)
+  group.add(
+    buildSweptWall(
+      () => frontOff + 1.15,
+      () => 0,
+      (s) => sliceSpecs[s].topH - 0.35,
+      curtainGlassMat,
+      5,
+      4
+    )
+  );
+
+  // 2. Ground plinth wall facing pitch + multi-level cantilevered panoramic VIP terrace slabs & glass railings
+  group.add(
+    buildSweptWall(
+      () => frontOff,
+      () => 0,
+      () => 2.6,
+      concreteMat,
+      3,
+      1
+    )
+  );
+
+  const avgTopH = sliceSpecs[Math.floor(segs / 2)].topH;
+  const floorStep = 3.85;
+  const floorCount = Math.max(2, Math.floor((avgTopH - 2.4) / floorStep));
+
+  for (let f = 1; f <= floorCount; f++) {
+    const frac = f / (floorCount + 0.35);
+    // Floor slab fascia + balcony deck + glass balustrade
+    group.add(
+      buildSweptDeck(
+        () => frontOff,
+        (s) => sliceSpecs[s].outerD,
+        (s) => 1.8 + frac * (sliceSpecs[s].topH - 2.2),
+        concreteMat
+      ),
+      buildSweptWall(
+        () => frontOff,
+        (s) => 1.8 + frac * (sliceSpecs[s].topH - 2.2) - 0.32,
+        (s) => 1.8 + frac * (sliceSpecs[s].topH - 2.2) + 0.05,
+        structureMat,
+        4,
+        1
+      ),
+      buildSweptWall(
+        () => frontOff + 0.06,
+        (s) => 1.8 + frac * (sliceSpecs[s].topH - 2.2) + 0.05,
+        (s) => 1.8 + frac * (sliceSpecs[s].topH - 2.2) + 1.1,
+        balconyGlassMat,
+        4,
+        1
+      )
+    );
+  }
+
+  // 3. Rooftop slab, penthouse mechanical volume & overhang cornice
+  group.add(
+    buildSweptDeck(
+      () => frontOff - 0.2,
+      (s) => sliceSpecs[s].outerD + 0.45,
+      (s) => sliceSpecs[s].topH,
+      concreteMat
+    ),
+    buildSweptWall(
+      () => frontOff - 0.2,
+      (s) => sliceSpecs[s].topH - 0.48,
+      (s) => sliceSpecs[s].topH + 0.45,
+      structureMat,
+      4,
+      1
+    ),
+    // Exterior rear facade + ground entrance lobby
+    buildSweptWall(
+      (s) => sliceSpecs[s].outerD,
+      (s) => Math.min(sliceSpecs[s].topH - 0.8, sliceSpecs[s].gradeY + 3.4),
+      (s) => sliceSpecs[s].topH,
+      facadeMat,
+      4,
+      2
+    )
+  );
+
+  const turnMat = new THREE.MeshPhysicalMaterial({
+    map: turnstileTex,
+    emissive: new THREE.Color(isNight ? 0xfbbf24 : 0x000000),
+    emissiveMap: turnstileTex,
+    emissiveIntensity: isNight ? 0.55 : 0,
+    roughness: 0.18,
+    metalness: 0.35,
+    clearcoat: 0.85,
+    side: THREE.DoubleSide,
+  });
+  group.add(
+    buildSweptWall(
+      (s) => sliceSpecs[s].outerD + 0.45,
+      (s) => sliceSpecs[s].gradeY,
+      (s) => Math.min(sliceSpecs[s].topH - 0.6, sliceSpecs[s].gradeY + 3.4),
+      turnMat,
+      3,
+      1
+    )
+  );
+
+  // 4. Vertical structural mullions on pitch-facing curtain wall + flank end-walls
+  const mullionCount = 7;
+  for (let m = 0; m <= mullionCount; m++) {
+    const u = m / mullionCount;
+    const sIdx = Math.min(segs, Math.round(u * segs));
+    const pt = sampleCornerQuadrantPoint(corner, u, frontOff + 1.05);
+    group.add(
+      createStrut(
+        new THREE.Vector3(pt.x, 0, pt.z),
+        new THREE.Vector3(pt.x, sliceSpecs[sIdx].topH, pt.z),
+        0.16,
+        0.18,
+        structureMat,
+        6
+      )
+    );
+  }
+
+  for (const endIdx of [0, segs]) {
+    const uEnd = endIdx / segs;
+    const spec = sliceSpecs[endIdx];
+    const pIn = sampleCornerQuadrantPoint(corner, uEnd, frontOff);
+    const pOut = sampleCornerQuadrantPoint(corner, uEnd, spec.outerD);
+    const spanD = Math.hypot(pOut.x - pIn.x, pOut.z - pIn.z);
+    const flankWall = new THREE.Mesh(
+      new THREE.BoxGeometry(0.38, spec.topH, spanD),
+      concreteMat
+    );
+    flankWall.position.set(
+      (pIn.x + pOut.x) * 0.5,
+      spec.topH * 0.5,
+      (pIn.z + pOut.z) * 0.5
+    );
+    flankWall.rotation.y = Math.atan2(pOut.x - pIn.x, pOut.z - pIn.z);
+    flankWall.castShadow = true;
+    flankWall.receiveShadow = true;
+    group.add(flankWall);
+  }
+
+  // 5. Parametric facade relief on outer pavilion wall when concourse is disabled
+  if (
+    (doc.concourse?.width ?? 0) <= 0.5 &&
+    mats.facadePattern &&
+    mats.facadePattern !== 'none'
+  ) {
+    const rail: FacadeRailSample[] = [];
+    for (let s = 0; s <= segs; s++) {
+      const sp = sliceSpecs[s];
+      const pt = sampleCornerQuadrantPoint(corner, s / segs, sp.outerD + 0.15);
+      rail.push({
+        x: pt.x,
+        z: pt.z,
+        nx: pt.nx,
+        nz: pt.nz,
+        yBottom: sp.gradeY + 0.3,
+        yTop: Math.max(sp.gradeY + 2.0, sp.topH - 0.15),
+      });
+    }
+    const pat = buildParametricFacadeOnRail({
+      samples: rail,
+      closed: false,
+      pattern: mats.facadePattern,
+      density: mats.facadeDensity ?? 1.0,
+      depth: mats.facadeDepth ?? 0.85,
+      primaryMat: facadeMat,
+      accentMat: structureMat,
+    });
+    if (pat) group.add(pat);
+  }
+
+  return group;
+}
+
+/**
+ * Builds a monumental corner LED giant scoreboard on a 4-column steel lattice gantry (`mode === 'screen'`).
+ * Positioned at `radialOffset = 6.5` along the 45° corner bisector, strictly outside pitch bounds.
+ */
+function buildCornerScreenStructure(
+  corner: RectangularCornerSpec,
+  doc: StadiumDocument,
+  concreteMat: THREE.MeshStandardMaterial,
+  structureMat: THREE.Material
+): THREE.Group {
+  const wrapper = new THREE.Group();
+  wrapper.name = `CornerScreen_${corner.id.toUpperCase()}`;
+
+  const standA = doc.stands[corner.sideA];
+  const standB = doc.stands[corner.sideB];
+  const profA = buildStandProfilePoints(standA, false);
+  const profB = buildStandProfilePoints(standB, false);
+  const refH = Math.max(
+    15.5,
+    ((standA.enabled ? profA.topHeight : 18) + (standB.enabled ? profB.topHeight : 18)) * 0.5
+  );
+
+  const anchor = sampleCornerQuadrantPoint(corner, 0.5, 6.8);
+  const assembly = new THREE.Group();
+  assembly.position.set(anchor.x, 0, anchor.z);
+  // Orient local +Z directly toward pitch center `(0, 0, 0)`
+  assembly.rotation.y = Math.atan2(-anchor.x, -anchor.z);
+
+  const screenW = 15.8;
+  const screenH = 8.9;
+  const screenCenterY = Math.max(12.2, refH * 0.66);
+  const gantryTopY = screenCenterY + screenH * 0.5 + 1.65;
+  const legHalfX = screenW * 0.42;
+  const frontLegZ = -0.35;
+  const rearLegZ = -3.45;
+
+  // Concrete foundation pedestals + 4 vertical lattice legs
+  for (const lx of [-legHalfX, legHalfX]) {
+    for (const lz of [frontLegZ, rearLegZ]) {
+      const plinth = new THREE.Mesh(
+        new THREE.BoxGeometry(1.65, 1.8, 1.65),
+        concreteMat
+      );
+      plinth.position.set(lx, 0.9, lz);
+      plinth.castShadow = true;
+      plinth.receiveShadow = true;
+      assembly.add(plinth);
+
+      assembly.add(
+        createStrut(
+          new THREE.Vector3(lx, 1.5, lz),
+          new THREE.Vector3(lx, gantryTopY, lz),
+          0.26,
+          0.34,
+          structureMat,
+          8
+        )
+      );
+    }
+
+    // Transverse & K-bracing between front & rear legs
+    const levels = 5;
+    for (let lv = 1; lv <= levels; lv++) {
+      const y0 = 1.6 + ((lv - 1) * (gantryTopY - 2.0)) / levels;
+      const y1 = 1.6 + (lv * (gantryTopY - 2.0)) / levels;
+      assembly.add(
+        createStrut(
+          new THREE.Vector3(lx, y1, frontLegZ),
+          new THREE.Vector3(lx, y1, rearLegZ),
+          0.14,
+          0.14,
+          structureMat,
+          5
+        ),
+        createStrut(
+          new THREE.Vector3(lx, y0, frontLegZ),
+          new THREE.Vector3(lx, y1, rearLegZ),
+          0.11,
+          0.11,
+          structureMat,
+          5
+        )
+      );
+    }
+  }
+
+  // Horizontal portal cross-beams & X-bracing across the gantry width
+  for (const by of [
+    screenCenterY - screenH * 0.5 - 0.65,
+    screenCenterY,
+    gantryTopY - 0.25,
+  ]) {
+    assembly.add(
+      createStrut(
+        new THREE.Vector3(-legHalfX - 0.9, by, frontLegZ),
+        new THREE.Vector3(legHalfX + 0.9, by, frontLegZ),
+        0.2,
+        0.2,
+        structureMat,
+        6
+      ),
+      createStrut(
+        new THREE.Vector3(-legHalfX - 0.9, by, rearLegZ),
+        new THREE.Vector3(legHalfX + 0.9, by, rearLegZ),
+        0.18,
+        0.18,
+        structureMat,
+        6
+      )
+    );
+  }
+  assembly.add(
+    createStrut(
+      new THREE.Vector3(-legHalfX, 2.0, rearLegZ),
+      new THREE.Vector3(legHalfX, screenCenterY - screenH * 0.5 - 0.65, rearLegZ),
+      0.13,
+      0.13,
+      structureMat,
+      5
+    ),
+    createStrut(
+      new THREE.Vector3(legHalfX, 2.0, rearLegZ),
+      new THREE.Vector3(-legHalfX, screenCenterY - screenH * 0.5 - 0.65, rearLegZ),
+      0.13,
+      0.13,
+      structureMat,
+      5
+    )
+  );
+
+  // Rear maintenance catwalks
+  const catwalkMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    roughness: 0.5,
+    metalness: 0.72,
+  });
+  for (const cy of [screenCenterY - screenH * 0.32, screenCenterY + screenH * 0.28]) {
+    const walk = new THREE.Mesh(
+      new THREE.BoxGeometry(screenW - 0.8, 0.16, 2.4),
+      catwalkMat
+    );
+    walk.position.set(0, cy, (frontLegZ + rearLegZ) * 0.5);
+    assembly.add(walk);
+  }
+
+  // Dark anodized LED cabinet housing + top architectural visor hood + line-array audio pods
+  const cabinetMat = new THREE.MeshStandardMaterial({
+    color: 0x0f172a,
+    roughness: 0.36,
+    metalness: 0.68,
+  });
+  const cabinet = new THREE.Mesh(
+    new THREE.BoxGeometry(screenW + 0.75, screenH + 0.75, 0.88),
+    cabinetMat
+  );
+  cabinet.position.set(0, screenCenterY, 0.22);
+  cabinet.castShadow = true;
+  cabinet.receiveShadow = true;
+  assembly.add(cabinet);
+
+  const sunHood = new THREE.Mesh(
+    new THREE.BoxGeometry(screenW + 0.95, 0.26, 1.35),
+    cabinetMat
+  );
+  sunHood.position.set(0, screenCenterY + screenH * 0.5 + 0.32, 0.48);
+  sunHood.castShadow = true;
+  assembly.add(sunHood);
+
+  const scoreTex = getCornerScoreboardTexture();
+  const screenMat = new THREE.MeshStandardMaterial({
+    map: scoreTex,
+    emissive: new THREE.Color(0xffffff),
+    emissiveMap: scoreTex,
+    emissiveIntensity: doc.lighting === 'day' ? 0.62 : 1.25,
+    roughness: 0.16,
+    metalness: 0.08,
+  });
+  const ledFace = new THREE.Mesh(new THREE.PlaneGeometry(screenW, screenH), screenMat);
+  ledFace.position.set(0, screenCenterY, 0.68);
+  assembly.add(ledFace);
+
+  // Line-array stadium loudspeaker clusters suspended beneath the cabinet
+  for (const sx of [-screenW * 0.28, screenW * 0.28]) {
+    const arrayPod = new THREE.Mesh(
+      new THREE.BoxGeometry(1.15, 2.1, 0.95),
+      cabinetMat
+    );
+    arrayPod.position.set(sx, screenCenterY - screenH * 0.5 - 1.35, 0.35);
+    arrayPod.rotation.x = 0.22;
+    arrayPod.castShadow = true;
+    assembly.add(arrayPod);
+  }
+
+  wrapper.add(assembly);
+  return wrapper;
 }
 
 /**
@@ -2256,15 +3265,16 @@ function buildModernBowlSweep(
   const avgDistZ =
     (doc.stands.north.distanceToPitch + doc.stands.south.distanceToPitch) * 0.5;
 
+  const safePitch = clampPitchToTrack(doc.pitch);
   const bowlRing = buildShapeBowlRing(
     doc.shape,
-    doc.pitch.length,
-    doc.pitch.width,
+    safePitch.length,
+    safePitch.width,
     avgDistX,
     avgDistZ,
     trackOffsets.endOffset,
     trackOffsets.sideOffset,
-    doc.pitch.hasTrack
+    safePitch.hasTrack
   );
 
   const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
@@ -2326,13 +3336,23 @@ function buildModernBowlSweep(
     isSeatSegmentMask.push(false, false);
   }
 
-  const balconyOverhangDist = doc.shape === 'steep_cauldron' ? -1.35 : -0.9;
   const profilePtsPerSlice: [number, number][][] = [];
   const topCrestPerSlice: [number, number][] = [];
+  const sliceCornerId: (CornerId | null)[] = [];
 
   for (let s = 0; s < ringCount; s++) {
     const t = tAtSlice(s);
     const baseSample = sampleRoundedBowlRing(bowlRing, t, 0);
+
+    // Identify corner quadrant when slice lies on a corner arc/chamfer (`|nx| > 0.22 && |nz| > 0.22`)
+    let cQuad: CornerId | null = null;
+    if (Math.abs(baseSample.nx) > 0.22 && Math.abs(baseSample.nz) > 0.22) {
+      if (baseSample.nx > 0 && baseSample.nz > 0) cQuad = 'se';
+      else if (baseSample.nx < 0 && baseSample.nz > 0) cQuad = 'sw';
+      else if (baseSample.nx < 0 && baseSample.nz < 0) cQuad = 'nw';
+      else cQuad = 'ne';
+    }
+    sliceCornerId.push(cQuad);
 
     const env = evalStandEnvelopeAt(baseSample.nx, baseSample.nz);
     const domSide = dominantSideAt(baseSample.nx, baseSample.nz);
@@ -2340,6 +3360,14 @@ function buildModernBowlSweep(
     const domTiers = domStand.enabled ? domStand.tiers : 1;
     const domVip = domTiers >= 2 && domStand.vipLoges !== false;
     const breakUnitH = domVip ? 2.4 : 1.45;
+    const recOffset = domVip ? 1.35 : 0.75;
+    const standOverhang =
+      domStand.tierOverhang !== undefined
+        ? domStand.tierOverhang
+        : doc.shape === 'steep_cauldron'
+        ? 2.7
+        : 2.25;
+    const balconyOverhangDist = recOffset - standOverhang;
 
     const activeBreakSlots =
       domTiers === 2
@@ -2380,7 +3408,7 @@ function buildModernBowlSweep(
     for (let k = 0; k < N_TERRACE_STEPS; k++) {
       if (k === 6 || k === 12 || k === 18 || k === 24) {
         if (activeBreakSlots.includes(k)) {
-          const recD = curD + (domVip ? 1.35 : 0.75);
+          const recD = curD + recOffset;
           const overD = Math.max(2.0, curD + balconyOverhangDist);
           const logH = domVip ? 1.65 : 0.9;
           pts.push([recD, curY]);
@@ -2430,6 +3458,147 @@ function buildModernBowlSweep(
     profilePtsPerSlice.push(pts);
   }
 
+  // Custom corner cutouts (`open`, `building`, `screen`) when user configures `doc.corners` on a continuous bowl
+  const resolvedCorners = resolveAllCorners(doc);
+  const hasCustomCornerCutout = (['nw', 'ne', 'sw', 'se'] as CornerId[]).some(
+    (cid) => doc.corners?.[cid] !== undefined && resolvedCorners[cid] !== 'filled'
+  );
+  const isSliceInOpenCorner = (s: number): boolean => {
+    if (!hasCustomCornerCutout) return false;
+    const cid = sliceCornerId[s % ringCount];
+    if (!cid) return false;
+    return doc.corners?.[cid] !== undefined && resolvedCorners[cid] !== 'filled';
+  };
+
+  // Map each terrace step `k` (`0..N_TERRACE_STEPS-1`) to its `[treadSegIdx, riserSegIdx]` in `profilePtsPerSlice`
+  const stepSegPairs: [number, number][] = [];
+  {
+    let pCursor = 3; // after front parapet [0..3]
+    for (let k = 0; k < N_TERRACE_STEPS; k++) {
+      if (k === 6 || k === 12 || k === 18 || k === 24) {
+        pCursor += 4;
+      }
+      stepSegPairs.push([pCursor, pCursor + 1]);
+      pCursor += 2;
+    }
+  }
+
+  // Compute carved vomitory holes & recessed 3D vomitory portals around the bowl sectors
+  const bowlHoleMap = new Map<number, Set<number>>();
+  const vomPortalMat = new THREE.MeshStandardMaterial({
+    color: 0xdbe2ea,
+    roughness: 0.72,
+    metalness: 0.08,
+  });
+  const darkVomMat = new THREE.MeshStandardMaterial({
+    color: 0x030712,
+    roughness: 0.96,
+  });
+  const vomRailMat = new THREE.MeshStandardMaterial({
+    color: 0xe2e8f0,
+    roughness: 0.28,
+    metalness: 0.85,
+  });
+
+  const sectorTDefs: { side: StandSide; tCenter: number; halfSpan: number }[] = [
+    { side: 'south', tCenter: 0.25, halfSpan: 0.072 },
+    { side: 'west', tCenter: 0.5, halfSpan: 0.052 },
+    { side: 'north', tCenter: 0.75, halfSpan: 0.072 },
+    { side: 'east', tCenter: 0.0, halfSpan: 0.052 },
+  ];
+
+  for (const sec of sectorTDefs) {
+    if (crossSectionClip && sec.side === 'south') continue;
+    if (doc.shape === 'horseshoe' && sec.side === 'east') continue;
+    const st = doc.stands[sec.side];
+    if (!st.enabled || st.rows <= 0) continue;
+
+    const vomSpec = resolveStandVomitories(st);
+    if (vomSpec.count <= 0) continue;
+
+    // Pick step range on lower/primary tier (`kStart .. kStart + 2`) avoiding break slots `6, 12, 18, 24`
+    const maxStep = st.tiers >= 2 ? 10 : N_TERRACE_STEPS - 4;
+    let kStart = Math.max(
+      2,
+      Math.min(maxStep, Math.round(maxStep * vomSpec.rowRatio))
+    );
+    if (kStart === 5 || kStart === 6) kStart = 7;
+
+    const segSet = new Set<number>();
+    for (let dk = 0; dk < 3 && kStart + dk < N_TERRACE_STEPS; dk++) {
+      const [tSeg, rSeg] = stepSegPairs[kStart + dk];
+      segSet.add(tSeg);
+      segSet.add(rSeg);
+    }
+
+    for (let v = 0; v < vomSpec.count; v++) {
+      const frac =
+        (v + 0.5) / vomSpec.count - 0.5 + vomSpec.offsetRatio * 0.35;
+      let tTarget = sec.tCenter + frac * (sec.halfSpan * 2);
+      tTarget = ((tTarget % 1) + 1) % 1;
+
+      // Find nearest active slice
+      let bestS = -1;
+      let bestDist = 999;
+      for (let s = 0; s < activeSegments; s++) {
+        const ts = ((tAtSlice(s) % 1) + 1) % 1;
+        let diff = Math.abs(ts - tTarget);
+        if (diff > 0.5) diff = 1 - diff;
+        if (diff < bestDist) {
+          bestDist = diff;
+          bestS = s;
+        }
+      }
+      if (bestS < 0 || bestDist > 0.025 || isSliceInOpenCorner(bestS)) continue;
+
+      let existing = bowlHoleMap.get(bestS);
+      if (!existing) {
+        existing = new Set<number>();
+        bowlHoleMap.set(bestS, existing);
+      }
+      for (const segId of segSet) existing.add(segId);
+
+      // Place 3D recessed vomitory portal centered on slice `bestS` -> `nextS`
+      const nextS = closed ? (bestS + 1) % ringCount : Math.min(ringCount - 1, bestS + 1);
+      const tMid = 0.5 * (tAtSlice(bestS) + tAtSlice(nextS));
+      const pStart = profilePtsPerSlice[bestS][stepSegPairs[kStart][0]];
+      const pEnd =
+        profilePtsPerSlice[bestS][
+          stepSegPairs[Math.min(N_TERRACE_STEPS - 1, kStart + 2)][1] + 1
+        ];
+      if (pStart && pEnd) {
+        const ptA = sampleRoundedBowlRing(bowlRing, tAtSlice(bestS), pStart[0]);
+        const ptB = sampleRoundedBowlRing(bowlRing, tAtSlice(nextS), pStart[0]);
+        const chordW = Math.max(1.8, Math.hypot(ptB.x - ptA.x, ptB.z - ptA.z) * 0.94);
+        const openD = Math.max(1.6, pEnd[0] - pStart[0]);
+        const openH = Math.max(1.4, pEnd[1] - pStart[1]);
+        const midPt = sampleRoundedBowlRing(bowlRing, tMid, pStart[0]);
+
+        const portal = createCarvedVomitoryTunnel(
+          chordW,
+          openD,
+          openH,
+          vomPortalMat,
+          darkVomMat,
+          vomRailMat,
+          doc.lighting !== 'day'
+        );
+        portal.position.set(midPt.x, pStart[1], midPt.z);
+        portal.rotation.y = Math.atan2(midPt.nx, midPt.nz);
+        group.add(portal);
+      }
+    }
+  }
+
+  const isBowlQuadHole = (s: number, p: number): boolean => {
+    const nextS = closed ? (s + 1) % ringCount : s + 1;
+    if (isSliceInOpenCorner(s) || isSliceInOpenCorner(nextS)) {
+      return true;
+    }
+    const set = bowlHoleMap.get(s);
+    return set ? set.has(p) : false;
+  };
+
   const bowlGeo = buildMultiMaterialSweptStandGeometry(
     ringCount,
     activeSegments,
@@ -2440,7 +3609,9 @@ function buildModernBowlSweep(
       return [pt.x, py, pt.z];
     },
     isSeatSegmentMask,
-    Math.max(10, Math.round(18 * arcFraction))
+    Math.max(10, Math.round(18 * arcFraction)),
+    2.2,
+    isBowlQuadHole
   );
 
   const seatMat = createSeatTerracePbrMaterial(
@@ -2476,8 +3647,79 @@ function buildModernBowlSweep(
       aisleWidth: refStand.aisleWidth,
       primaryHex: doc.colors.seatsPrimary,
       secondaryHex: doc.colors.seatsSecondary,
+      isHoleQuad: isBowlQuadHole,
     });
     if (seats) group.add(seats);
+  }
+
+  // When a continuous bowl has custom non-filled corners (`open`, `building`, `screen`), cap cut ends & build corner inserts!
+  if (hasCustomCornerCutout) {
+    const capWallMat = concreteMat.clone();
+    capWallMat.side = THREE.DoubleSide;
+    for (let s = 0; s < activeSegments; s++) {
+      const nextS = closed ? (s + 1) % ringCount : s + 1;
+      const openCur = isSliceInOpenCorner(s);
+      const openNxt = isSliceInOpenCorner(nextS);
+      if (openCur !== openNxt) {
+        const boundaryIdx = openCur ? nextS : s;
+        const pts2d = profilePtsPerSlice[boundaryIdx];
+        const capShape = new THREE.Shape();
+        capShape.moveTo(pts2d[0][0], pts2d[0][1]);
+        for (let i = 1; i < pts2d.length; i++) {
+          capShape.lineTo(pts2d[i][0], pts2d[i][1]);
+        }
+        capShape.closePath();
+        const capGeo = new THREE.ShapeGeometry(capShape);
+        const posAttr = capGeo.attributes.position;
+        const tCap = tAtSlice(boundaryIdx);
+        for (let i = 0; i < posAttr.count; i++) {
+          const radD = posAttr.getX(i);
+          const py = posAttr.getY(i);
+          const wPt = sampleRoundedBowlRing(bowlRing, tCap, radD);
+          posAttr.setXYZ(i, wPt.x, py, wPt.z);
+        }
+        capGeo.computeVertexNormals();
+        const capMesh = new THREE.Mesh(capGeo, capWallMat);
+        capMesh.castShadow = true;
+        group.add(capMesh);
+      }
+    }
+
+    const cornerLayout = computeRectangularCornerLayout({
+      shape: 'compact_urban',
+      cornerFill: true,
+      cornerModes: resolvedCorners,
+      crossSectionClip,
+      pitchLength: safePitch.length,
+      pitchWidth: safePitch.width,
+      endTrackOffset: trackOffsets.endOffset,
+      sideTrackOffset: trackOffsets.sideOffset,
+      stands: doc.stands,
+    });
+    const cFacadeMat = createFacadePbrMaterial(mats.facade, doc.lighting, false, maxAnisotropy);
+    const cStructMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
+
+    for (const cid of ['se', 'sw', 'nw', 'ne'] as CornerId[]) {
+      if (doc.corners?.[cid] === undefined) continue;
+      const spec = cornerLayout.corners[cid];
+      if (!spec.active) continue;
+      if (doc.shape === 'horseshoe' && (cid === 'se' || cid === 'ne')) continue;
+      if (spec.mode === 'building') {
+        group.add(
+          buildCornerBuildingPavilion(
+            spec,
+            doc,
+            concreteMat,
+            cFacadeMat,
+            cStructMat,
+            vipTex,
+            turnstileTex
+          )
+        );
+      } else if (spec.mode === 'screen') {
+        group.add(buildCornerScreenStructure(spec, doc, concreteMat, cStructMat));
+      }
+    }
   }
 
   // Continuous Pitch-Side Laminated Glass Safety Balustrade around the swept bowl front parapet
@@ -3212,6 +4454,39 @@ function buildModernBowlSweep(
         }
       }
     }
+
+    // Parametric 3D Facade Relief on swept bowl exterior when outer concourse is disabled
+    if (
+      (doc.concourse?.width ?? 0) <= 0.5 &&
+      mats.facadePattern &&
+      mats.facadePattern !== 'none'
+    ) {
+      const bowlRail: FacadeRailSample[] = [];
+      for (let s = 0; s < ringCount; s++) {
+        if (isSliceInOpenCorner(s)) continue;
+        const [outerD, crestY] = topCrestPerSlice[s];
+        const gradeY = Math.min(sunkenDepth, crestY * 0.65);
+        const pt = sampleRoundedBowlRing(bowlRing, tAtSlice(s), outerD + 1.05);
+        bowlRail.push({
+          x: pt.x,
+          z: pt.z,
+          nx: pt.nx,
+          nz: pt.nz,
+          yBottom: gradeY + 0.3,
+          yTop: Math.max(gradeY + 2.0, crestY - 0.15),
+        });
+      }
+      const pat = buildParametricFacadeOnRail({
+        samples: bowlRail,
+        closed: closed && !hasCustomCornerCutout,
+        pattern: mats.facadePattern,
+        density: mats.facadeDensity ?? 1.0,
+        depth: mats.facadeDepth ?? 0.85,
+        primaryMat: facadeMat,
+        accentMat: structureMat,
+      });
+      if (pat) group.add(pat);
+    }
   }
 
   return group;
@@ -3253,12 +4528,15 @@ export function generateStandsGroup(
   );
   const structureMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
 
+  const safePitch = clampPitchToTrack(doc.pitch);
+  const cornerModes = resolveAllCorners(doc);
   const rectLayout = computeRectangularCornerLayout({
     shape: doc.shape,
     cornerFill: doc.cornerFill,
+    cornerModes,
     crossSectionClip,
-    pitchLength: doc.pitch.length,
-    pitchWidth: doc.pitch.width,
+    pitchLength: safePitch.length,
+    pitchWidth: safePitch.width,
     endTrackOffset: trackOffsets.endOffset,
     sideTrackOffset: trackOffsets.sideOffset,
     stands: {
@@ -3304,6 +4582,8 @@ export function generateStandsGroup(
       turnstileTex
     );
 
+    standMesh.name = `Stand_${side.toUpperCase()}`;
+
     if (side === 'south') {
       standMesh.position.set(spanSpec.centerCoord, 0, spanSpec.frontDist);
       standMesh.rotation.set(0, 0, 0);
@@ -3321,32 +4601,49 @@ export function generateStandsGroup(
     root.add(standMesh);
   }
 
-  if (rectLayout.closedCornersMode) {
-    const cornerSeatMat = createSeatTerracePbrMaterial(
-      mats.seatFinish,
-      doc.colors.seatsPrimary,
-      doc.colors.seatsSecondary,
-      4,
-      maxAnisotropy,
-      false
-    );
+  const cornerOrder: CornerQuadrantId[] = ['se', 'sw', 'nw', 'ne'];
+  let cornerSeatMat: THREE.MeshPhysicalMaterial | null = null;
+  for (const cId of cornerOrder) {
+    const cornerSpec = rectLayout.corners[cId];
+    if (!cornerSpec.active) continue;
 
-    const cornerOrder: CornerQuadrantId[] = ['se', 'sw', 'nw', 'ne'];
-    for (const cId of cornerOrder) {
-      const cornerSpec = rectLayout.corners[cId];
-      if (!cornerSpec.active) continue;
-
-      const virage = buildCornerVirageQuadrant(
-        cornerSpec,
-        doc,
-        cornerSeatMat,
-        concreteMat,
-        facadeMat,
-        structureMat,
-        vipTex,
-        turnstileTex
+    if (cornerSpec.mode === 'filled') {
+      cornerSeatMat ??= createSeatTerracePbrMaterial(
+        mats.seatFinish,
+        doc.colors.seatsPrimary,
+        doc.colors.seatsSecondary,
+        4,
+        maxAnisotropy,
+        false
       );
-      root.add(virage);
+      root.add(
+        buildCornerVirageQuadrant(
+          cornerSpec,
+          doc,
+          cornerSeatMat,
+          concreteMat,
+          facadeMat,
+          structureMat,
+          vipTex,
+          turnstileTex
+        )
+      );
+    } else if (cornerSpec.mode === 'building') {
+      root.add(
+        buildCornerBuildingPavilion(
+          cornerSpec,
+          doc,
+          concreteMat,
+          facadeMat,
+          structureMat,
+          vipTex,
+          turnstileTex
+        )
+      );
+    } else if (cornerSpec.mode === 'screen') {
+      root.add(
+        buildCornerScreenStructure(cornerSpec, doc, concreteMat, structureMat)
+      );
     }
   }
 
@@ -3359,13 +4656,13 @@ export function generateStandsGroup(
       (doc.stands.north.distanceToPitch + doc.stands.south.distanceToPitch) * 0.5;
     const rectRing = buildShapeBowlRing(
       'modern_bowl',
-      doc.pitch.length,
-      doc.pitch.width,
+      safePitch.length,
+      safePitch.width,
       avgDistX,
       avgDistZ,
       trackOffsets.endOffset,
       trackOffsets.sideOffset,
-      doc.pitch.hasTrack
+      safePitch.hasTrack
     );
     const maxD = Math.max(
       buildStandProfilePoints(doc.stands.south).totalDepth,

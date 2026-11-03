@@ -1,13 +1,17 @@
 import * as THREE from 'three';
 import {
+  CornerMode,
   DEFAULT_STADIUM_MATERIALS,
   EnvelopeStyle,
   FacadeMaterialId,
+  FacadePatternId,
+  FloodlightRigMode,
   LightingMode,
   PitchTurfMaterialId,
   PlazaMaterialId,
   RoofMaterialId,
   SeatMaterialId,
+  SkylightMode,
   StadiumDocument,
   StadiumMaterialsConfig,
   StructureMaterialId,
@@ -343,6 +347,104 @@ export const PLAZA_MATERIAL_CATALOG: MaterialCatalogEntry<PlazaMaterialId>[] = [
     subtitle: 'Asphalte grenaillé sombre & marquages voirie',
     fallbackHex: '#1e293b',
     swatchBackground: 'linear-gradient(135deg, #334155 0%, #0f172a 100%)',
+  },
+];
+
+export interface SimpleCatalogEntry<T extends string> {
+  id: T;
+  label: string;
+  subtitle: string;
+}
+
+export const FACADE_PATTERN_CATALOG: SimpleCatalogEntry<FacadePatternId>[] = [
+  {
+    id: 'none',
+    label: 'Surface standard',
+    subtitle: 'Parement continu défini par l’enveloppe et le matériau',
+  },
+  {
+    id: 'vertical_fins',
+    label: 'Lamelles verticales',
+    subtitle: 'Ailettes brise-soleil en relief à pas et profondeur réglables',
+  },
+  {
+    id: 'diagrid',
+    label: 'Losanges (diagrid)',
+    subtitle: 'Exosquelette croisé en maille losangée tridimensionnelle',
+  },
+  {
+    id: 'cassette_panels',
+    label: 'Panneaux à facettes',
+    subtitle: 'Cassettes modulaires en quinconce à relief architectural',
+  },
+];
+
+export const SKYLIGHT_MODE_CATALOG: SimpleCatalogEntry<SkylightMode>[] = [
+  {
+    id: 'none',
+    label: 'Sans percée dédiée',
+    subtitle: 'Couverture homogène selon l’opacité du matériau choisi',
+  },
+  {
+    id: 'pitch_ring',
+    label: 'Bandeau côté pelouse',
+    subtitle: 'Anneau périphérique vitré favorisant l’ensoleillement du gazon',
+  },
+  {
+    id: 'radial_slots',
+    label: 'Travées radiales',
+    subtitle: 'Percées lumineuses alternées entre les fermes porteuses',
+  },
+  {
+    id: 'grid_oculi',
+    label: 'Verrières & oculus',
+    subtitle: 'Trame d’ouvertures zénithales projetant des puits de lumière',
+  },
+];
+
+export const CORNER_MODE_CATALOG: SimpleCatalogEntry<CornerMode>[] = [
+  {
+    id: 'open',
+    label: 'Ouvert',
+    subtitle: 'Dégagement visuel et ventilation naturelle de la pelouse',
+  },
+  {
+    id: 'filled',
+    label: 'Gradins',
+    subtitle: 'Continuité des rangs en quart de cercle ou à pans coupés',
+  },
+  {
+    id: 'building',
+    label: 'Bâtiment',
+    subtitle: 'Pavillon d’angle vitré pour salons, loges et bureaux',
+  },
+  {
+    id: 'screen',
+    label: 'Écran géant',
+    subtitle: 'Portique d’angle portant un écran LED haute visibilité',
+  },
+];
+
+export const FLOODLIGHT_RIG_CATALOG: SimpleCatalogEntry<FloodlightRigMode>[] = [
+  {
+    id: 'roof_gantry',
+    label: 'Rampe intégrée au toit',
+    subtitle: 'Passerelle linéaire de projecteurs LED en rive intérieure',
+  },
+  {
+    id: 'corner_masts',
+    label: 'Quatre mâts d’angle',
+    subtitle: 'Pylônes treillis monumentaux implantés aux quatre coins',
+  },
+  {
+    id: 'both',
+    label: 'Mâts + rampe de toit',
+    subtitle: 'Double dispositif combinant pylônes d’angle et rampe rive',
+  },
+  {
+    id: 'none',
+    label: 'Aucun éclairage',
+    subtitle: 'Stade de jour sans mâts ni passerelle lumineuse',
   },
 ];
 
@@ -957,6 +1059,162 @@ export function createFacadePbrMaterial(
 // 3. ROOF CLADDING PBR MATERIALS (6 ARCHITECTURAL MATERIALS)
 // ============================================================================
 
+export function isRoofTexelInSkylight(
+  u: number,
+  v: number,
+  skylightMode: SkylightMode = 'none',
+  skylightRatio: number = 0
+): { inSkylight: boolean; isFrame: boolean } {
+  const ratio = Math.max(0, Math.min(0.75, skylightRatio));
+  if (skylightMode === 'none' || ratio <= 0.01) {
+    return { inSkylight: false, isFrame: false };
+  }
+
+  if (skylightMode === 'pitch_ring') {
+    const bandLimit = Math.max(0.08, Math.min(0.72, ratio * 0.92));
+    if (v <= bandLimit) {
+      const mullionU = ((u * 6) % 1) < 0.032;
+      const borderV = v > bandLimit - 0.018 || v < 0.012;
+      return {
+        inSkylight: !mullionU && !borderV,
+        isFrame: mullionU || borderV,
+      };
+    }
+    return { inSkylight: false, isFrame: false };
+  }
+
+  if (skylightMode === 'radial_slots') {
+    if (v < 0.06 || v > 0.92) return { inSkylight: false, isFrame: false };
+    const uf = (u * 3) % 1;
+    const halfSlot = Math.max(0.07, Math.min(0.42, ratio * 0.48));
+    const distU = Math.abs(uf - 0.5);
+    if (distU <= halfSlot) {
+      const border =
+        distU > halfSlot - 0.018 || v < 0.075 || v > 0.905 || ((v * 4) % 1) < 0.022;
+      return {
+        inSkylight: !border,
+        isFrame: border,
+      };
+    }
+    return { inSkylight: false, isFrame: false };
+  }
+
+  // `grid_oculi`
+  const cols = 3;
+  const rows = 3;
+  const cu = ((u * cols) % 1) - 0.5;
+  const cv = ((v * rows) % 1) - 0.5;
+  const rMax = Math.max(0.12, Math.min(0.43, 0.14 + ratio * 0.38));
+  const dist = Math.hypot(cu * 1.05, cv);
+  if (dist <= rMax) {
+    const isRing = dist > rMax - 0.028;
+    return {
+      inSkylight: !isRing,
+      isFrame: isRing,
+    };
+  }
+  return { inSkylight: false, isFrame: false };
+}
+
+export function computeRoofShadowDensity(
+  roofId: RoofMaterialId,
+  opacity: number
+): number {
+  const clampedOpacity = Math.max(0.12, Math.min(1.0, opacity));
+  const intrinsicFactor =
+    roofId === 'polycarbonate_glass'
+      ? 0.52
+      : roofId === 'etfe_cushions'
+      ? 0.64
+      : roofId === 'ptfe_membrane'
+      ? 0.82
+      : 0.98;
+  return Math.max(0.05, Math.min(1.0, clampedOpacity * intrinsicFactor));
+}
+
+const BAYER_8X8: number[][] = [
+  [0, 48, 12, 60, 3, 51, 15, 63],
+  [32, 16, 44, 28, 35, 19, 47, 31],
+  [8, 56, 4, 52, 11, 59, 7, 55],
+  [40, 24, 36, 20, 43, 27, 39, 23],
+  [2, 50, 14, 62, 1, 49, 13, 61],
+  [34, 18, 46, 30, 33, 17, 45, 29],
+  [10, 58, 6, 54, 9, 57, 5, 53],
+  [42, 26, 38, 22, 41, 25, 37, 21],
+];
+
+const shadowAlphaCache = new Map<string, Uint8Array>();
+
+/**
+ * Builds a custom `MeshDepthMaterial` for roof shadow casting so that:
+ * 1. Translucent ETFE / glass roofs with lower `opacity` cast proportionally lighter shadows on `PitchTurf`.
+ * 2. Skylight openings (`pitch_ring`, `radial_slots`, `grid_oculi`) punch direct sunlight beams onto the grass.
+ */
+export function createRoofShadowDepthMaterial(
+  roofId: RoofMaterialId,
+  opacity: number,
+  skylightMode: SkylightMode = 'none',
+  skylightRatio: number = 0,
+  repeatU: number = 1,
+  repeatV: number = 1
+): THREE.MeshDepthMaterial {
+  const density = computeRoofShadowDensity(roofId, opacity);
+  const qDensity = Math.round(density * 64);
+  const qRatio = Math.round(Math.max(0, Math.min(0.75, skylightRatio)) * 40);
+  const key = `roof_shadow_${qDensity}_${skylightMode}_${qRatio}`;
+
+  const size = 256;
+  let data = shadowAlphaCache.get(key);
+  if (!data) {
+    data = new Uint8Array(size * size * 4);
+    for (let y = 0; y < size; y++) {
+      const v = (y + 0.5) / size;
+      const bayerRow = BAYER_8X8[y & 7];
+      for (let x = 0; x < size; x++) {
+        const u = (x + 0.5) / size;
+        const sky = isRoofTexelInSkylight(u, v, skylightMode, skylightRatio);
+        let castShadowSample = false;
+        const threshold = (bayerRow[x & 7] + 0.5) / 64;
+        if (sky.isFrame) {
+          castShadowSample = Math.min(1.0, density + 0.22) >= threshold;
+        } else if (sky.inSkylight) {
+          castShadowSample = false;
+        } else {
+          castShadowSample = density >= threshold;
+        }
+        const val = castShadowSample ? 255 : 0;
+        const idx = (y * size + x) * 4;
+        data[idx] = val;
+        data[idx + 1] = val;
+        data[idx + 2] = val;
+        data[idx + 3] = 255;
+      }
+    }
+    shadowAlphaCache.set(key, data);
+  }
+
+  const alphaTex = new THREE.DataTexture(
+    data.slice(0),
+    size,
+    size,
+    THREE.RGBAFormat
+  );
+  alphaTex.wrapS = THREE.RepeatWrapping;
+  alphaTex.wrapT = repeatV > 1 ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
+  alphaTex.repeat.set(repeatU, repeatV);
+  alphaTex.magFilter = THREE.NearestFilter;
+  alphaTex.minFilter = THREE.NearestFilter;
+  alphaTex.generateMipmaps = false;
+  alphaTex.needsUpdate = true;
+
+  return new THREE.MeshDepthMaterial({
+    depthPacking: THREE.RGBADepthPacking,
+    alphaMap: alphaTex,
+    alphaTest: 0.5,
+    side: THREE.DoubleSide,
+  });
+}
+
 export function createRoofPbrMaterial(
   roofId: RoofMaterialId,
   opacity: number,
@@ -964,17 +1222,45 @@ export function createRoofPbrMaterial(
   flatShading: boolean = false,
   maxAnisotropy: number = 4,
   repeatU: number = 12,
-  repeatV: number = 2
+  repeatV: number = 2,
+  skylightMode: SkylightMode = 'none',
+  skylightRatio: number = 0
 ): THREE.MeshPhysicalMaterial {
   const isNight = lighting !== 'day';
-  const key = `roof_${roofId}_v2`;
+  const qRatio = Math.round(Math.max(0, Math.min(0.75, skylightRatio)) * 20);
+  const hasSkylight = skylightMode !== 'none' && qRatio > 0;
+  const key = hasSkylight
+    ? `roof_${roofId}_${skylightMode}_${qRatio}_v4`
+    : `roof_${roofId}_v2`;
 
   const buffers = synthesizeCachedPbrBuffers(key, 256, 256, 4.6, false, (u, v) => {
     const fine = periodicNoise2D(u, v, 64, 64, 1101);
     const fbm = periodicFbm2D(u, v, 12, 3, 1102);
 
-    // Inner pitch-side glass daylight strip (`v < 0.26`) on non-cushion roofs
-    if (roofId !== 'etfe_cushions' && roofId !== 'polycarbonate_glass' && v < 0.24) {
+    if (hasSkylight) {
+      const sky = isRoofTexelInSkylight(u, v, skylightMode, skylightRatio);
+      if (sky.isFrame) {
+        return { r: 44, g: 56, b: 72, a: 255, height: 0.94, roughness: 0.32 };
+      }
+      if (sky.inSkylight) {
+        return {
+          r: 206,
+          g: 238,
+          b: 254,
+          a: 34,
+          height: 0.45,
+          roughness: 0.05,
+        };
+      }
+    }
+
+    // Inner pitch-side glass daylight strip (`v < 0.24`) on non-cushion roofs when no custom skylight is active
+    if (
+      !hasSkylight &&
+      roofId !== 'etfe_cushions' &&
+      roofId !== 'polycarbonate_glass' &&
+      v < 0.24
+    ) {
       const rafter = ((u * 24) % 1) < 0.07;
       if (rafter) {
         return { r: 71, g: 85, b: 105, height: 0.9, roughness: 0.35 };
@@ -997,7 +1283,6 @@ export function createRoofPbrMaterial(
       if (seam) {
         return { r: 51, g: 65, b: 85, a: 255, height: 0.08, roughness: 0.45 };
       }
-      // Smooth inflated 3D pillow dome height = sin(pi*du) * sin(pi*dv)
       const dome = Math.sin(du * Math.PI) * Math.sin(dv * Math.PI);
       return {
         r: 226 + dome * 26,
@@ -1091,13 +1376,27 @@ export function createRoofPbrMaterial(
     };
   });
 
-  const maps = wrapDataTextures(buffers, repeatU, repeatV, maxAnisotropy, true);
+  const effU = hasSkylight ? (repeatU > 6 ? 1 : repeatU) : repeatU;
+  const effV = hasSkylight ? 1 : repeatV;
+  const maps = wrapDataTextures(buffers, effU, effV, maxAnisotropy, true);
+  if (hasSkylight) {
+    for (const tex of [maps.map, maps.normalMap, maps.roughnessMap]) {
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.needsUpdate = true;
+    }
+  }
 
   const isGlassRoof = roofId === 'polycarbonate_glass';
   const isEtfe = roofId === 'etfe_cushions';
   const isMetalRoof = roofId === 'standing_seam_zinc' || roofId === 'titanium_scales';
-  const effectiveOpacity = isGlassRoof ? Math.min(opacity, 0.78) : isEtfe ? Math.min(opacity, 0.9) : opacity;
-  const isTranslucent = effectiveOpacity < 0.98 || isGlassRoof || isEtfe;
+  const clampedOp = Math.max(0.14, Math.min(1.0, opacity));
+  const effectiveOpacity = isGlassRoof
+    ? Math.min(clampedOp, 0.82)
+    : isEtfe
+    ? Math.min(clampedOp, 0.92)
+    : clampedOp;
+  const isTranslucent =
+    effectiveOpacity < 0.98 || isGlassRoof || isEtfe || hasSkylight;
 
   return new THREE.MeshPhysicalMaterial({
     map: maps.map,

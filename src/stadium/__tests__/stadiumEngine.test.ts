@@ -5,33 +5,54 @@ import {
   calculateStadiumMetrics,
   calculateStandMetrics,
   computeKopWallStandPatch,
+  getTrackRadialOffset,
 } from '../capacity';
+import { generateFloodlightRigGroup } from '../generateLights';
+import { generateConcourseGroup } from '../generateConcourse';
 import { generateRoofGroup } from '../generateRoof';
 import { generateStandsGroup } from '../generateStand';
 import {
+  CORNER_MODE_CATALOG,
   createFacadePbrMaterial,
   createRoofPbrMaterial,
+  createRoofShadowDepthMaterial,
   createSeatTerracePbrMaterial,
   createStructurePbrMaterial,
   createTrackPbrMaterial,
   ENVELOPE_STYLE_CATALOG,
   FACADE_MATERIAL_CATALOG,
+  FACADE_PATTERN_CATALOG,
+  FLOODLIGHT_RIG_CATALOG,
   PLAZA_MATERIAL_CATALOG,
   ROOF_MATERIAL_CATALOG,
   SEAT_MATERIAL_CATALOG,
+  SKYLIGHT_MODE_CATALOG,
   STRUCTURE_MATERIAL_CATALOG,
   TRACK_MATERIAL_CATALOG,
   TURF_MATERIAL_CATALOG,
 } from '../materials';
 import { createPresetDocument, STADIUM_PRESETS } from '../presets';
 import {
+  clampPitchToTrack,
   EnvelopeStyle,
+  getMaxPitchLengthForTrack,
+  getTrackGeometry,
   riserFromSlopeDeg,
   RoofStyle,
   STADIUM_SHAPE_LABELS,
   StadiumShape,
+  TRACK_KERB_RADIUS_M,
+  TRACK_LANE1_MEASUREMENT_OFFSET_M,
+  TRACK_LANE_WIDTH_M,
+  TRACK_MAX_PITCH_WIDTH_M,
+  TRACK_STRAIGHT_LENGTH_M,
 } from '../schema';
-import { computeRowCValueMm, computeStandSightlines } from '../sightlines';
+import {
+  computeRowCValueMm,
+  computeStandSightlines,
+  resolveStandTiers,
+} from '../sightlines';
+import { normalizeStadiumDocument } from '../../state/useStadiumStore';
 
 function ensureCanvasMock() {
   if (typeof document === 'undefined') {
@@ -570,6 +591,582 @@ describe('StadiumForge 10 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
       disposeObject3D(rootGroup);
     }
   });
+
+  it('carves real 3D vomitory openings and stepped radial stair aisles with adjustable count and position', () => {
+    ensureCanvasMock();
+    const docZero = createPresetDocument('traditional_four_stands_42k');
+    docZero.stands.south.vomitoryCount = 0;
+    docZero.stands.south.aisleCount = 4;
+    docZero.stands.south.aisleWidth = 1.4;
+
+    const docCarved = createPresetDocument('traditional_four_stands_42k');
+    docCarved.stands.south.vomitoryCount = 6;
+    docCarved.stands.south.vomitoryRowRatio = 0.55;
+    docCarved.stands.south.vomitoryOffsetRatio = 0.08;
+    docCarved.stands.south.aisleCount = 4;
+    docCarved.stands.south.aisleWidth = 1.4;
+
+    const docMoreStairs = createPresetDocument('traditional_four_stands_42k');
+    docMoreStairs.stands.south.vomitoryCount = 6;
+    docMoreStairs.stands.south.aisleCount = 8;
+    docMoreStairs.stands.south.aisleWidth = 1.8;
+
+    const grpZero = generateStandsGroup(docZero, false);
+    const grpCarved = generateStandsGroup(docCarved, false);
+    const grpMoreStairs = generateStandsGroup(docMoreStairs, false);
+
+    const southZero = grpZero.getObjectByName('Stand_SOUTH')!;
+    const southCarved = grpCarved.getObjectByName('Stand_SOUTH')!;
+    const southMoreStairs = grpMoreStairs.getObjectByName('Stand_SOUTH')!;
+
+    const countMeshStats = (root: THREE.Object3D) => {
+      let terraceIndices = 0;
+      let terraceVerts = 0;
+      let seatInstances = 0;
+      let portals = 0;
+      let stairSteps = 0;
+      root.traverse((obj) => {
+        if (obj.name === 'VomitoryOpeningPortal') portals++;
+        const inst = obj as THREE.InstancedMesh;
+        if (inst.isInstancedMesh) {
+          if (obj.name === 'RadialStairSteps') {
+            stairSteps += inst.count;
+          } else {
+            seatInstances += inst.count;
+          }
+        } else {
+          const mesh = obj as THREE.Mesh;
+          if (mesh.isMesh && Array.isArray(mesh.material) && mesh.geometry.index) {
+            terraceIndices += mesh.geometry.index.count;
+            terraceVerts += mesh.geometry.attributes.position.count;
+          }
+        }
+      });
+      return { terraceIndices, terraceVerts, seatInstances, portals, stairSteps };
+    };
+
+    const statsZero = countMeshStats(southZero);
+    const statsCarved = countMeshStats(southCarved);
+    const statsMoreStairs = countMeshStats(southMoreStairs);
+
+    // Straight stand subdivides into longitudinal bays at each vomitory cheek and omits hole triangles & 3D seats
+    const singleBayVerts = statsZero.terraceVerts / 2;
+    const carvedBayCount = Math.round(statsCarved.terraceVerts / singleBayVerts) - 1;
+    expect(statsZero.portals).toBe(0);
+    expect(statsCarved.portals).toBeGreaterThanOrEqual(6);
+    expect(statsCarved.terraceIndices).toBeLessThan(carvedBayCount * statsZero.terraceIndices);
+    expect(statsCarved.seatInstances).toBeLessThan(statsZero.seatInstances);
+    expect(statsMoreStairs.stairSteps).toBeGreaterThan(statsCarved.stairSteps);
+
+    // On a fixed-segment continuous bowl, carving vomitories strictly reduces total terrace indices & seats
+    const bowlZero = createPresetDocument('bowl_bowstring_60k');
+    const bowlCarved = createPresetDocument('bowl_bowstring_60k');
+    for (const side of ['north', 'south', 'east', 'west'] as const) {
+      bowlZero.stands[side].vomitoryCount = 0;
+      bowlCarved.stands[side].vomitoryCount = 6;
+    }
+    const bowlGrpZero = generateStandsGroup(bowlZero, false);
+    const bowlGrpCarved = generateStandsGroup(bowlCarved, false);
+    const bowlStatsZero = countMeshStats(bowlGrpZero);
+    const bowlStatsCarved = countMeshStats(bowlGrpCarved);
+    expect(bowlStatsCarved.portals).toBeGreaterThanOrEqual(16);
+    expect(bowlStatsCarved.terraceIndices).toBeLessThan(bowlStatsZero.terraceIndices);
+    expect(bowlStatsCarved.seatInstances).toBeLessThan(bowlStatsZero.seatInstances);
+
+    disposeObject3D(grpZero);
+    disposeObject3D(grpCarved);
+    disposeObject3D(grpMoreStairs);
+    disposeObject3D(bowlGrpZero);
+    disposeObject3D(bowlGrpCarved);
+  });
+
+  it('models cantilevered upper tiers (tribunes en encorbellement) and updates C-value sightlines & distance to pitch', () => {
+    const shallowDoc = createPresetDocument('traditional_four_stands_42k');
+    shallowDoc.stands.south.tiers = 3;
+    shallowDoc.stands.south.tierOverhang = 0.5;
+
+    const deepCantileverDoc = createPresetDocument('traditional_four_stands_42k');
+    deepCantileverDoc.stands.south.tiers = 3;
+    deepCantileverDoc.stands.south.tierOverhang = 5.8;
+
+    const sightShallow = computeStandSightlines(shallowDoc.stands.south, 0);
+    const sightDeep = computeStandSightlines(deepCantileverDoc.stands.south, 0);
+
+    // Deeper cantilever overhang brings upper spectators significantly closer to the touchline
+    expect(sightDeep.avgDistanceM).toBeLessThan(sightShallow.avgDistanceM - 1.5);
+    expect(sightDeep.avgCValueMm).not.toBe(sightShallow.avgCValueMm);
+
+    const metricsShallow = calculateStandMetrics(shallowDoc, 'south');
+    const metricsDeep = calculateStandMetrics(deepCantileverDoc, 'south');
+    expect(metricsDeep.totalDepth).toBeLessThan(metricsShallow.totalDepth - 6.0);
+  });
+
+  it('supports asymmetric per-tier grading (rows, slope angle, and overhang per level)', () => {
+    ensureCanvasMock();
+    const doc = createPresetDocument('traditional_four_stands_42k');
+    doc.stands.south.tiers = 3;
+    doc.stands.south.tierConfigs = [
+      { rows: 14, slopeAngleDeg: 22 },
+      { rows: 18, slopeAngleDeg: 31, overhang: 3.8 },
+      { rows: 24, slopeAngleDeg: 37, overhang: 5.2 },
+    ];
+
+    const resolved = resolveStandTiers(doc.stands.south);
+    expect(resolved.length).toBe(3);
+    expect(resolved[0].rows).toBe(14);
+    expect(resolved[0].slopeAngleDeg).toBe(22);
+    expect(resolved[1].rows).toBe(18);
+    expect(resolved[1].overhang).toBe(3.8);
+    expect(resolved[2].rows).toBe(24);
+    expect(resolved[2].slopeAngleDeg).toBe(37);
+    expect(resolved[2].overhang).toBe(5.2);
+
+    const metrics = calculateStandMetrics(doc, 'south');
+    expect(metrics.totalRows).toBe(56);
+
+    const sight = computeStandSightlines(doc.stands.south, 0);
+    expect(sight.points.length).toBe(56);
+
+    const standsGrp = generateStandsGroup(doc, false);
+    expect(standsGrp.getObjectByName('Stand_SOUTH')).toBeDefined();
+    disposeObject3D(standsGrp);
+  });
+
+  it('supports custom per-corner modes (open, filled, building, screen) on both rectangular and continuous bowls with zero pitch intrusions', () => {
+    ensureCanvasMock();
+    const rectDoc = createPresetDocument('urban_cathedral_84k');
+    rectDoc.shape = 'compact_urban';
+    rectDoc.corners = {
+      nw: 'open',
+      ne: 'filled',
+      sw: 'building',
+      se: 'screen',
+    };
+
+    const rectStands = generateStandsGroup(rectDoc, false);
+    rectStands.updateMatrixWorld(true);
+
+    expect(rectStands.getObjectByName('CornerVirage_NW')).toBeUndefined();
+    expect(rectStands.getObjectByName('CornerBuilding_NW')).toBeUndefined();
+    expect(rectStands.getObjectByName('CornerScreen_NW')).toBeUndefined();
+
+    expect(rectStands.getObjectByName('CornerVirage_NE')).toBeDefined();
+    expect(rectStands.getObjectByName('CornerBuilding_SW')).toBeDefined();
+    expect(rectStands.getObjectByName('CornerScreen_SE')).toBeDefined();
+
+    // Verify discrete roof covers filled & building corners while leaving open & screen corners clear
+    rectDoc.roof.style = 'cantilever';
+    const rectRoof = generateRoofGroup(rectDoc, false);
+    expect(rectRoof.getObjectByName('CornerRoof_NE')).toBeDefined();
+    expect(rectRoof.getObjectByName('CornerRoof_SW')).toBeDefined();
+    expect(rectRoof.getObjectByName('CornerRoof_NW')).toBeUndefined();
+    expect(rectRoof.getObjectByName('CornerRoof_SE')).toBeUndefined();
+
+    // Zero pitch intrusion check on custom corners
+    const halfX = rectDoc.pitch.length / 2;
+    const halfZ = rectDoc.pitch.width / 2;
+    const vW = new THREE.Vector3();
+    let intruding = 0;
+    rectStands.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.geometry?.attributes?.position) return;
+      const pos = mesh.geometry.attributes.position;
+      const inst = obj as THREE.InstancedMesh;
+      if (inst.isInstancedMesh) {
+        const m = new THREE.Matrix4();
+        for (let k = 0; k < inst.count; k++) {
+          inst.getMatrixAt(k, m);
+          for (let i = 0; i < pos.count; i++) {
+            vW.fromBufferAttribute(pos, i).applyMatrix4(m).applyMatrix4(mesh.matrixWorld);
+            if (Math.abs(vW.x) < halfX + 2.0 && Math.abs(vW.z) < halfZ + 2.0) intruding++;
+          }
+        }
+      } else {
+        for (let i = 0; i < pos.count; i++) {
+          vW.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+          if (Math.abs(vW.x) < halfX + 2.0 && Math.abs(vW.z) < halfZ + 2.0) intruding++;
+        }
+      }
+    });
+    expect(intruding).toBe(0);
+
+    // Continuous bowl also supports per-corner open/building/screen sector cutouts & inserts
+    const bowlDoc = createPresetDocument('bowl_bowstring_60k');
+    bowlDoc.corners = { nw: 'open', ne: 'filled', sw: 'building', se: 'screen' };
+    const bowlStands = generateStandsGroup(bowlDoc, false);
+    expect(bowlStands.getObjectByName('CornerBuilding_SW')).toBeDefined();
+    expect(bowlStands.getObjectByName('CornerScreen_SE')).toBeDefined();
+
+    disposeObject3D(rectStands);
+    disposeObject3D(rectRoof);
+    disposeObject3D(bowlStands);
+  });
+
+  it('modulates roof shadow depth alphaMap with roof translucency (ETFE/glass) and skylight openings', () => {
+    ensureCanvasMock();
+    const countOpaqueShadowTexels = (depthMat: THREE.MeshDepthMaterial): number => {
+      const alphaMap = depthMat.alphaMap as THREE.DataTexture;
+      expect(alphaMap).toBeDefined();
+      const data = alphaMap.image.data as Uint8Array;
+      let solid = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 1] >= 128) solid++;
+      }
+      return solid;
+    };
+
+    const opaqueMetalShadow = createRoofShadowDepthMaterial(
+      'standing_seam_zinc',
+      0.98,
+      'none',
+      0
+    );
+    const translucentEtfeShadow = createRoofShadowDepthMaterial(
+      'etfe_cushions',
+      0.35,
+      'none',
+      0
+    );
+    const skylightEtfeShadow = createRoofShadowDepthMaterial(
+      'etfe_cushions',
+      0.35,
+      'radial_slots',
+      0.48
+    );
+
+    const solidMetal = countOpaqueShadowTexels(opaqueMetalShadow);
+    const solidEtfe = countOpaqueShadowTexels(translucentEtfeShadow);
+    const solidSkylight = countOpaqueShadowTexels(skylightEtfeShadow);
+
+    expect(solidEtfe).toBeLessThan(solidMetal * 0.45);
+    expect(solidSkylight).toBeLessThan(solidEtfe * 0.75);
+
+    // Verify generated 3D roof meshes attach `customDepthMaterial`
+    const doc = createPresetDocument('bowl_bowstring_60k');
+    doc.materials = { ...doc.materials!, roof: 'polycarbonate_glass' };
+    doc.roof.opacity = 0.32;
+    doc.roof.skylightMode = 'grid_oculi';
+    doc.roof.skylightRatio = 0.42;
+
+    const roofGrp = generateRoofGroup(doc, false);
+    let customDepthCount = 0;
+    roofGrp.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.isMesh && mesh.customDepthMaterial instanceof THREE.MeshDepthMaterial) {
+        customDepthCount++;
+      }
+    });
+    expect(customDepthCount).toBeGreaterThan(0);
+
+    disposeObject3D(roofGrp);
+    opaqueMetalShadow.alphaMap?.dispose();
+    opaqueMetalShadow.dispose();
+    translucentEtfeShadow.alphaMap?.dispose();
+    translucentEtfeShadow.dispose();
+    skylightEtfeShadow.alphaMap?.dispose();
+    skylightEtfeShadow.dispose();
+  });
+
+  it('generates 3D parametric facade relief (vertical_fins, diagrid, cassette_panels) scaling with density and depth', () => {
+    ensureCanvasMock();
+    for (const item of [
+      ...FACADE_PATTERN_CATALOG,
+      ...SKYLIGHT_MODE_CATALOG,
+      ...CORNER_MODE_CATALOG,
+      ...FLOODLIGHT_RIG_CATALOG,
+    ]) {
+      expect(forbiddenNameRe.test(item.label)).toBe(false);
+      expect(forbiddenNameRe.test(item.subtitle)).toBe(false);
+    }
+
+    const countFacadeInstances = (
+      pattern: 'vertical_fins' | 'diagrid' | 'cassette_panels',
+      density: number,
+      depth: number
+    ) => {
+      const doc = createPresetDocument('bowl_bowstring_60k');
+      doc.concourse = { width: 14, heightRatio: 0.9 };
+      doc.materials = {
+        ...doc.materials!,
+        facadePattern: pattern,
+        facadeDensity: density,
+        facadeDepth: depth,
+      };
+      const concourseGrp = generateConcourseGroup(doc, false, 4);
+      let instances = 0;
+      concourseGrp.traverse((obj) => {
+        if (
+          (obj.parent?.name === 'ConcourseParametricFacade' ||
+            obj.parent?.name === 'ParametricFacadeRelief') &&
+          obj instanceof THREE.InstancedMesh
+        ) {
+          instances += obj.count;
+        }
+      });
+      disposeObject3D(concourseGrp);
+      return instances;
+    };
+
+    const lowFins = countFacadeInstances('vertical_fins', 0.5, 0.4);
+    const highFins = countFacadeInstances('vertical_fins', 1.8, 1.4);
+    expect(lowFins).toBeGreaterThan(20);
+    expect(highFins).toBeGreaterThan(lowFins * 2);
+
+    expect(countFacadeInstances('diagrid', 1.1, 0.9)).toBeGreaterThan(40);
+    expect(countFacadeInstances('cassette_panels', 1.1, 0.7)).toBeGreaterThan(40);
+  });
+
+  it('switches cleanly between 4 corner floodlight masts and roof-edge projector gantry', () => {
+    ensureCanvasMock();
+    const doc = createPresetDocument('traditional_four_stands_42k');
+    doc.lighting = 'night';
+
+    // 1. `corner_masts`: 4 corner pylons, 0 roof gantry projectors
+    doc.floodlightRig = 'corner_masts';
+    const mastsGrp = generateFloodlightRigGroup(doc);
+    const roofNoGantry = generateRoofGroup(doc, false);
+    expect(mastsGrp.getObjectByName('CornerFloodlightMast_SE')).toBeDefined();
+    expect(mastsGrp.getObjectByName('CornerFloodlightMast_SW')).toBeDefined();
+    expect(mastsGrp.getObjectByName('CornerFloodlightMast_NW')).toBeDefined();
+    expect(mastsGrp.getObjectByName('CornerFloodlightMast_NE')).toBeDefined();
+    expect(roofNoGantry.getObjectByName('RoofFloodlightCatwalk')).toBeUndefined();
+
+    // 2. `roof_gantry`: 0 corner pylons, active roof gantry projectors
+    doc.floodlightRig = 'roof_gantry';
+    const emptyMasts = generateFloodlightRigGroup(doc);
+    const roofWithGantry = generateRoofGroup(doc, false);
+    expect(emptyMasts.children.length).toBe(0);
+    expect(roofWithGantry.getObjectByName('RoofFloodlightCatwalk')).toBeDefined();
+
+    // 3. `both`: both corner pylons AND roof gantry projectors
+    doc.floodlightRig = 'both';
+    const bothMasts = generateFloodlightRigGroup(doc);
+    const bothRoof = generateRoofGroup(doc, false);
+    expect(bothMasts.children.length).toBe(4);
+    expect(bothRoof.getObjectByName('RoofFloodlightCatwalk')).toBeDefined();
+
+    disposeObject3D(mastsGrp);
+    disposeObject3D(roofNoGantry);
+    disposeObject3D(emptyMasts);
+    disposeObject3D(roofWithGantry);
+    disposeObject3D(bothMasts);
+    disposeObject3D(bothRoof);
+  });
+
+  it('enforces official World Athletics 400 m track dimensions (84.39 m straights, 36.50 m kerb, 1.22 m lanes)', () => {
+    const track = getTrackGeometry(8);
+    expect(track.straightLength).toBe(84.39);
+    expect(track.straightHalfLength).toBeCloseTo(42.195, 4);
+    expect(track.innerRadius).toBe(36.5);
+    expect(track.laneWidth).toBe(1.22);
+    expect(TRACK_STRAIGHT_LENGTH_M).toBe(84.39);
+    expect(TRACK_KERB_RADIUS_M).toBe(36.5);
+    expect(TRACK_LANE_WIDTH_M).toBe(1.22);
+    expect(TRACK_LANE1_MEASUREMENT_OFFSET_M).toBe(0.3);
+
+    // Lane 1 measured 30 cm outside the kerb equals 400.001 m (official 400 m lap)
+    expect(track.innerRadius + TRACK_LANE1_MEASUREMENT_OFFSET_M).toBeCloseTo(36.8, 4);
+    expect(track.lane1Length).toBeGreaterThan(399.99);
+    expect(track.lane1Length).toBeLessThan(400.01);
+
+    // 8 lanes: running width = 9.76 m, outer running line = 46.26 m, outer apron edge = 47.76 m
+    expect(track.lanesWidth).toBeCloseTo(9.76, 4);
+    expect(track.innerRadius + track.lanesWidth).toBeCloseTo(46.26, 4);
+    expect(track.outerRadius).toBeCloseTo(47.76, 4);
+  });
+
+  it('keeps FIFA 105x68 pitch unchanged inside the 400 m track, clamps oversized pitches, and normalizes saved projects', () => {
+    // Standard 105 x 68 m pitch passes without any modification
+    const fifa = clampPitchToTrack({
+      length: 105,
+      width: 68,
+      marginSide: 5.5,
+      marginEnd: 6.5,
+      hasTrack: true,
+      trackLanes: 8,
+      grassPattern: 'stripes',
+      adBoards: true,
+    });
+    expect(fifa.length).toBe(105);
+    expect(fifa.width).toBe(68);
+    // Verify 105 x 68 corner stays inside the 36.5 m kerb!
+    const dxFifa = Math.max(0, fifa.length * 0.5 - TRACK_STRAIGHT_LENGTH_M * 0.5);
+    expect(Math.hypot(dxFifa, fifa.width * 0.5)).toBeLessThan(TRACK_KERB_RADIUS_M);
+
+    // Oversized 115 x 75 m pitch with track enabled is clamped to max 70 m width and inside kerb
+    const oversized = clampPitchToTrack({
+      ...fifa,
+      length: 115,
+      width: 75,
+      hasTrack: true,
+    });
+    expect(oversized.width).toBe(TRACK_MAX_PITCH_WIDTH_M);
+    expect(oversized.length).toBeLessThanOrEqual(getMaxPitchLengthForTrack(oversized.width));
+    const dxClamped = Math.max(0, oversized.length * 0.5 - TRACK_STRAIGHT_LENGTH_M * 0.5);
+    expect(Math.hypot(dxClamped, oversized.width * 0.5)).toBeLessThan(TRACK_KERB_RADIUS_M);
+
+    // Saved projects with oversized pitch + track are normalized on open
+    const legacySaved = createPresetDocument('olympic_masts_80k');
+    legacySaved.pitch.length = 114;
+    legacySaved.pitch.width = 74;
+    delete legacySaved.roof.overConcourse;
+    const normalized = normalizeStadiumDocument(legacySaved);
+    expect(normalized.pitch.width).toBeLessThanOrEqual(70);
+    const dxNorm = Math.max(0, normalized.pitch.length * 0.5 - TRACK_STRAIGHT_LENGTH_M * 0.5);
+    expect(Math.hypot(dxNorm, normalized.pitch.width * 0.5)).toBeLessThan(TRACK_KERB_RADIUS_M);
+    expect(normalized.roof.overConcourse).toBe(true);
+  });
+
+  it('prevents stands from overlapping the 400 m track and applies distinct touchline vs curve sightline offsets', () => {
+    ensureCanvasMock();
+    const oly = createPresetDocument('olympic_masts_80k');
+    const track = getTrackGeometry(oly.pitch);
+    const offsets = getTrackRadialOffset(oly);
+
+    // Goal-end curves sit much farther from the pitch goal line than touchline stands
+    expect(offsets.endOffset).toBeGreaterThan(offsets.sideOffset + 20);
+    expect(oly.pitch.width * 0.5 + offsets.sideOffset).toBeCloseTo(track.outerHalfWidthZ, 3);
+    expect(oly.pitch.length * 0.5 + offsets.endOffset).toBeCloseTo(track.outerHalfLengthX, 3);
+
+    const sideSight = computeStandSightlines(oly.stands.south, offsets.sideOffset, 'suspended_masts');
+    const curveSight = computeStandSightlines(oly.stands.east, offsets.endOffset, 'suspended_masts');
+    expect(curveSight.avgDistanceM).toBeGreaterThan(sideSight.avgDistanceM + 20);
+
+    // Verify 3D stands vertices never encroach inside the outer running lane (R = 46.26 m)
+    for (const shape of ['olympic_oval', 'modern_bowl', 'octagonal_arena', 'four_stands'] as StadiumShape[]) {
+      const doc = createPresetDocument('olympic_masts_80k');
+      doc.shape = shape;
+      doc.pitch.hasTrack = true;
+      const standsGrp = generateStandsGroup(doc, false);
+      standsGrp.updateMatrixWorld(true);
+
+      let minTrackClearance = Infinity;
+      const v = new THREE.Vector3();
+      standsGrp.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return;
+        const pos = obj.geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
+        if (!pos) return;
+        const count = obj instanceof THREE.InstancedMesh ? obj.count : 1;
+        const m = new THREE.Matrix4();
+        for (let inst = 0; inst < count; inst++) {
+          if (obj instanceof THREE.InstancedMesh) obj.getMatrixAt(inst, m);
+          for (let i = 0; i < pos.count; i += Math.max(1, Math.floor(pos.count / 64))) {
+            v.fromBufferAttribute(pos, i);
+            if (obj instanceof THREE.InstancedMesh) v.applyMatrix4(m);
+            v.applyMatrix4(obj.matrixWorld);
+            if (v.y < 0.05) continue;
+            const dx = Math.max(0, Math.abs(v.x) - track.straightHalfLength);
+            const radialFromCentre = Math.hypot(dx, v.z);
+            minTrackClearance = Math.min(minTrackClearance, radialFromCentre - track.outerRadius);
+          }
+        }
+      });
+
+      expect(
+        minTrackClearance,
+        `Stand intruded onto 400 m track in shape "${shape}"`
+      ).toBeGreaterThan(1.0);
+      disposeObject3D(standsGrp);
+    }
+  });
+
+  it('extends all roof outer edges to the concourse facade when overConcourse is enabled (default)', () => {
+    ensureCanvasMock();
+
+    const measureCanopyOuterExtent = (grp: THREE.Object3D): number => {
+      grp.updateMatrixWorld(true);
+      let maxExtent = 0;
+      const v = new THREE.Vector3();
+      const m = new THREE.Matrix4();
+      grp.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh) || obj.name !== 'RoofCanopySurface') return;
+        const pos = obj.geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
+        if (!pos) return;
+        const isInst = obj instanceof THREE.InstancedMesh;
+        const instCount = isInst ? obj.count : 1;
+        for (let inst = 0; inst < instCount; inst++) {
+          if (isInst) obj.getMatrixAt(inst, m);
+          for (let i = 0; i < pos.count; i++) {
+            v.fromBufferAttribute(pos, i);
+            if (isInst) v.applyMatrix4(m);
+            v.applyMatrix4(obj.matrixWorld);
+            maxExtent = Math.max(maxExtent, Math.abs(v.z));
+          }
+        }
+      });
+      return maxExtent;
+    };
+
+    // 1. All continuous bowl roof styles
+    for (const style of [
+      'cantilever',
+      'vaulted_ring',
+      'bicycle_wheel',
+      'enveloping_shell',
+      'folded_plate',
+      'fixed_dome',
+      'suspended_masts',
+      'twin_arch',
+      'giant_arch',
+      'bowstring_arch',
+      'tensile_net',
+      'retractable',
+      'column_supported',
+      'goalpost_truss',
+    ] as RoofStyle[]) {
+      const docOver = createPresetDocument('bowl_bowstring_60k');
+      docOver.roof.style = style;
+      docOver.concourse = { width: 14, heightRatio: 0.5 };
+      docOver.roof.overConcourse = true;
+
+      const docShort = createPresetDocument('bowl_bowstring_60k');
+      docShort.roof.style = style;
+      docShort.concourse = { width: 14, heightRatio: 0.5 };
+      docShort.roof.overConcourse = false;
+
+      const grpOver = generateRoofGroup(docOver, false);
+      const grpShort = generateRoofGroup(docShort, false);
+
+      const extentOver = measureCanopyOuterExtent(grpOver);
+      const extentShort = measureCanopyOuterExtent(grpShort);
+
+      expect(
+        extentOver - extentShort,
+        `Expected roof "${style}" canopy to extend over 14 m concourse`
+      ).toBeGreaterThan(10);
+
+      disposeObject3D(grpOver);
+      disposeObject3D(grpShort);
+    }
+
+    // 2. Discrete stand-by-stand roof styles (including corners)
+    for (const style of ['cantilever', 'truss', 'column_supported', 'goalpost_truss'] as RoofStyle[]) {
+      const docOver = createPresetDocument('urban_cathedral_84k');
+      docOver.roof.style = style;
+      docOver.concourse = { width: 12, heightRatio: 0.5 };
+      docOver.roof.overConcourse = true;
+
+      const docShort = createPresetDocument('urban_cathedral_84k');
+      docShort.roof.style = style;
+      docShort.concourse = { width: 12, heightRatio: 0.5 };
+      docShort.roof.overConcourse = false;
+
+      const grpOver = generateRoofGroup(docOver, false);
+      const grpShort = generateRoofGroup(docShort, false);
+
+      const extentOver = measureCanopyOuterExtent(grpOver);
+      const extentShort = measureCanopyOuterExtent(grpShort);
+
+      expect(
+        extentOver - extentShort,
+        `Expected discrete roof "${style}" canopy to extend over 12 m concourse`
+      ).toBeGreaterThan(9);
+
+      disposeObject3D(grpOver);
+      disposeObject3D(grpShort);
+    }
+  });
 });
+
 
 

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { StadiumShape } from './schema';
+import { CornerMode, StadiumShape, TRACK_STRAIGHT_LENGTH_M } from './schema';
 
 /**
  * Computes an exact rounded or 8-faceted polygonal stadium perimeter point and outward normal.
@@ -381,13 +381,34 @@ export function buildShapeBowlRing(
       ? innerHalfZ * 0.92
       : 17;
 
+  const trackHalfStraightX = TRACK_STRAIGHT_LENGTH_M * 0.5;
+  const trackOuterApexX = pitchLength * 0.5 + endTrackOffset;
+  const trackOuterR = Math.max(
+    pitchWidth * 0.5 + sideTrackOffset,
+    trackOuterApexX - trackHalfStraightX
+  );
+  const effectiveDesiredR = hasTrack
+    ? Math.min(
+        desiredR,
+        faceted
+          ? Math.max(
+              2,
+              innerHalfX -
+                trackHalfStraightX +
+                innerHalfZ -
+                Math.SQRT2 * (trackOuterR + 2.2)
+            )
+          : Math.max(4, Math.min(innerHalfX - trackHalfStraightX, innerHalfZ))
+      )
+    : desiredR;
+
   const cornerR = computeSafeBowlCornerRadius(
     innerHalfX,
     innerHalfZ,
     pitchLength / 2,
     pitchWidth / 2,
     2.6,
-    desiredR,
+    effectiveDesiredR,
     faceted
   );
 
@@ -418,6 +439,7 @@ export interface StraightStandSpanSpec {
 export interface RectangularCornerSpec {
   id: CornerQuadrantId;
   active: boolean;
+  mode: CornerMode;
   cx: number;
   cz: number;
   radius: number;
@@ -446,6 +468,7 @@ export interface RectangularCornerLayout {
 export function computeRectangularCornerLayout(params: {
   shape: StadiumShape;
   cornerFill: boolean;
+  cornerModes?: Partial<Record<CornerQuadrantId, CornerMode>>;
   crossSectionClip: boolean;
   pitchLength: number;
   pitchWidth: number;
@@ -459,6 +482,7 @@ export function computeRectangularCornerLayout(params: {
   const {
     shape,
     cornerFill,
+    cornerModes,
     crossSectionClip,
     pitchLength,
     pitchWidth,
@@ -480,8 +504,15 @@ export function computeRectangularCornerLayout(params: {
   const southZ = southDist;
   const northZ = -northDist;
 
-  const closedCornersMode =
+  const defaultClosed =
     shape === 'compact_urban' || (shape === 'english_rectangular' && cornerFill);
+  const defaultMode: CornerMode = defaultClosed ? 'filled' : 'open';
+
+  const modeSE: CornerMode = cornerModes?.se ?? defaultMode;
+  const modeSW: CornerMode = cornerModes?.sw ?? defaultMode;
+  const modeNW: CornerMode = cornerModes?.nw ?? defaultMode;
+  const modeNE: CornerMode = cornerModes?.ne ?? defaultMode;
+
   const facetedThreeBay = shape === 'english_rectangular';
   const desiredR = shape === 'compact_urban' ? 8.6 : 10.2;
 
@@ -500,28 +531,68 @@ export function computeRectangularCornerLayout(params: {
   const rNW = safeCornerRadius(westDist, northDist);
   const rNE = safeCornerRadius(eastDist, northDist);
 
-  const seActive = closedCornersMode && isStandLive('east') && isStandLive('south');
-  const swActive = closedCornersMode && isStandLive('west') && isStandLive('south');
-  const nwActive = closedCornersMode && isStandLive('west') && isStandLive('north');
-  const neActive = closedCornersMode && isStandLive('east') && isStandLive('north');
+  const evalCorner = (
+    cid: CornerQuadrantId,
+    mode: CornerMode,
+    sA: RectangularSideId,
+    sB: RectangularSideId
+  ) => {
+    const clippedSouth = crossSectionClip && (cid === 'se' || cid === 'sw');
+    if (clippedSouth || mode === 'open') {
+      return { active: false, trimsStand: false, seamlessVirage: false };
+    }
+    const bothLive = isStandLive(sA) && isStandLive(sB);
+    const anyLive = isStandLive(sA) || isStandLive(sB);
+    if (mode === 'filled') {
+      return {
+        active: bothLive,
+        trimsStand: bothLive,
+        seamlessVirage: bothLive,
+      };
+    }
+    if (mode === 'building') {
+      return {
+        active: anyLive,
+        trimsStand: anyLive,
+        seamlessVirage: false,
+      };
+    }
+    // mode === 'screen'
+    return {
+      active: true,
+      trimsStand: anyLive,
+      seamlessVirage: false,
+    };
+  };
+
+  const seState = evalCorner('se', modeSE, 'east', 'south');
+  const swState = evalCorner('sw', modeSW, 'south', 'west');
+  const nwState = evalCorner('nw', modeNW, 'west', 'north');
+  const neState = evalCorner('ne', modeNE, 'north', 'east');
+
+  const closedCornersMode =
+    seState.seamlessVirage ||
+    swState.seamlessVirage ||
+    nwState.seamlessVirage ||
+    neState.seamlessVirage;
 
   const openOverhang = shape === 'four_stands' ? 4.0 : 2.0;
 
   // South stand (+Z, rotY = 0: local +X -> world +X)
-  const southMinX = swActive ? westX + rSW : -(pitchHalfX + openOverhang);
-  const southMaxX = seActive ? eastX - rSE : pitchHalfX + openOverhang;
+  const southMinX = swState.trimsStand ? westX + rSW : -(pitchHalfX + openOverhang);
+  const southMaxX = seState.trimsStand ? eastX - rSE : pitchHalfX + openOverhang;
 
   // North stand (-Z, rotY = PI: local -X -> world +X [NE], local +X -> world -X [NW])
-  const northMinX = nwActive ? westX + rNW : -(pitchHalfX + openOverhang);
-  const northMaxX = neActive ? eastX - rNE : pitchHalfX + openOverhang;
+  const northMinX = nwState.trimsStand ? westX + rNW : -(pitchHalfX + openOverhang);
+  const northMaxX = neState.trimsStand ? eastX - rNE : pitchHalfX + openOverhang;
 
   // East stand (+X, rotY = +PI/2: local -X -> world +Z [SE], local +X -> world -Z [NE])
-  const eastMinZ = neActive ? northZ + rNE : -(pitchHalfZ + openOverhang);
-  const eastMaxZ = seActive ? southZ - rSE : pitchHalfZ + openOverhang;
+  const eastMinZ = neState.trimsStand ? northZ + rNE : -(pitchHalfZ + openOverhang);
+  const eastMaxZ = seState.trimsStand ? southZ - rSE : pitchHalfZ + openOverhang;
 
   // West stand (-X, rotY = -PI/2: local -X -> world -Z [NW], local +X -> world +Z [SW])
-  const westMinZ = nwActive ? northZ + rNW : -(pitchHalfZ + openOverhang);
-  const westMaxZ = swActive ? southZ - rSW : pitchHalfZ + openOverhang;
+  const westMinZ = nwState.trimsStand ? northZ + rNW : -(pitchHalfZ + openOverhang);
+  const westMaxZ = swState.trimsStand ? southZ - rSW : pitchHalfZ + openOverhang;
 
   return {
     closedCornersMode,
@@ -534,35 +605,36 @@ export function computeRectangularCornerLayout(params: {
         span: Math.max(8, southMaxX - southMinX),
         centerCoord: (southMinX + southMaxX) * 0.5,
         frontDist: southDist,
-        capNegLocalX: !swActive,
-        capPosLocalX: !seActive,
+        capNegLocalX: !swState.seamlessVirage,
+        capPosLocalX: !seState.seamlessVirage,
       },
       north: {
         span: Math.max(8, northMaxX - northMinX),
         centerCoord: (northMinX + northMaxX) * 0.5,
         frontDist: northDist,
-        capNegLocalX: !neActive,
-        capPosLocalX: !nwActive,
+        capNegLocalX: !neState.seamlessVirage,
+        capPosLocalX: !nwState.seamlessVirage,
       },
       east: {
         span: Math.max(8, eastMaxZ - eastMinZ),
         centerCoord: (eastMinZ + eastMaxZ) * 0.5,
         frontDist: eastDist,
-        capNegLocalX: !seActive,
-        capPosLocalX: !neActive,
+        capNegLocalX: !seState.seamlessVirage,
+        capPosLocalX: !neState.seamlessVirage,
       },
       west: {
         span: Math.max(8, westMaxZ - westMinZ),
         centerCoord: (westMinZ + westMaxZ) * 0.5,
         frontDist: westDist,
-        capNegLocalX: !nwActive,
-        capPosLocalX: !swActive,
+        capNegLocalX: !nwState.seamlessVirage,
+        capPosLocalX: !swState.seamlessVirage,
       },
     },
     corners: {
       se: {
         id: 'se',
-        active: seActive,
+        active: seState.active,
+        mode: modeSE,
         cx: eastX - rSE,
         cz: southZ - rSE,
         radius: rSE,
@@ -574,7 +646,8 @@ export function computeRectangularCornerLayout(params: {
       },
       sw: {
         id: 'sw',
-        active: swActive,
+        active: swState.active,
+        mode: modeSW,
         cx: westX + rSW,
         cz: southZ - rSW,
         radius: rSW,
@@ -586,7 +659,8 @@ export function computeRectangularCornerLayout(params: {
       },
       nw: {
         id: 'nw',
-        active: nwActive,
+        active: nwState.active,
+        mode: modeNW,
         cx: westX + rNW,
         cz: northZ + rNW,
         radius: rNW,
@@ -598,7 +672,8 @@ export function computeRectangularCornerLayout(params: {
       },
       ne: {
         id: 'ne',
-        active: neActive,
+        active: neState.active,
+        mode: modeNE,
         cx: eastX - rNE,
         cz: northZ + rNE,
         radius: rNE,

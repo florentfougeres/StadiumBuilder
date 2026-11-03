@@ -1,15 +1,30 @@
 import * as THREE from 'three';
 import {
+  computeRectangularCornerLayout,
+  CornerQuadrantId,
+  sampleCornerQuadrantPoint,
+  sampleRoundedBowlRing,
+} from './bowlRing';
+import { getTrackRadialOffset } from './capacity';
+import { computeStadiumRingBounds } from './generateRoof';
+import {
   createConcreteBowlMaterial,
   createFacadePbrMaterial,
   createPlazaDetailNormalAndRoughness,
   createRoofPbrMaterial,
   createStructurePbrMaterial,
+  resolveStadiumMaterials,
 } from './materials';
 import {
+  clampPitchToTrack,
   DEFAULT_STADIUM_MATERIALS,
+  getEffectiveSunkenDepth,
+  isContinuousBowlShape,
   LightingMode,
   PlacedObject,
+  resolveAllCorners,
+  resolveFloodlightRig,
+  StadiumDocument,
   StadiumMaterialsConfig,
 } from './schema';
 
@@ -455,4 +470,292 @@ export function generatePlacedObjectGroup(
   group.scale.set(obj.scale[0], obj.scale[1], obj.scale[2]);
 
   return group;
+}
+
+function createMastStrut(
+  pA: THREE.Vector3,
+  pB: THREE.Vector3,
+  rTop: number,
+  rBot: number,
+  mat: THREE.Material
+): THREE.Mesh {
+  const dir = new THREE.Vector3().subVectors(pB, pA);
+  const len = Math.max(0.05, dir.length());
+  const mid = new THREE.Vector3().addVectors(pA, pB).multiplyScalar(0.5);
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(rTop, rBot, len, 6),
+    mat
+  );
+  mesh.position.copy(mid);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  mesh.castShadow = true;
+  return mesh;
+}
+
+function buildSingleCornerFloodlightMast(
+  id: CornerQuadrantId,
+  worldX: number,
+  worldZ: number,
+  groundY: number,
+  mastHeight: number,
+  lighting: LightingMode,
+  structMat: THREE.Material,
+  concreteMat: THREE.Material
+): THREE.Group {
+  const mastGroup = new THREE.Group();
+  mastGroup.name = `CornerFloodlightMast_${id.toUpperCase()}`;
+  mastGroup.position.set(worldX, groundY, worldZ);
+
+  // Orient local +Z directly toward pitch center `(0, 0, 0)`
+  const horizDist = Math.max(20, Math.hypot(worldX, worldZ));
+  mastGroup.rotation.y = Math.atan2(-worldX, -worldZ);
+
+  const darkSteel = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    roughness: 0.36,
+    metalness: 0.84,
+  });
+
+  // 1. Reinforced concrete octagonal foundation plinth + anchor gussets
+  const plinthH = 2.8;
+  const plinth = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.05, 2.65, plinthH, 8),
+    concreteMat
+  );
+  plinth.position.y = plinthH * 0.5;
+  plinth.castShadow = true;
+  plinth.receiveShadow = true;
+  mastGroup.add(plinth);
+
+  const shaftH = Math.max(28, mastHeight - plinthH);
+  // Slight forward lean toward the pitch (`+Z` local) like classic iconic floodlight pylons
+  const topForwardLean = 3.2;
+  const pFoot = new THREE.Vector3(0, plinthH - 0.2, 0);
+  const pHead = new THREE.Vector3(0, plinthH + shaftH, topForwardLean);
+
+  // Main tapered tubular mast spine + twin rear tension/compression A-legs
+  mastGroup.add(createMastStrut(pFoot, pHead, 0.58, 1.38, structMat));
+  for (const sx of [-1.75, 1.75]) {
+    const pRearFoot = new THREE.Vector3(sx, 0.6, -2.4);
+    const pMidJoin = new THREE.Vector3(sx * 0.28, plinthH + shaftH * 0.58, topForwardLean * 0.52 - 0.55);
+    mastGroup.add(
+      createMastStrut(pRearFoot, pMidJoin, 0.24, 0.36, structMat),
+      createMastStrut(pMidJoin, pHead, 0.18, 0.24, structMat)
+    );
+    const rearBlock = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.2, 1.8), concreteMat);
+    rearBlock.position.set(sx, 0.6, -2.4);
+    rearBlock.castShadow = true;
+    mastGroup.add(rearBlock);
+  }
+
+  // Maintenance rest platforms along the shaft
+  for (const frac of [0.34, 0.68]) {
+    const platY = plinthH + shaftH * frac;
+    const platZ = topForwardLean * frac;
+    const ring = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.65 - frac * 0.35, 1.65 - frac * 0.35, 0.22, 12),
+      darkSteel
+    );
+    ring.position.set(0, platY, platZ);
+    mastGroup.add(ring);
+  }
+
+  // 2. Head-frame maintenance catwalk + multi-row broadcast LED projector bank
+  const headPivot = new THREE.Group();
+  headPivot.position.set(0, plinthH + shaftH + 0.4, topForwardLean + 0.55);
+
+  const aimPitchAngle = Math.min(0.68, Math.max(0.28, Math.atan2(mastHeight * 0.92, horizDist)));
+  headPivot.rotation.x = aimPitchAngle;
+
+  const frameW = 10.6;
+  const frameH = 6.2;
+  const rows = 4;
+  const cols = 6;
+
+  // Space-frame horizontal & vertical bars
+  for (let r = 0; r <= rows; r++) {
+    const ry = -frameH * 0.5 + (r * frameH) / rows;
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(frameW + 0.6, 0.22, 0.32), darkSteel);
+    bar.position.set(0, ry, -0.18);
+    bar.castShadow = true;
+    headPivot.add(bar);
+  }
+  for (const cx of [-frameW * 0.46, -frameW * 0.16, frameW * 0.16, frameW * 0.46]) {
+    const vBar = new THREE.Mesh(new THREE.BoxGeometry(0.24, frameH + 0.6, 0.36), darkSteel);
+    vBar.position.set(cx, 0, -0.22);
+    vBar.castShadow = true;
+    headPivot.add(vBar);
+  }
+
+  // Rear service catwalk behind projector bank
+  const catwalk = new THREE.Mesh(new THREE.BoxGeometry(frameW + 1.2, 0.2, 1.45), darkSteel);
+  catwalk.position.set(0, -frameH * 0.5 - 0.35, -0.85);
+  headPivot.add(catwalk);
+
+  const isLit = lighting !== 'day';
+  const projectorBodyMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    roughness: 0.35,
+    metalness: 0.78,
+  });
+  const lensMat = new THREE.MeshStandardMaterial({
+    color: isLit ? 0xffffff : 0xe2e8f0,
+    emissive: new THREE.Color(isLit ? 0xfef9c3 : 0x000000),
+    emissiveIntensity: lighting === 'night' ? 3.1 : lighting === 'dusk' ? 2.1 : 0,
+    roughness: 0.12,
+    metalness: 0.45,
+  });
+
+  const podCount = rows * cols;
+  const housingInst = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1.32, 0.92, 0.48),
+    projectorBodyMat,
+    podCount
+  );
+  const lensInst = new THREE.InstancedMesh(
+    new THREE.PlaneGeometry(1.18, 0.78),
+    lensMat,
+    podCount
+  );
+  const dummy = new THREE.Object3D();
+  let idx = 0;
+  for (let r = 0; r < rows; r++) {
+    const py = -frameH * 0.5 + ((r + 0.5) * frameH) / rows;
+    for (let c = 0; c < cols; c++) {
+      const px = -frameW * 0.5 + ((c + 0.5) * frameW) / cols;
+      dummy.position.set(px, py, 0.12);
+      dummy.rotation.set(0, 0, 0);
+      dummy.updateMatrix();
+      housingInst.setMatrixAt(idx, dummy.matrix);
+
+      dummy.position.set(px, py, 0.37);
+      dummy.updateMatrix();
+      lensInst.setMatrixAt(idx, dummy.matrix);
+      idx++;
+    }
+  }
+  housingInst.instanceMatrix.needsUpdate = true;
+  lensInst.instanceMatrix.needsUpdate = true;
+  housingInst.computeBoundingSphere();
+  lensInst.computeBoundingSphere();
+  headPivot.add(housingInst, lensInst);
+
+  // Subtle volumetric stadium light beam in dusk / night (ignored by raycaster!)
+  if (isLit) {
+    const coneLen = Math.min(82, horizDist * 0.78);
+    const coneGeo = new THREE.ConeGeometry(21, coneLen, 18, 1, true);
+    coneGeo.translate(0, -coneLen * 0.5, 0);
+    coneGeo.rotateX(-Math.PI * 0.5);
+    const coneMat = new THREE.MeshBasicMaterial({
+      color: 0xfef9c3,
+      transparent: true,
+      opacity: lighting === 'night' ? 0.075 : 0.04,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const beam = new THREE.Mesh(coneGeo, coneMat);
+    beam.position.set(0, 0, 0.6);
+    beam.raycast = () => {};
+    headPivot.add(beam);
+  }
+
+  mastGroup.add(headPivot);
+  return mastGroup;
+}
+
+/**
+ * Generates the 4 monumental corner floodlight pylons when `resolveFloodlightRig(doc)`
+ * is `'corner_masts'` or `'both'`. Automatically clears all stands, corner pavilions,
+ * concourses, and roofs.
+ */
+export function generateFloodlightRigGroup(
+  doc: StadiumDocument,
+  crossSectionClip: boolean = false,
+  maxAnisotropy: number = 4
+): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'FloodlightRigAssembly';
+
+  const rig = resolveFloodlightRig(doc);
+  if (rig !== 'corner_masts' && rig !== 'both') {
+    return root;
+  }
+
+  const mats = resolveStadiumMaterials(doc);
+  const structMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
+  const concreteMat = createConcreteBowlMaterial(maxAnisotropy);
+  const bounds = computeStadiumRingBounds(doc);
+  const sunkenDepth = getEffectiveSunkenDepth(doc);
+  const groundY = sunkenDepth > 0.5 ? sunkenDepth : 0;
+  const concourseW = Math.max(0, doc.concourse?.width ?? 0);
+
+  const roofExtra =
+    doc.roof.style !== 'none' ? Math.max(4.5, doc.roof.heightOffset) + 15.5 : 14.0;
+  const mastHeight = Math.max(40, bounds.maxStandH + roofExtra - groundY);
+
+  const safePitch = clampPitchToTrack(doc.pitch);
+  const cornerModes = resolveAllCorners(doc);
+  const trackOffsets = getTrackRadialOffset(doc);
+  const rectLayout = computeRectangularCornerLayout({
+    shape: doc.shape,
+    cornerFill: doc.cornerFill,
+    cornerModes,
+    crossSectionClip,
+    pitchLength: safePitch.length,
+    pitchWidth: safePitch.width,
+    endTrackOffset: trackOffsets.endOffset,
+    sideTrackOffset: trackOffsets.sideOffset,
+    stands: doc.stands,
+  });
+
+  const cornerList: { id: CornerQuadrantId; tBowl: number }[] = [
+    { id: 'se', tBowl: 0.125 },
+    { id: 'sw', tBowl: 0.375 },
+    { id: 'nw', tBowl: 0.625 },
+    { id: 'ne', tBowl: 0.875 },
+  ];
+
+  for (const item of cornerList) {
+    if (crossSectionClip && (item.id === 'se' || item.id === 'sw')) {
+      continue;
+    }
+
+    let wx = 0;
+    let wz = 0;
+    const cMode = cornerModes[item.id];
+
+    if (isContinuousBowlShape(doc.shape)) {
+      const openCustom = doc.corners?.[item.id] !== undefined && cMode === 'open';
+      const radOff = openCustom
+        ? Math.max(8.5, bounds.avgDepth * 0.45)
+        : bounds.avgDepth + concourseW + 7.5;
+      const pt = sampleRoundedBowlRing(bounds.ring, item.tBowl, radOff);
+      wx = pt.x;
+      wz = pt.z;
+    } else {
+      const cSpec = rectLayout.corners[item.id];
+      const radOff =
+        cMode === 'open'
+          ? Math.max(8.5, bounds.avgDepth * 0.42)
+          : bounds.avgDepth + concourseW + 7.2;
+      const pt = sampleCornerQuadrantPoint(cSpec, 0.5, radOff);
+      wx = pt.x;
+      wz = pt.z;
+    }
+
+    root.add(
+      buildSingleCornerFloodlightMast(
+        item.id,
+        wx,
+        wz,
+        groundY,
+        mastHeight,
+        doc.lighting,
+        structMat,
+        concreteMat
+      )
+    );
+  }
+
+  return root;
 }

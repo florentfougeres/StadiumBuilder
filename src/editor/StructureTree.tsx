@@ -101,7 +101,7 @@ export const StructureTree: React.FC<{
       <TreeRow
         active={node === 'roof'}
         icon={<Tent className="w-3.5 h-3.5" />}
-        label="Toiture"
+        label="Toiture et éclairage"
         onClick={() => onSelect('roof')}
       />
       <div className="pl-8 -mt-0.5 mb-1 text-2xs text-ink-faint truncate">{roofLabel}</div>

@@ -6,11 +6,20 @@ import {
 } from './capacity';
 import { sampleRoundedBowlRing } from './bowlRing';
 import { generateConcourseGroup } from './generateConcourse';
-import { generatePlacedObjectGroup } from './generateLights';
+import {
+  generateFloodlightRigGroup,
+  generatePlacedObjectGroup,
+} from './generateLights';
 import { generatePitchGroup } from './generatePitch';
 import { computeStadiumRingBounds, generateRoofGroup } from './generateRoof';
 import { generateStandsGroup } from './generateStand';
-import { isContinuousBowlShape, PlacedObject, StadiumDocument, StandSide } from './schema';
+import {
+  clampPitchToTrack,
+  isContinuousBowlShape,
+  PlacedObject,
+  StadiumDocument,
+  StandSide,
+} from './schema';
 
 /** Screen casing size in metres at scale 1, matching the `screen` builder in generateLights. */
 const SCREEN_W = 13.5;
@@ -58,10 +67,11 @@ function applyScreenMount(doc: StadiumDocument, obj: PlacedObject, group: THREE.
     crest = bounds.standHeightAtNormal(axis.nx, axis.nz);
     roofEdgeY = bounds.maxStandH + Math.max(4, doc.roof.heightOffset) + 1.8;
   } else {
+    const safePitch = clampPitchToTrack(doc.pitch);
     const metrics = calculateStandMetrics(doc, side);
     const track = getTrackRadialOffset(doc);
     inner =
-      (isEnd ? doc.pitch.length / 2 + track.endOffset : doc.pitch.width / 2 + track.sideOffset) +
+      (isEnd ? safePitch.length / 2 + track.endOffset : safePitch.width / 2 + track.sideOffset) +
       doc.stands[side].distanceToPitch;
     depth = metrics.enabled ? metrics.totalDepth : 0;
     crest = metrics.enabled ? metrics.maxHeight : 0;
@@ -154,8 +164,20 @@ export function buildStadiumSceneGraph(
   }
 
   const concourseGroup = generateConcourseGroup(doc, Boolean(options.crossSectionClip), aniso);
+  const floodlightRigGroup = generateFloodlightRigGroup(
+    doc,
+    Boolean(options.crossSectionClip),
+    aniso
+  );
 
-  rootGroup.add(pitchGroup, standsGroup, concourseGroup, roofGroup, objectsContainer);
+  rootGroup.add(
+    pitchGroup,
+    standsGroup,
+    concourseGroup,
+    roofGroup,
+    floodlightRigGroup,
+    objectsContainer
+  );
 
   return {
     rootGroup,
@@ -198,6 +220,14 @@ export function disposeObject3D(root: THREE.Object3D): void {
         }
         m.dispose();
       }
+    }
+    if (mesh.customDepthMaterial) {
+      const depthMat = mesh.customDepthMaterial as THREE.MeshDepthMaterial;
+      if (depthMat.alphaMap && !disposedTextures.has(depthMat.alphaMap)) {
+        disposedTextures.add(depthMat.alphaMap);
+        depthMat.alphaMap.dispose();
+      }
+      depthMat.dispose();
     }
   });
 }

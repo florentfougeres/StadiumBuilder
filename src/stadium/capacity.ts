@@ -1,7 +1,13 @@
 import { buildShapeBowlRing } from './bowlRing';
 import {
+  clampPitchToTrack,
+  CornerId,
   getEffectiveSunkenDepth,
+  getTrackGeometry,
   isContinuousBowlShape,
+  resolveAllCorners,
+  resolveFloodlightRig,
+  resolveStandVomitories,
   RoofStyle,
   SeatingType,
   slopeDegFromRiser,
@@ -11,12 +17,14 @@ import {
   StandMetrics,
   StandSide,
 } from './schema';
-import { computeStandSightlines, getTierStartRows, tierRiserHeight } from './sightlines';
+import { computeStandSightlines, resolveStandTiers } from './sightlines';
 
 const STAND_SIDES: StandSide[] = ['north', 'south', 'east', 'west'];
 
 /**
- * Computes running track radial offset around pitch when athletics track is enabled.
+ * Computes running track radial offset around the clamped pitch when the official 400m athletics
+ * track is enabled, so `safePitch.width / 2 + sideOffset` and `safePitch.length / 2 + endOffset`
+ * align with the outer perimeter of the 400m track (`84.39m` straights, `36.5m` kerb radius).
  */
 export function getTrackRadialOffset(doc: StadiumDocument): {
   sideOffset: number;
@@ -25,19 +33,39 @@ export function getTrackRadialOffset(doc: StadiumDocument): {
   if (!doc.pitch.hasTrack) {
     return { sideOffset: 0, endOffset: 0 };
   }
-  const laneWidth = 1.22;
-  const trackWidth = doc.pitch.trackLanes * laneWidth + 2.5;
+  const safePitch = clampPitchToTrack(doc.pitch);
+  const track = getTrackGeometry(safePitch);
   return {
-    sideOffset: trackWidth,
-    endOffset: trackWidth + 14.5,
+    sideOffset: Math.max(0, track.outerHalfWidthZ - safePitch.width * 0.5),
+    endOffset: Math.max(0, track.outerHalfLengthX - safePitch.length * 0.5),
   };
 }
 
-function getAdjacentStands(side: StandSide): [StandSide, StandSide] {
-  if (side === 'north' || side === 'south') {
-    return ['east', 'west'];
+function getAdjacentCornersAndStands(
+  side: StandSide
+): Array<{ corner: CornerId; adjSide: StandSide }> {
+  switch (side) {
+    case 'north':
+      return [
+        { corner: 'nw', adjSide: 'west' },
+        { corner: 'ne', adjSide: 'east' },
+      ];
+    case 'south':
+      return [
+        { corner: 'sw', adjSide: 'west' },
+        { corner: 'se', adjSide: 'east' },
+      ];
+    case 'east':
+      return [
+        { corner: 'ne', adjSide: 'north' },
+        { corner: 'se', adjSide: 'south' },
+      ];
+    case 'west':
+      return [
+        { corner: 'nw', adjSide: 'north' },
+        { corner: 'sw', adjSide: 'south' },
+      ];
   }
-  return ['north', 'south'];
 }
 
 export function resolveStandRoofStyle(
@@ -67,10 +95,9 @@ export function computeTelescopicProjection(
   if (!stand.enabled || stand.seatingType !== 'telescopic') {
     return { extraRows: 0, advanceMeters: 0 };
   }
-  const isSide = side === 'north' || side === 'south';
-  const trackOffsets = getTrackRadialOffset(doc);
-  const trackExtra = isSide ? trackOffsets.sideOffset : trackOffsets.endOffset;
-  const availableClearance = Math.max(0, stand.distanceToPitch + trackExtra - 3.6);
+  const availableClearance = doc.pitch.hasTrack
+    ? Math.max(0, stand.distanceToPitch - 1.5)
+    : Math.max(0, stand.distanceToPitch - 3.6);
   if (availableClearance < 2.2) {
     return { extraRows: 0, advanceMeters: 0 };
   }
@@ -125,6 +152,7 @@ export function computeKopWallStandPatch(
     rowDepth,
     riserHeight,
     slopeAngleDeg,
+    tierConfigs: undefined,
     seatingType,
     vipLoges: false,
   };
@@ -132,8 +160,8 @@ export function computeKopWallStandPatch(
 
 /**
  * Geometric capacity & dimensional engine integrating Steiner perimeter expansion,
- * cantilevered multi-tier overhangs (1 to 5 tiers), safe-standing terraces, telescopic lower rings,
- * and VIP loggia seating across all 9 morphologies.
+ * cantilevered multi-tier overhangs (1 to 5 asymmetric tiers), carved vomitories,
+ * custom per-corner modes, safe-standing terraces, telescopic lower rings, and VIP loggias.
  */
 export function calculateStandMetrics(
   doc: StadiumDocument,
@@ -143,18 +171,21 @@ export function calculateStandMetrics(
   const isHorseshoeOpenEnd = doc.shape === 'horseshoe' && side === 'east';
   const effectiveEnabled = stand.enabled && !isHorseshoeOpenEnd;
 
-  const seatingType: SeatingType = stand.seatingType ?? 'seated';
-  const hasVipLoges = stand.tiers >= 2 && stand.vipLoges !== false;
+  const tierSpecs = resolveStandTiers(stand);
+  const totalStandRows = tierSpecs.reduce((sum, t) => sum + t.rows, 0);
+  const upperTierCount = Math.max(0, tierSpecs.length - 1);
 
+  const seatingType: SeatingType = stand.seatingType ?? 'seated';
+  const hasVipLoges = tierSpecs.length >= 2 && stand.vipLoges !== false;
+
+  const safePitch = clampPitchToTrack(doc.pitch);
   const isSideStand = side === 'north' || side === 'south';
   const trackOffsets = getTrackRadialOffset(doc);
   const trackExtra = isSideStand ? trackOffsets.sideOffset : trackOffsets.endOffset;
 
-  const baseSpan = isSideStand ? doc.pitch.length : doc.pitch.width;
-  const hasClosedCorners =
-    isContinuousBowlShape(doc.shape) ||
-    doc.shape === 'compact_urban' ||
-    (doc.shape === 'english_rectangular' && doc.cornerFill);
+  const baseSpan = isSideStand ? safePitch.length : safePitch.width;
+  const cornerModes = resolveAllCorners(doc);
+  const adjEnds = getAdjacentCornersAndStands(side);
 
   const avgDistX =
     (doc.stands.east.distanceToPitch + doc.stands.west.distanceToPitch) * 0.5;
@@ -164,44 +195,60 @@ export function calculateStandMetrics(
   const bowlRing = isContinuousBowlShape(doc.shape)
     ? buildShapeBowlRing(
         doc.shape,
-        doc.pitch.length,
-        doc.pitch.width,
+        safePitch.length,
+        safePitch.width,
         avgDistX,
         avgDistZ,
         trackOffsets.endOffset,
         trackOffsets.sideOffset,
-        doc.pitch.hasTrack
+        safePitch.hasTrack
       )
     : buildShapeBowlRing(
         'modern_bowl',
-        doc.pitch.length,
-        doc.pitch.width,
+        safePitch.length,
+        safePitch.width,
         avgDistX,
         avgDistZ,
         trackOffsets.endOffset,
         trackOffsets.sideOffset,
-        doc.pitch.hasTrack
+        safePitch.hasTrack
       );
 
-  let straightFrontSpan = baseSpan;
+  const trimmedSpan = isSideStand
+    ? bowlRing.halfStraightX * 2
+    : bowlRing.halfStraightZ * 2;
+  const openSpan =
+    doc.shape === 'four_stands'
+      ? isSideStand
+        ? baseSpan + 14
+        : baseSpan + 12
+      : isSideStand
+      ? baseSpan + 8
+      : baseSpan + 6;
+
+  let straightFrontSpan = 0;
   let cornerQuadrants = 0;
 
-  if (hasClosedCorners) {
-    straightFrontSpan = isSideStand
-      ? bowlRing.halfStraightX * 2
-      : bowlRing.halfStraightZ * 2;
-    if (doc.shape === 'horseshoe') {
-      cornerQuadrants = side === 'west' ? 1.0 : isSideStand ? 0.65 : 0;
-    } else {
-      const [adjA, adjB] = getAdjacentStands(side);
-      cornerQuadrants =
-        (doc.stands[adjA].enabled ? 0.5 : 0.8) +
-        (doc.stands[adjB].enabled ? 0.5 : 0.8);
-    }
-  } else if (doc.shape === 'four_stands') {
-    straightFrontSpan = isSideStand ? baseSpan + 14 : baseSpan + 12;
+  if (doc.shape === 'horseshoe' && !doc.corners) {
+    straightFrontSpan = trimmedSpan;
+    cornerQuadrants = side === 'west' ? 1.0 : isSideStand ? 0.65 : 0;
   } else {
-    straightFrontSpan = isSideStand ? baseSpan + 8 : baseSpan + 6;
+    for (const { corner, adjSide } of adjEnds) {
+      const mode = cornerModes[corner];
+      const adjLive = doc.stands[adjSide].enabled && !(doc.shape === 'horseshoe' && adjSide === 'east');
+      const endTrimmed =
+        (mode === 'filled' || mode === 'building') &&
+        (adjLive || isContinuousBowlShape(doc.shape));
+      straightFrontSpan += 0.5 * (endTrimmed ? trimmedSpan : openSpan);
+
+      if (mode === 'filled') {
+        if (doc.shape === 'horseshoe' && isSideStand) {
+          cornerQuadrants += 0.65;
+        } else {
+          cornerQuadrants += adjLive ? 0.5 : 0.8;
+        }
+      }
+    }
   }
 
   const innerCornerArcPerQuadrant = bowlRing.facetedCorners
@@ -212,30 +259,26 @@ export function calculateStandMetrics(
     (straightFrontSpan + cornerQuadrants * innerCornerArcPerQuadrant).toFixed(1)
   );
 
-  const tierStarts = getTierStartRows(stand.rows, stand.tiers);
-  const upperTierCount = Math.max(0, tierStarts.length - 1);
-
-  const overhangStepM = doc.shape === 'steep_cauldron' ? -1.4 : -1.15;
-  const tierOverhangNetStep = overhangStepM * upperTierCount;
+  const stepBase = doc.shape === 'steep_cauldron' ? 1.1 : 1.35;
   const walkwayUnitH = hasVipLoges ? 2.85 : 1.6;
   const tierWalkwayHeight = upperTierCount * walkwayUnitH;
 
   let cumulativeRiserHeight = 0;
-  for (let r = 0; r < stand.rows; r++) {
-    const tIdx = tierStarts.findIndex((sr, idx) =>
-      idx === tierStarts.length - 1 ? r >= sr : r >= sr && r < tierStarts[idx + 1]
-    );
+  let simD = 0;
+  let maxSimD = 0;
+  for (let t = 0; t < tierSpecs.length; t++) {
+    const spec = tierSpecs[t];
+    if (t > 0) {
+      simD = Math.max(1.6, simD + stepBase - spec.overhang);
+    }
     const cauldronBoost = doc.shape === 'steep_cauldron' ? 1.05 : 1.0;
-    cumulativeRiserHeight += tierRiserHeight(stand.riserHeight, tIdx) * cauldronBoost;
+    cumulativeRiserHeight += spec.rows * spec.riserHeight * cauldronBoost;
+    simD += spec.rows * stand.rowDepth;
+    maxSimD = Math.max(maxSimD, simD);
   }
 
   const totalDepth = effectiveEnabled
-    ? Number(
-        Math.max(
-          8,
-          stand.rows * stand.rowDepth + tierOverhangNetStep + 2.8
-        ).toFixed(2)
-      )
+    ? Number(Math.max(8, maxSimD + 2.8).toFixed(2))
     : 0;
 
   const maxHeight = effectiveEnabled
@@ -249,12 +292,18 @@ export function calculateStandMetrics(
       )
     : 0;
 
+  const weightedSlopeSum = tierSpecs.reduce(
+    (acc, t) => acc + t.slopeAngleDeg * t.rows,
+    0
+  );
   const slopeDegrees =
-    stand.slopeAngleDeg !== undefined
+    stand.tierConfigs && stand.tierConfigs.length > 0 && totalStandRows > 0
+      ? Number((weightedSlopeSum / totalStandRows).toFixed(1))
+      : stand.slopeAngleDeg !== undefined
       ? Number(stand.slopeAngleDeg.toFixed(1))
       : slopeDegFromRiser(stand.riserHeight, stand.rowDepth);
 
-  if (!effectiveEnabled || stand.rows <= 0) {
+  if (!effectiveEnabled || totalStandRows <= 0) {
     return {
       side,
       name: stand.name,
@@ -263,7 +312,7 @@ export function calculateStandMetrics(
       totalDepth: 0,
       maxHeight: 0,
       slopeDegrees,
-      tiers: stand.tiers,
+      tiers: tierSpecs.length,
       seatingType,
       vipLoges: hasVipLoges,
       seatsPerRow: 0,
@@ -290,36 +339,46 @@ export function calculateStandMetrics(
   let totalRowSeats = 0;
   let curOutwardD = 0.4;
 
-  for (let r = 0; r < stand.rows; r++) {
-    if (r > 0 && tierStarts.includes(r)) {
-      curOutwardD = Math.max(2.0, curOutwardD + overhangStepM);
+  for (let tierIdx = 0; tierIdx < tierSpecs.length; tierIdx++) {
+    const spec = tierSpecs[tierIdx];
+    if (tierIdx > 0) {
+      curOutwardD = Math.max(2.0, curOutwardD + stepBase - spec.overhang);
     }
 
-    const tierIdx = tierStarts.findIndex((sr, idx) =>
-      idx === tierStarts.length - 1 ? r >= sr : r >= sr && r < tierStarts[idx + 1]
+    for (let tr = 0; tr < spec.rows; tr++) {
+      const openEndWingFlare = cornerQuadrants === 0 ? curOutwardD * 0.38 : 0;
+      const cornerDelta = bowlRing.facetedCorners
+        ? 2 * (Math.SQRT2 - 1) * curOutwardD * cornerExpansionEfficiency
+        : (Math.PI / 2) * curOutwardD * cornerExpansionEfficiency;
+
+      const rowArcSpan =
+        straightFrontSpan * multiTierWingBonus +
+        openEndWingFlare +
+        cornerQuadrants * (innerCornerArcPerQuadrant + cornerDelta);
+
+      const netSeatLen = Math.max(0, (rowArcSpan - totalAisleWidth) * 0.975);
+      const baseRowCount = Math.floor(netSeatLen / safeSeatWidth);
+
+      const standingDensityFactor =
+        seatingType === 'safe_standing' && (tierSpecs.length === 1 || tierIdx === 0)
+          ? 1.34
+          : 1.0;
+
+      totalRowSeats += Math.round(baseRowCount * standingDensityFactor);
+      curOutwardD += stand.rowDepth;
+    }
+  }
+
+  // Account for custom vomitory portal cutouts relative to baseline
+  if (stand.vomitoryCount !== undefined) {
+    const defaultVom = Math.max(2, Math.min(8, Math.round(stand.aisleCount * 0.5)));
+    const resolvedVom = resolveStandVomitories(stand);
+    const deltaPortals = resolvedVom.count - defaultVom;
+    const seatsPerPortal = Math.round((2.8 / safeSeatWidth) * 5);
+    totalRowSeats = Math.max(
+      120,
+      totalRowSeats - deltaPortals * tierSpecs.length * seatsPerPortal
     );
-
-    const openEndWingFlare = cornerQuadrants === 0 ? curOutwardD * 0.38 : 0;
-    const cornerDelta = bowlRing.facetedCorners
-      ? 2 * (Math.SQRT2 - 1) * curOutwardD * cornerExpansionEfficiency
-      : (Math.PI / 2) * curOutwardD * cornerExpansionEfficiency;
-
-    const rowArcSpan =
-      straightFrontSpan * multiTierWingBonus +
-      openEndWingFlare +
-      cornerQuadrants * (innerCornerArcPerQuadrant + cornerDelta);
-
-    const netSeatLen = Math.max(0, (rowArcSpan - totalAisleWidth) * 0.975);
-    const baseRowCount = Math.floor(netSeatLen / safeSeatWidth);
-
-    // Safe standing terrace boosts spectator density (~1.34x) on the standing tier (full wall if 1 tier, lower tier if multi-tier)
-    const standingDensityFactor =
-      seatingType === 'safe_standing' && (stand.tiers === 1 || tierIdx === 0)
-        ? 1.34
-        : 1.0;
-
-    totalRowSeats += Math.round(baseRowCount * standingDensityFactor);
-    curOutwardD += stand.rowDepth;
   }
 
   // Telescopic pitch-side lower tiers add deployable modular rows
@@ -334,7 +393,7 @@ export function calculateStandMetrics(
   const hospitalitySeats = hasVipLoges ? upperTierCount * skyboxBaysPerLevel * 14 : 0;
 
   const capacity = totalRowSeats + telescopicSeats + hospitalitySeats;
-  const totalEffectiveRows = stand.rows + tele.extraRows;
+  const totalEffectiveRows = totalStandRows + tele.extraRows;
   const seatsPerRow = Math.round(capacity / Math.max(1, totalEffectiveRows));
 
   const effectiveRoof = resolveStandRoofStyle(doc, side);
@@ -348,11 +407,11 @@ export function calculateStandMetrics(
     totalDepth,
     maxHeight,
     slopeDegrees,
-    tiers: stand.tiers,
+    tiers: tierSpecs.length,
     seatingType,
     vipLoges: hasVipLoges,
     seatsPerRow,
-    totalRows: stand.rows,
+    totalRows: totalStandRows,
     capacity,
     minCValueMm: sightlines.minCValueMm,
     avgCValueMm: sightlines.avgCValueMm,
@@ -373,7 +432,18 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
 
   const activeStands = STAND_SIDES.map((s) => standsMetrics[s]).filter((m) => m.enabled);
 
-  const totalCapacity = activeStands.reduce((sum, s) => sum + s.capacity, 0);
+  const cornerModes = resolveAllCorners(doc);
+  const cornerBuildingCount = (['nw', 'ne', 'sw', 'se'] as CornerId[]).filter(
+    (c) => cornerModes[c] === 'building'
+  ).length;
+  const cornerScreenCount = (['nw', 'ne', 'sw', 'se'] as CornerId[]).filter(
+    (c) => cornerModes[c] === 'screen'
+  ).length;
+
+  const cornerHospitalitySeats = doc.corners ? cornerBuildingCount * 220 : 0;
+  const totalCapacity =
+    activeStands.reduce((sum, s) => sum + s.capacity, 0) + cornerHospitalitySeats;
+
   const totalRowsAvg =
     activeStands.length > 0
       ? Math.round(
@@ -382,7 +452,10 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       : 0;
 
   const maxStandHeight = activeStands.reduce((max, s) => Math.max(max, s.maxHeight), 0);
-  const maxRoofHeight =
+  const rigMode = resolveFloodlightRig(doc);
+  const mastHeight =
+    rigMode === 'corner_masts' || rigMode === 'both' ? maxStandHeight + 16 : 0;
+  const roofStructuralHeight =
     doc.roof.style === 'none'
       ? maxStandHeight
       : doc.roof.style === 'fixed_dome'
@@ -392,11 +465,13 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       : doc.roof.style === 'twin_arch'
       ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 29).toFixed(1))
       : Number((maxStandHeight + doc.roof.heightOffset).toFixed(1));
+  const maxRoofHeight = Number(Math.max(roofStructuralHeight, mastHeight).toFixed(1));
 
   const standsFootprint = activeStands.reduce(
     (sum, s) => sum + s.effectiveLength * s.totalDepth * 1.15,
     0
   );
+  const cornersFootprint = cornerBuildingCount * 620 + cornerScreenCount * 48;
 
   const objectsFootprint = doc.objects.reduce((sum, obj) => {
     const scaleFactor = obj.scale[0] * obj.scale[2];
@@ -414,7 +489,7 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
     }
   }, 0);
 
-  const builtFootprintM2 = Math.round(standsFootprint + objectsFootprint);
+  const builtFootprintM2 = Math.round(standsFootprint + cornersFootprint + objectsFootprint);
 
   const maxTiers = activeStands.reduce(
     (mx, s) => Math.max(mx, doc.stands[s.side].tiers),
@@ -422,7 +497,7 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
   );
   const tierFactor = 1.2 + maxTiers * 0.58;
   const totalGrossFloorAreaM2 = Math.round(
-    standsFootprint * tierFactor + objectsFootprint * 0.65
+    standsFootprint * tierFactor + cornerBuildingCount * 2480 + objectsFootprint * 0.65
   );
 
   let baseCostPerSeat = 2650 + (maxTiers - 1) * 310;
@@ -433,7 +508,6 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
 
   const sunkenDepth = getEffectiveSunkenDepth(doc);
   if (sunkenDepth > 0) {
-    // Semi-buried excavation saves superstructure facade cost while adding earthworks/retaining wall
     baseCostPerSeat += Math.round(sunkenDepth * 22);
   }
 
@@ -444,6 +518,16 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
     baseCostPerSeat += 190;
   } else if (envelopeStyle === 'louver_curtain') {
     baseCostPerSeat += 150;
+  }
+
+  const facadePattern = doc.materials?.facadePattern ?? 'none';
+  const facadeDensity = doc.materials?.facadeDensity ?? 1.0;
+  if (facadePattern === 'vertical_fins') {
+    baseCostPerSeat += Math.round(145 * facadeDensity);
+  } else if (facadePattern === 'diagrid') {
+    baseCostPerSeat += Math.round(235 * facadeDensity);
+  } else if (facadePattern === 'cassette_panels') {
+    baseCostPerSeat += Math.round(175 * facadeDensity);
   }
 
   switch (doc.roof.style) {
@@ -494,7 +578,19 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       break;
   }
 
+  if (doc.roof.skylightMode && doc.roof.skylightMode !== 'none') {
+    baseCostPerSeat += Math.round(95 * (doc.roof.skylightRatio ?? 0.3));
+  }
+
   const trackCostM = doc.pitch.hasTrack ? 5.2 : 0;
+  const cornerStructuresCostM = cornerBuildingCount * 4.8 + cornerScreenCount * 1.6;
+  const floodlightRigCostM =
+    doc.floodlightRig === 'corner_masts'
+      ? 2.6
+      : doc.floodlightRig === 'both'
+      ? 3.4
+      : 0;
+
   const objectsCostM = doc.objects.reduce((sum, obj) => {
     switch (obj.type) {
       case 'screen':
@@ -518,7 +614,13 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
 
   const seatsBudgetM = (totalCapacity * baseCostPerSeat) / 1_000_000;
   const estimatedBudgetMillionsEur = Number(
-    (seatsBudgetM + trackCostM + objectsCostM).toFixed(1)
+    (
+      seatsBudgetM +
+      trackCostM +
+      cornerStructuresCostM +
+      floodlightRigCostM +
+      objectsCostM
+    ).toFixed(1)
   );
   const costPerSeatEur =
     totalCapacity > 0

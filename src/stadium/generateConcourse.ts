@@ -4,8 +4,10 @@ import { computeStadiumRingBounds } from './generateRoof';
 import {
   createConcreteBowlMaterial,
   createFacadePbrMaterial,
+  createStructurePbrMaterial,
   resolveStadiumMaterials,
 } from './materials';
+import { buildParametricFacadeOnRail } from './parametricFacade';
 import { StadiumDocument } from './schema';
 
 /** Storey height of the concourse levels, read on the facade as slab bands. */
@@ -26,7 +28,7 @@ export function generateConcourseGroup(
   const width = doc.concourse?.width ?? 0;
   if (width <= 0.5) return group;
 
-  const heightRatio = Math.min(1, Math.max(0.15, doc.concourse?.heightRatio ?? 1));
+  const heightRatio = Math.min(1, Math.max(0.15, doc.concourse?.heightRatio ?? 0.5));
   const { ring, standDepthAtNormal, standHeightAtNormal } = computeStadiumRingBounds(doc);
   const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
   const arcFraction = Math.max(0.25, tEnd - tStart);
@@ -117,6 +119,34 @@ export function generateConcourseGroup(
         new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.7, roughness: 0.35 })
       )
     );
+  }
+
+  // 3D Parametric Facade Relief on outer concourse perimeter
+  const facadePattern = mats.facadePattern ?? 'none';
+  if (facadePattern !== 'none') {
+    const structMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
+    const sampleCount = closed ? segments : count;
+    const facadeSamples = Array.from({ length: sampleCount }, (_, i) => ({
+      x: samples[i].outer.x,
+      z: samples[i].outer.z,
+      nx: samples[i].outer.nx,
+      nz: samples[i].outer.nz,
+      yBottom: 0,
+      yTop: samples[i].height,
+    }));
+    const relief = buildParametricFacadeOnRail({
+      samples: facadeSamples,
+      closed,
+      pattern: facadePattern,
+      density: mats.facadeDensity ?? 1.0,
+      depth: mats.facadeDepth ?? 0.85,
+      primaryMat: facadeMat,
+      accentMat: structMat,
+      name: 'ConcourseParametricFacade',
+    });
+    if (relief) {
+      group.add(relief);
+    }
   }
 
   return group;
