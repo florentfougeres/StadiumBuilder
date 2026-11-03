@@ -3,6 +3,7 @@ import {
   clampPitchToTrack,
   CornerId,
   getEffectiveSunkenDepth,
+  getCyclingTrackGeometry,
   getTrackGeometry,
   isContinuousBowlShape,
   resolveAllCorners,
@@ -32,10 +33,17 @@ export function getTrackRadialOffset(doc: StadiumDocument): {
   sideOffset: number;
   endOffset: number;
 } {
-  if (!doc.pitch.hasTrack) {
+  const safePitch = clampPitchToTrack(doc.pitch);
+  if (safePitch.cyclingTrack) {
+    const cycling = getCyclingTrackGeometry(safePitch);
+    return {
+      sideOffset: Math.max(0, cycling.outerHalfWidthZ - safePitch.width * 0.5),
+      endOffset: Math.max(0, cycling.outerHalfLengthX - safePitch.length * 0.5),
+    };
+  }
+  if (!safePitch.hasTrack) {
     return { sideOffset: 0, endOffset: 0 };
   }
-  const safePitch = clampPitchToTrack(doc.pitch);
   const track = getTrackGeometry(safePitch);
   return {
     sideOffset: Math.max(0, track.outerHalfWidthZ - safePitch.width * 0.5),

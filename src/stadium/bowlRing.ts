@@ -433,7 +433,8 @@ export function buildShapeBowlRing(
   const octPush = shape === 'octagonal_arena' ? 6.2 : 0;
   const cauldronPull = shape === 'steep_cauldron' || shape === 'd_shape_vertical' ? -0.6 : 0;
   // With a track the stand setback is measured from the track's outer edge and may be zero.
-  const olympicPush = shape === 'olympic_oval' && !hasTrack ? 1.8 : 0;
+  const ovalTrack = shape === 'olympic_oval' || shape === 'heritage_bowl';
+  const olympicPush = ovalTrack && !hasTrack ? 1.8 : 0;
   const sunkenPush = shape === 'sunken_bowl' ? 0.6 : 0;
   const minSetback = hasTrack ? 0 : MIN_PITCH_SETBACK;
 
@@ -448,7 +449,7 @@ export function buildShapeBowlRing(
 
   const faceted = shape === 'octagonal_arena';
   const desiredR =
-    shape === 'olympic_oval'
+    ovalTrack
       ? hasTrack
         ? innerHalfZ // bends follow the track's own semicircles
         : innerHalfZ * 0.94

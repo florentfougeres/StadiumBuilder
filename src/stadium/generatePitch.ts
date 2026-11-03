@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildMovablePitch, buildVelodrome } from './generateVelodrome';
 import {
   applyTurfCloseUpDetail,
   createGrassBladeNormalMap,
@@ -1079,6 +1080,9 @@ export function generatePitchGroup(
   turfMesh.receiveShadow = true;
   root.add(turfMesh);
   root.add(createGrassBladeField(colorMap, totalLength, totalWidth, track));
+  const movable = buildMovablePitch(pitch, colorMap, totalLength, totalWidth);
+  if (movable) root.add(movable);
+  if (pitch.cyclingTrack) root.add(buildVelodrome(pitch, false));
 
   // 3. Concrete Perimeter Drainage Curb framing the pitch apron (on non-track stadiums)
   if (!track) {

@@ -27,6 +27,7 @@ import {
   CornerId,
   CornerMode,
   EnvelopeProfile,
+  getCyclingTrackGeometry,
   getEffectiveSunkenDepth,
   getMaxPitchLengthForTrack,
   isContinuousBowlShape,
@@ -106,6 +107,11 @@ export const SHAPE_OPTIONS: { id: StadiumShape; label: string; desc: string }[] 
     id: 'olympic_oval',
     label: 'Bowl avec piste d’athlétisme',
     desc: 'Cuvette évasée autour d’une piste 8 couloirs',
+  },
+  {
+    id: 'heritage_bowl',
+    label: 'Stade années 30 avec vélodrome',
+    desc: 'Ovale peu pentu autour d’une piste cycliste relevée, seule la tribune d’honneur couverte',
   },
   {
     id: 'horseshoe',
@@ -650,6 +656,7 @@ const BowlInspector: React.FC = () => {
   const sunken = getEffectiveSunkenDepth(doc);
   const concourseWidth = doc.concourse?.width ?? 0;
   const concourseHeight = doc.concourse?.heightRatio ?? 0.5;
+  const cycling = getCyclingTrackGeometry(doc.pitch);
   const maxPitchWidth = doc.pitch.hasTrack ? TRACK_MAX_PITCH_WIDTH_M : 75;
   const maxPitchLength = doc.pitch.hasTrack
     ? Math.min(115, getMaxPitchLengthForTrack(doc.pitch.width))
@@ -830,6 +837,46 @@ const BowlInspector: React.FC = () => {
             value={doc.pitch.trackLanes}
             display={`${doc.pitch.trackLanes} couloirs · 400 m`}
             onChange={(trackLanes) => updatePitch({ trackLanes })}
+          />
+        )}
+        <ToggleField
+          label="Piste cycliste relevée (vélodrome)"
+          hint="Anneau en béton aux virages relevés, autour du terrain ou de la piste d’athlétisme"
+          checked={Boolean(doc.pitch.cyclingTrack)}
+          onChange={(v) => updatePitch({ cyclingTrack: v })}
+        />
+        {doc.pitch.cyclingTrack && (
+          <SliderField
+            label="Relevé des virages"
+            min={25}
+            max={45}
+            step={1}
+            value={cycling.banking}
+            display={`${cycling.banking}° · ${Math.round(cycling.lapLength)} m le tour`}
+            onChange={(cyclingBanking) => updatePitch({ cyclingBanking })}
+          />
+        )}
+        <SelectField
+          label="Pelouse mobile"
+          value={doc.pitch.movablePitch ?? 'none'}
+          onChange={(movablePitch) => updatePitch({ movablePitch })}
+          options={[
+            { id: 'none', label: 'Fixe' },
+            { id: 'half_lift', label: 'Demi-pelouse relevée sur l’autre' },
+            { id: 'slide_out', label: 'Pelouse qui sort du stade' },
+          ]}
+        />
+        {(doc.pitch.movablePitch ?? 'none') !== 'none' && (
+          <SliderField
+            label="Mode arène"
+            hint="0 % : pelouse en place · 100 % : plancher d’arène dégagé"
+            min={0}
+            max={1}
+            step={0.05}
+            value={doc.pitch.movablePitchState ?? 0}
+            display={`${Math.round((doc.pitch.movablePitchState ?? 0) * 100)} %`}
+            scale={100}
+            onChange={(movablePitchState) => updatePitch({ movablePitchState })}
           />
         )}
         <ToggleField
@@ -1205,6 +1252,24 @@ const StandInspector: React.FC = () => {
             disabled={off}
             checked={stand.embankment === true}
             onChange={(embankment) => updateStand(target, { embankment })}
+          />
+        )}
+        {!editAll && (
+          <SliderField
+            label="Tribune mobile : recul"
+            hint="Tribune montée sur rails, reculée pour dégager une piste ou avancée au bord du terrain"
+            disabled={off}
+            min={0}
+            max={15}
+            step={0.5}
+            value={stand.retractShift ?? 0}
+            display={`${fr1(stand.retractShift ?? 0)} m`}
+            onChange={(v) =>
+              updateStand(target, {
+                retractShift: v,
+                distanceToPitch: Math.max(0, stand.distanceToPitch - (stand.retractShift ?? 0) + v),
+              })
+            }
           />
         )}
         {!isContinuousBowlShape(doc.shape) && (
