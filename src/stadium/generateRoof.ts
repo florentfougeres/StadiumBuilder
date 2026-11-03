@@ -4,6 +4,7 @@ import {
   computeRectangularCornerLayout,
   CornerQuadrantId,
   getBowlArcRange,
+  MIN_PITCH_SETBACK,
   RectangularCornerSpec,
   sampleCornerQuadrantPoint,
   sampleRoundedBowlRing,
@@ -200,9 +201,13 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     (doc.stands.north.distanceToPitch + doc.stands.south.distanceToPitch) * 0.5;
 
   const innerHalfX =
-    safePitch.length / 2 + Math.max(4.5, avgDistX) + trackOffsets.endOffset;
+    safePitch.length / 2 +
+    Math.max(safePitch.hasTrack ? 0 : MIN_PITCH_SETBACK, avgDistX) +
+    trackOffsets.endOffset;
   const innerHalfZ =
-    safePitch.width / 2 + Math.max(4.5, avgDistZ) + trackOffsets.sideOffset;
+    safePitch.width / 2 +
+    Math.max(safePitch.hasTrack ? 0 : MIN_PITCH_SETBACK, avgDistZ) +
+    trackOffsets.sideOffset;
 
   const ring = buildShapeBowlRing(
     doc.shape,
@@ -237,6 +242,136 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
       west: westMetrics,
     },
   };
+}
+
+/** Spacing of the standing-seam ribs across a canopy, along the ring (m). */
+const CANOPY_SEAM_SPACING = 4.5;
+
+/**
+ * Architectural finish of a canopy surface described by its spokes (one polyline per ring sample,
+ * from the pitch-side edge to the rear edge, on the top surface):
+ * - a deep leading-edge fascia and a slimmer rear fascia, so the roof reads as a built slab with
+ *   thickness instead of a sheet;
+ * - raised standing-seam ribs running from front to back, which catch the sun the way metal and
+ *   membrane roofs do.
+ */
+function buildCanopyDetail(
+  spokes: THREE.Vector3[][],
+  closed: boolean,
+  surfaceMat: THREE.Material
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'RoofCanopyDetail';
+  if (spokes.length < 2) return group;
+
+  const base =
+    (surfaceMat as THREE.MeshStandardMaterial).color?.clone() ?? new THREE.Color(0xf1f5f9);
+  const edgeMat = new THREE.MeshStandardMaterial({
+    color: base.clone().lerp(new THREE.Color(0xffffff), 0.35),
+    roughness: 0.42,
+    metalness: 0.35,
+    side: THREE.DoubleSide,
+  });
+  const seamMat = new THREE.MeshStandardMaterial({
+    color: base.clone().lerp(new THREE.Color(0xffffff), 0.5),
+    roughness: 0.3,
+    metalness: 0.55,
+    side: THREE.DoubleSide,
+  });
+
+  const count = spokes.length;
+  const segs = closed ? count : count - 1;
+
+  // Vertical band hanging under one edge rail.
+  const fascia = (pick: (spoke: THREE.Vector3[]) => THREE.Vector3, depth: number) => {
+    const pos: number[] = [];
+    const idx: number[] = [];
+    for (const spoke of spokes) {
+      const p = pick(spoke);
+      pos.push(p.x, p.y + 0.05, p.z, p.x, p.y - depth, p.z);
+    }
+    for (let i = 0; i < segs; i++) {
+      const a = i * 2;
+      const b = ((i + 1) % count) * 2;
+      idx.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, edgeMat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return mesh;
+  };
+  group.add(
+    fascia((spoke) => spoke[0], 1.5),
+    fascia((spoke) => spoke[spoke.length - 1], 0.9)
+  );
+
+  // Seam ribs: a small triangular ridge along every n-th spoke, n chosen for the target spacing.
+  let frontLength = 0;
+  for (let i = 1; i < count; i++) frontLength += spokes[i][0].distanceTo(spokes[i - 1][0]);
+  const step = Math.max(1, Math.round(CANOPY_SEAM_SPACING / Math.max(0.1, frontLength / segs)));
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const side = new THREE.Vector3();
+  for (let i = 0; i < count; i += step) {
+    const spoke = spokes[i];
+    const neighbour = i + 1 < count ? spokes[i + 1] : spokes[i - 1];
+    const start = pos.length / 3;
+    spoke.forEach((p, k) => {
+      side.subVectors(neighbour[k], p).setY(0).normalize().multiplyScalar(0.16);
+      pos.push(p.x - side.x, p.y + 0.03, p.z - side.z);
+      pos.push(p.x, p.y + 0.22, p.z);
+      pos.push(p.x + side.x, p.y + 0.03, p.z + side.z);
+    });
+    for (let k = 0; k < spoke.length - 1; k++) {
+      const a = start + k * 3;
+      const b = a + 3;
+      idx.push(a, b, a + 1, b, b + 1, a + 1);
+      idx.push(a + 1, b + 1, a + 2, b + 1, b + 2, a + 2);
+    }
+  }
+  if (idx.length > 0) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const seams = new THREE.Mesh(geo, seamMat);
+    seams.castShadow = true;
+    seams.receiveShadow = true;
+    group.add(seams);
+  }
+  return group;
+}
+
+/**
+ * Same finish as the ring canopies for the flat box decks of per-stand roofs: spokes run across
+ * the deck's depth (local Z) on its top face, so seams and fasciae follow the deck's own tilt.
+ */
+function addSlabDeckDetail(roof: THREE.Object3D): void {
+  const decks: THREE.Mesh[] = [];
+  roof.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (mesh.isMesh && mesh.name === 'RoofCanopySurface') decks.push(mesh);
+  });
+  for (const deck of decks) {
+    deck.geometry.computeBoundingBox();
+    const box = deck.geometry.boundingBox;
+    if (!box) continue;
+    const size = box.getSize(new THREE.Vector3());
+    // Only flat slabs; curved corner canopies already come from the ring builders.
+    if (size.y > 1.5 || size.x < 8 || size.z < 4) continue;
+    const columns = Math.max(2, Math.round(size.x / 1.5));
+    const spokes = Array.from({ length: columns + 1 }, (_, i) => {
+      const x = box.min.x + (size.x * i) / columns;
+      return Array.from({ length: 4 }, (_, k) =>
+        new THREE.Vector3(x, box.max.y, box.min.z + (size.z * k) / 3)
+      );
+    });
+    deck.add(buildCanopyDetail(spokes, false, deck.material as THREE.Material));
+  }
 }
 
 function buildAnnularCanopyMesh(
@@ -307,6 +442,13 @@ function buildAnnularCanopyMesh(
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.renderOrder = 2;
+
+  const spokes = Array.from({ length: ringCount }, (_, s) => {
+    const a = new THREE.Vector3(positions[s * 6], positions[s * 6 + 1], positions[s * 6 + 2]);
+    const b = new THREE.Vector3(positions[s * 6 + 3], positions[s * 6 + 4], positions[s * 6 + 5]);
+    return Array.from({ length: 6 }, (_, k) => a.clone().lerp(b, k / 5));
+  });
+  mesh.add(buildCanopyDetail(spokes, closed, mat));
   return mesh;
 }
 
@@ -790,6 +932,14 @@ function buildShapedCanopyMesh(
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.renderOrder = 2;
+
+  const spokes = Array.from({ length: ringCount }, (_, s) =>
+    Array.from({ length: cols }, (_, c) => {
+      const i = (s * cols + c) * 3;
+      return new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]);
+    })
+  );
+  mesh.add(buildCanopyDetail(spokes, closed, mat));
   return mesh;
 }
 
@@ -3086,6 +3236,7 @@ function buildRoofAssembly(
       spanSpec.capNegLocalX,
       spanSpec.capPosLocalX
     );
+    addSlabDeckDetail(standRoofGroup);
 
     if (side === 'south') {
       standRoofGroup.position.set(spanSpec.centerCoord, 0, spanSpec.frontDist);

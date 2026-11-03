@@ -7,7 +7,7 @@ import {
   createStructurePbrMaterial,
   resolveStadiumMaterials,
 } from './materials';
-import { buildParametricFacadeOnRail } from './parametricFacade';
+import { buildCurtainWallArticulation, buildParametricFacadeOnRail } from './parametricFacade';
 import { StadiumDocument } from './schema';
 
 /** Storey height of the concourse levels, read on the facade as slab bands. */
@@ -97,9 +97,28 @@ export function generateConcourseGroup(
     strip((i) => [v(samples[i].inner, samples[i].height), v(samples[i].inner, 0)], 8, deckMat)
   );
 
+  const facadePattern = mats.facadePattern ?? 'none';
+  const structMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
+  const facadeSamples = Array.from({ length: closed ? segments : count }, (_, i) => ({
+    x: samples[i].outer.x,
+    z: samples[i].outer.z,
+    nx: samples[i].outer.nx,
+    nz: samples[i].outer.nz,
+    yBottom: 0,
+    yTop: samples[i].height,
+  }));
+
+  // Without a relief pattern the facade gets its curtain-wall frame (mullions and slab edges);
+  // the slab rings below are only needed under a relief pattern.
+  const articulation =
+    facadePattern === 'none'
+      ? buildCurtainWallArticulation({ samples: facadeSamples, closed, frameMat: structMat })
+      : null;
+  if (articulation) group.add(articulation);
+
   // Floor slabs projecting slightly from the facade at each concourse level.
   const minHeight = Math.min(...samples.map((s) => s.height));
-  for (let y = LEVEL_HEIGHT; y < minHeight - 0.5; y += LEVEL_HEIGHT) {
+  for (let y = LEVEL_HEIGHT; !articulation && y < minHeight - 0.5; y += LEVEL_HEIGHT) {
     const curve = new THREE.CatmullRomCurve3(
       samples.map((s) => v(s.slabEdge, y)),
       closed
@@ -122,18 +141,7 @@ export function generateConcourseGroup(
   }
 
   // 3D Parametric Facade Relief on outer concourse perimeter
-  const facadePattern = mats.facadePattern ?? 'none';
   if (facadePattern !== 'none') {
-    const structMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
-    const sampleCount = closed ? segments : count;
-    const facadeSamples = Array.from({ length: sampleCount }, (_, i) => ({
-      x: samples[i].outer.x,
-      z: samples[i].outer.z,
-      nx: samples[i].outer.nx,
-      nz: samples[i].outer.nz,
-      yBottom: 0,
-      yTop: samples[i].height,
-    }));
     const relief = buildParametricFacadeOnRail({
       samples: facadeSamples,
       closed,

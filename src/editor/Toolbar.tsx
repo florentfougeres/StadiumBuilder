@@ -17,6 +17,7 @@ import {
   Redo2,
   RotateCw,
   Scaling,
+  Sparkles,
   Sun,
   Sunset,
   Undo2,
@@ -29,7 +30,7 @@ import {
   parseImportedStadiumJson,
 } from '../export/exportGlb';
 import { exportArchitecturalPlanPdf } from '../export/exportPlan';
-import { exportViewportPng } from '../export/exportPng';
+import { exportPathTracedPng, exportViewportPng } from '../export/exportPng';
 import { CameraPresetMode, LightingMode, TransformMode } from '../stadium/schema';
 import { useStadiumStore } from '../state/useStadiumStore';
 import { useTheme } from './theme';
@@ -66,6 +67,7 @@ const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus })
   const loadDocument = useStadiumStore((s) => s.loadDocument);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -127,6 +129,24 @@ const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus })
         ),
     },
     {
+      label: 'Image photoréaliste',
+      detail: 'Lancer de rayons, 1 à 2 min',
+      icon: <Sparkles className="w-3.5 h-3.5" />,
+      onSelect: () =>
+        run(
+          async () => {
+            setProgress(0);
+            try {
+              if (!(await exportPathTracedPng(doc.name, setProgress))) throw new Error('trace');
+            } finally {
+              setProgress(null);
+            }
+          },
+          'Image photoréaliste téléchargée',
+          'Rendu impossible : WebGL 2 requis'
+        ),
+    },
+    {
       label: 'Plan PDF',
       detail: 'A4, cotes et capacité',
       icon: <FileDown className="w-3.5 h-3.5" />,
@@ -155,7 +175,11 @@ const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus })
         disabled={busy}
         onClick={() => setOpen((o) => !o)}
       >
-        {busy ? 'Export…' : 'Exporter'}
+        {progress !== null
+          ? `Rendu ${Math.round(progress * 100)} %`
+          : busy
+          ? 'Export…'
+          : 'Exporter'}
         <ChevronDown aria-hidden className="w-3.5 h-3.5 -mr-0.5" />
       </Button>
       {open && (

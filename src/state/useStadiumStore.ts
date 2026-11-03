@@ -71,7 +71,8 @@ export interface StadiumStoreState {
   doc: StadiumDocument;
   history: HistoryState;
   selectedObjectId: string | null;
-  activeStandTab: StandSide;
+  /** Stand shown in the inspector, or `all` to edit the four stands together. */
+  activeStandTab: StandTarget;
   cameraMode: CameraPresetMode;
   cameraTriggerNonce: number;
   transformMode: TransformMode;
@@ -96,15 +97,14 @@ export interface StadiumStoreState {
   setFloodlightRig: (mode: FloodlightRigMode) => void;
   setLighting: (lighting: LightingMode) => void;
   updatePitch: (patch: Partial<PitchConfig>) => void;
-  updateStand: (side: StandSide, patch: Partial<StandConfig>) => void;
+  updateStand: (target: StandTarget, patch: Partial<StandConfig>) => void;
   updateStandTier: (
-    side: StandSide,
+    target: StandTarget,
     tierIndex: number,
     patch: Partial<StandTierConfig>
   ) => void;
-  resetStandTiersUniform: (side: StandSide) => void;
-  convertStandToKopWall: (side: StandSide) => void;
-  updateAllStands: (patch: Partial<StandConfig>) => void;
+  resetStandTiersUniform: (target: StandTarget) => void;
+  convertStandToKopWall: (target: StandTarget) => void;
   applyTargetCapacity: (targetCapacity: number) => void;
   updateRoof: (patch: Partial<RoofConfig>) => void;
   updateConcourse: (patch: Partial<ConcourseConfig>) => void;
@@ -126,7 +126,7 @@ export interface StadiumStoreState {
   removeObject: (id: string) => void;
 
   // View & UI
-  setActiveStandTab: (side: StandSide) => void;
+  setActiveStandTab: (target: StandTarget) => void;
   setCameraMode: (mode: CameraPresetMode) => void;
   setTransformMode: (mode: TransformMode) => void;
   toggleDockCollapsed: () => void;
@@ -192,6 +192,118 @@ export function normalizeStadiumDocument(doc: StadiumDocument): StadiumDocument 
   };
   sanitizeLegacyNames(doc);
   return doc;
+}
+
+/** A single stand, or all four edited together. */
+export type StandTarget = StandSide | 'all';
+
+const ALL_STANDS: StandSide[] = ['north', 'south', 'east', 'west'];
+const standsOf = (target: StandTarget): StandSide[] => (target === 'all' ? ALL_STANDS : [target]);
+
+/** Applies an inspector edit to one stand, keeping rows, tiers and rake consistent. */
+function applyStandPatch(d: StadiumDocument, side: StandSide, patch: Partial<StandConfig>): void {
+  const prev = d.stands[side];
+  const next = { ...prev, ...patch };
+  if (patch.tiers !== undefined && patch.rows === undefined && patch.tiers !== prev.tiers) {
+    if (patch.tiers === 1 && prev.tiers > 1) {
+      const kopPatch = computeKopWallStandPatch(
+        d,
+        side,
+        next.seatingType ?? 'seated'
+      );
+      next.rows = kopPatch.rows ?? prev.rows;
+      next.tierConfigs = undefined;
+    } else {
+      const deltaRows = (patch.tiers - prev.tiers) * 14;
+      next.rows = Math.max(patch.tiers * 8, Math.min(108, prev.rows + deltaRows));
+      if (prev.tierConfigs && prev.tierConfigs.length > 0) {
+        const resized: StandTierConfig[] = prev.tierConfigs
+          .slice(0, patch.tiers)
+          .map((tc) => ({ ...tc }));
+        while (resized.length < patch.tiers) {
+          const idx = resized.length;
+          resized.push({
+            rows: 14,
+            slopeAngleDeg: Math.min(40, (prev.slopeAngleDeg ?? 28) + idx * 1.8),
+          });
+        }
+        next.tierConfigs = resized;
+        next.rows = resized.reduce((sum, tc) => sum + tc.rows, 0);
+      }
+    }
+  } else if (
+    prev.tierConfigs &&
+    prev.tierConfigs.length === next.tiers &&
+    patch.tierConfigs === undefined
+  ) {
+    if (patch.rows !== undefined && patch.rows !== prev.rows) {
+      const prevSum = Math.max(1, prev.tierConfigs.reduce((s, tc) => s + tc.rows, 0));
+      const scale = patch.rows / prevSum;
+      next.tierConfigs = prev.tierConfigs.map((tc) => ({
+        ...tc,
+        rows: Math.max(3, Math.round(tc.rows * scale)),
+      }));
+      next.rows = next.tierConfigs.reduce((s, tc) => s + tc.rows, 0);
+    }
+    if (patch.slopeAngleDeg !== undefined && prev.slopeAngleDeg !== undefined) {
+      const deltaSlope = patch.slopeAngleDeg - prev.slopeAngleDeg;
+      next.tierConfigs = (next.tierConfigs ?? prev.tierConfigs).map((tc) => ({
+        ...tc,
+        slopeAngleDeg: Number(
+          Math.max(15, Math.min(42, tc.slopeAngleDeg + deltaSlope)).toFixed(1)
+        ),
+      }));
+    }
+  }
+  if (patch.slopeAngleDeg !== undefined) {
+    next.riserHeight = riserFromSlopeDeg(patch.slopeAngleDeg, next.rowDepth);
+  } else if (patch.riserHeight !== undefined || patch.rowDepth !== undefined) {
+    next.slopeAngleDeg = Number(
+      ((Math.atan2(next.riserHeight, next.rowDepth) * 180) / Math.PI).toFixed(1)
+    );
+  }
+  d.stands[side] = next;
+}
+
+/** Edits one tier of a stand, switching it to explicit per-tier settings. */
+function applyStandTierPatch(
+  d: StadiumDocument,
+  side: StandSide,
+  tierIndex: number,
+  patch: Partial<StandTierConfig>
+): void {
+  const prev = d.stands[side];
+  const resolved = resolveStandTiers(prev);
+  const configs: StandTierConfig[] = resolved.map((spec, idx) => ({
+    rows: spec.rows,
+    slopeAngleDeg: spec.slopeAngleDeg,
+    overhang: prev.tierConfigs?.[idx]?.overhang,
+  }));
+  if (tierIndex < 0 || tierIndex >= configs.length) return;
+
+  const target = { ...configs[tierIndex], ...patch };
+  target.rows = Math.max(3, Math.min(72, Math.round(target.rows)));
+  target.slopeAngleDeg = Number(
+    Math.max(15, Math.min(42, target.slopeAngleDeg)).toFixed(1)
+  );
+  if (target.overhang !== undefined) {
+    target.overhang = Number(Math.max(0, Math.min(8, target.overhang)).toFixed(2));
+  }
+  configs[tierIndex] = target;
+
+  const totalRows = configs.reduce((sum, tc) => sum + tc.rows, 0);
+  const weightedSlope =
+    configs.reduce((sum, tc) => sum + tc.slopeAngleDeg * tc.rows, 0) /
+    Math.max(1, totalRows);
+  const roundedSlope = Number(weightedSlope.toFixed(1));
+
+  d.stands[side] = {
+    ...prev,
+    rows: totalRows,
+    slopeAngleDeg: roundedSlope,
+    riserHeight: riserFromSlopeDeg(roundedSlope, prev.rowDepth),
+    tierConfigs: configs,
+  };
 }
 
 export const useStadiumStore = create<StadiumStoreState>((set, get) => {
@@ -424,149 +536,29 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
         d.pitch = clampPitchToTrack({ ...d.pitch, ...patch });
       }),
 
-    updateStand: (side, patch) =>
+    updateStand: (target, patch) =>
       commitChange((d) => {
-        const prev = d.stands[side];
-        const next = { ...prev, ...patch };
-        if (patch.tiers !== undefined && patch.rows === undefined && patch.tiers !== prev.tiers) {
-          if (patch.tiers === 1 && prev.tiers > 1) {
-            const kopPatch = computeKopWallStandPatch(
-              d,
-              side,
-              next.seatingType ?? 'seated'
-            );
-            next.rows = kopPatch.rows ?? prev.rows;
-            next.tierConfigs = undefined;
-          } else {
-            const deltaRows = (patch.tiers - prev.tiers) * 14;
-            next.rows = Math.max(patch.tiers * 8, Math.min(108, prev.rows + deltaRows));
-            if (prev.tierConfigs && prev.tierConfigs.length > 0) {
-              const resized: StandTierConfig[] = prev.tierConfigs
-                .slice(0, patch.tiers)
-                .map((tc) => ({ ...tc }));
-              while (resized.length < patch.tiers) {
-                const idx = resized.length;
-                resized.push({
-                  rows: 14,
-                  slopeAngleDeg: Math.min(40, (prev.slopeAngleDeg ?? 28) + idx * 1.8),
-                });
-              }
-              next.tierConfigs = resized;
-              next.rows = resized.reduce((sum, tc) => sum + tc.rows, 0);
-            }
-          }
-        } else if (
-          prev.tierConfigs &&
-          prev.tierConfigs.length === next.tiers &&
-          patch.tierConfigs === undefined
-        ) {
-          if (patch.rows !== undefined && patch.rows !== prev.rows) {
-            const prevSum = Math.max(1, prev.tierConfigs.reduce((s, tc) => s + tc.rows, 0));
-            const scale = patch.rows / prevSum;
-            next.tierConfigs = prev.tierConfigs.map((tc) => ({
-              ...tc,
-              rows: Math.max(3, Math.round(tc.rows * scale)),
-            }));
-            next.rows = next.tierConfigs.reduce((s, tc) => s + tc.rows, 0);
-          }
-          if (patch.slopeAngleDeg !== undefined && prev.slopeAngleDeg !== undefined) {
-            const deltaSlope = patch.slopeAngleDeg - prev.slopeAngleDeg;
-            next.tierConfigs = (next.tierConfigs ?? prev.tierConfigs).map((tc) => ({
-              ...tc,
-              slopeAngleDeg: Number(
-                Math.max(15, Math.min(42, tc.slopeAngleDeg + deltaSlope)).toFixed(1)
-              ),
-            }));
-          }
+        for (const side of standsOf(target)) applyStandPatch(d, side, patch);
+      }),
+
+    updateStandTier: (target, tierIndex, patch) =>
+      commitChange((d) => {
+        for (const side of standsOf(target)) applyStandTierPatch(d, side, tierIndex, patch);
+      }),
+
+    resetStandTiersUniform: (target) =>
+      commitChange((d) => {
+        for (const side of standsOf(target)) {
+          d.stands[side] = { ...d.stands[side], tierConfigs: undefined };
         }
-        if (patch.slopeAngleDeg !== undefined) {
-          next.riserHeight = riserFromSlopeDeg(patch.slopeAngleDeg, next.rowDepth);
-        } else if (patch.riserHeight !== undefined || patch.rowDepth !== undefined) {
-          next.slopeAngleDeg = Number(
-            ((Math.atan2(next.riserHeight, next.rowDepth) * 180) / Math.PI).toFixed(1)
-          );
+      }),
+
+    convertStandToKopWall: (target) =>
+      commitChange((d) => {
+        for (const side of standsOf(target)) {
+          const kopPatch = computeKopWallStandPatch(d, side, 'safe_standing');
+          d.stands[side] = { ...d.stands[side], ...kopPatch, tierConfigs: undefined };
         }
-        d.stands[side] = next;
-      }),
-
-    updateStandTier: (side, tierIndex, patch) =>
-      commitChange((d) => {
-        const prev = d.stands[side];
-        const resolved = resolveStandTiers(prev);
-        const configs: StandTierConfig[] = resolved.map((spec, idx) => ({
-          rows: spec.rows,
-          slopeAngleDeg: spec.slopeAngleDeg,
-          overhang: prev.tierConfigs?.[idx]?.overhang,
-        }));
-        if (tierIndex < 0 || tierIndex >= configs.length) return;
-
-        const target = { ...configs[tierIndex], ...patch };
-        target.rows = Math.max(3, Math.min(72, Math.round(target.rows)));
-        target.slopeAngleDeg = Number(
-          Math.max(15, Math.min(42, target.slopeAngleDeg)).toFixed(1)
-        );
-        if (target.overhang !== undefined) {
-          target.overhang = Number(Math.max(0, Math.min(8, target.overhang)).toFixed(2));
-        }
-        configs[tierIndex] = target;
-
-        const totalRows = configs.reduce((sum, tc) => sum + tc.rows, 0);
-        const weightedSlope =
-          configs.reduce((sum, tc) => sum + tc.slopeAngleDeg * tc.rows, 0) /
-          Math.max(1, totalRows);
-        const roundedSlope = Number(weightedSlope.toFixed(1));
-
-        d.stands[side] = {
-          ...prev,
-          rows: totalRows,
-          slopeAngleDeg: roundedSlope,
-          riserHeight: riserFromSlopeDeg(roundedSlope, prev.rowDepth),
-          tierConfigs: configs,
-        };
-      }),
-
-    resetStandTiersUniform: (side) =>
-      commitChange((d) => {
-        d.stands[side] = {
-          ...d.stands[side],
-          tierConfigs: undefined,
-        };
-      }),
-
-    convertStandToKopWall: (side) =>
-      commitChange((d) => {
-        const kopPatch = computeKopWallStandPatch(d, side, 'safe_standing');
-        d.stands[side] = {
-          ...d.stands[side],
-          ...kopPatch,
-          tierConfigs: undefined,
-        };
-      }),
-
-    updateAllStands: (patch) =>
-      commitChange((d) => {
-        (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
-          const prev = d.stands[s];
-          const next = { ...prev, ...patch };
-          if (
-            patch.tiers !== undefined &&
-            patch.rows === undefined &&
-            patch.tiers !== prev.tiers
-          ) {
-            const deltaRows = (patch.tiers - prev.tiers) * 14;
-            next.rows = Math.max(patch.tiers * 8, Math.min(108, prev.rows + deltaRows));
-          }
-          if (patch.slopeAngleDeg !== undefined) {
-            next.riserHeight = Number(
-              (Math.tan((patch.slopeAngleDeg * Math.PI) / 180) * next.rowDepth).toFixed(3)
-            );
-          } else if (patch.riserHeight !== undefined || patch.rowDepth !== undefined) {
-            next.slopeAngleDeg = Number(
-              ((Math.atan2(next.riserHeight, next.rowDepth) * 180) / Math.PI).toFixed(1)
-            );
-          }
-          d.stands[s] = next;
-        });
       }),
 
     applyTargetCapacity: (targetCapacity) =>
@@ -757,7 +749,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
       });
     },
 
-    setActiveStandTab: (side) => set({ activeStandTab: side }),
+    setActiveStandTab: (target) => set({ activeStandTab: target }),
 
     setCameraMode: (mode) =>
       set((state) => ({

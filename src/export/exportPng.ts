@@ -37,3 +37,30 @@ export function exportViewportPng(projectName: string): boolean {
   document.body.removeChild(anchor);
   return true;
 }
+
+let pathTraceHandler: ((onProgress: (fraction: number) => void) => Promise<string | null>) | null =
+  null;
+
+export function registerPathTraceHandler(
+  fn: ((onProgress: (fraction: number) => void) => Promise<string | null>) | null
+): void {
+  pathTraceHandler = fn;
+}
+
+/** Path-traced still of the current view; resolves false when the viewport cannot trace. */
+export async function exportPathTracedPng(
+  projectName: string,
+  onProgress: (fraction: number) => void
+): Promise<boolean> {
+  if (!pathTraceHandler) return false;
+  const dataUrl = await pathTraceHandler(onProgress);
+  if (!dataUrl) return false;
+
+  const anchor = document.createElement('a');
+  anchor.href = dataUrl;
+  anchor.download = `${sanitizeFilename(projectName)}-photo.png`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  return true;
+}

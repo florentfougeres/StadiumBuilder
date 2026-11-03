@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { registerViewportCaptureHandler } from '../export/exportPng';
+import { registerPathTraceHandler, registerViewportCaptureHandler } from '../export/exportPng';
+import { createRenderPipeline, createSkyEnvironments, getSunDirection } from './renderPipeline';
 import { buildStadiumSceneGraph, disposeObject3D } from '../stadium/buildStadiumScene';
 import { calculateStandMetrics, getTrackRadialOffset } from '../stadium/capacity';
 import {
@@ -219,6 +220,8 @@ export const Viewport: React.FC = () => {
     arenaBowlLight: THREE.DirectionalLight;
     skyTextures: Record<LightingMode, THREE.CanvasTexture>;
     envTextures: Record<LightingMode, THREE.Texture>;
+    skyEnv: ReturnType<typeof createSkyEnvironments> | null;
+    pipeline: ReturnType<typeof createRenderPipeline> | null;
     gridHelper: THREE.GridHelper;
     stadiumRoot: THREE.Group | null;
     placedMap: Map<string, THREE.Group>;
@@ -266,20 +269,18 @@ export const Viewport: React.FC = () => {
     const pmrem = new THREE.PMREMGenerator(renderer);
     pmrem.compileEquirectangularShader();
     const fallbackRoom = new RoomEnvironment();
-    const envTextures: Record<LightingMode, THREE.Texture> = isSoftwareGl
-      ? {
+    const skyEnv = isSoftwareGl ? null : createSkyEnvironments(renderer, skyTextures.night);
+    const envTextures: Record<LightingMode, THREE.Texture> = skyEnv
+      ? skyEnv.environments
+      : {
           day: pmrem.fromScene(fallbackRoom, 0.04).texture,
           dusk: pmrem.fromScene(fallbackRoom, 0.04).texture,
           night: pmrem.fromScene(fallbackRoom, 0.04).texture,
-        }
-      : {
-          day: pmrem.fromEquirectangular(skyTextures.day).texture,
-          dusk: pmrem.fromEquirectangular(skyTextures.dusk).texture,
-          night: pmrem.fromEquirectangular(skyTextures.night).texture,
         };
     fallbackRoom.dispose();
     pmrem.dispose();
     scene.environment = envTextures.dusk;
+    if (skyEnv) scene.add(skyEnv.sky);
 
     const camera = new THREE.PerspectiveCamera(44, width / height, 0.5, 1800);
     camera.position.set(145, 96, 152);
@@ -291,13 +292,14 @@ export const Viewport: React.FC = () => {
     const keyLight = new THREE.DirectionalLight(0xfffbeb, 2.45);
     keyLight.position.set(115, 152, 92);
     keyLight.castShadow = !isSoftwareGl;
-    keyLight.shadow.mapSize.set(2048, 2048);
-    keyLight.shadow.camera.left = -142;
-    keyLight.shadow.camera.right = 142;
-    keyLight.shadow.camera.top = 142;
-    keyLight.shadow.camera.bottom = -142;
-    keyLight.shadow.camera.near = 14;
-    keyLight.shadow.camera.far = 410;
+    keyLight.shadow.mapSize.set(4096, 4096);
+    // Covers the bowl and its forecourt; 4096 texels over 380 m keeps roof ribs crisp.
+    keyLight.shadow.camera.left = -190;
+    keyLight.shadow.camera.right = 190;
+    keyLight.shadow.camera.top = 190;
+    keyLight.shadow.camera.bottom = -190;
+    keyLight.shadow.camera.near = 20;
+    keyLight.shadow.camera.far = 620;
     keyLight.shadow.radius = 1.75;
     keyLight.shadow.bias = -0.00025;
     keyLight.shadow.normalBias = 0.015;
@@ -317,6 +319,10 @@ export const Viewport: React.FC = () => {
     gridHelper.position.y = 0.01;
     gridHelper.visible = false;
     scene.add(gridHelper);
+
+    const pipeline = isSoftwareGl
+      ? null
+      : createRenderPipeline(renderer, scene, camera, width, height);
 
     const orbit = new OrbitControls(camera, renderer.domElement);
     orbit.enableDamping = !isSoftwareGl;
@@ -340,6 +346,8 @@ export const Viewport: React.FC = () => {
     let frameId = 0;
     let renderBusy = false;
     let renderDirty = false;
+    // While a path-traced still renders, the tracer owns the canvas.
+    let pathTracing = false;
 
     function afterDraw(cb: () => void) {
       const gl = renderer.getContext() as WebGL2RenderingContext;
@@ -362,6 +370,7 @@ export const Viewport: React.FC = () => {
     }
 
     function requestRender() {
+      if (pathTracing) return;
       if (renderBusy) {
         renderDirty = true;
         return;
@@ -402,7 +411,8 @@ export const Viewport: React.FC = () => {
           orbit.update();
         }
 
-        renderer.render(scene, camera);
+        if (pipeline) pipeline.render();
+        else renderer.render(scene, camera);
 
         const done = () => {
           renderBusy = false;
@@ -538,6 +548,7 @@ export const Viewport: React.FC = () => {
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
         renderer.setSize(w, h);
+        pipeline?.setSize(w, h);
         requestRender();
       }
     });
@@ -546,12 +557,44 @@ export const Viewport: React.FC = () => {
     // Register synchronous PNG screenshot capture handler
     registerViewportCaptureHandler(() => {
       transformHelper.visible = false;
-      renderer.render(scene, camera);
+      if (pipeline) pipeline.render();
+      else renderer.render(scene, camera);
       const dataUrl = renderer.domElement.toDataURL('image/png');
       transformHelper.visible = Boolean(transform.object);
       requestRender();
       return dataUrl;
     });
+
+    registerPathTraceHandler(
+      isSoftwareGl
+        ? null
+        : async (onProgress) => {
+            const engine = engineRef.current;
+            if (!engine?.stadiumRoot || pathTracing) return null;
+            pathTracing = true;
+            transformHelper.visible = false;
+            const mode = useStadiumStore.getState().doc.lighting;
+            try {
+              // Loaded on demand: the tracer and its BVH builder are only needed for this export.
+              const { renderPathTracedPng } = await import('./pathTracedCapture');
+              return await renderPathTracedPng({
+                renderer,
+                camera,
+                stadium: engine.stadiumRoot,
+                sun: keyLight,
+                sky: skyEnv && mode !== 'night' ? skyEnv.sky : null,
+                background: skyTextures.night,
+                environmentIntensity: scene.environmentIntensity,
+                samples: 160,
+                onProgress,
+              });
+            } finally {
+              pathTracing = false;
+              transformHelper.visible = Boolean(transform.object);
+              requestRender();
+            }
+          }
+    );
 
     engineRef.current = {
       renderer,
@@ -565,6 +608,8 @@ export const Viewport: React.FC = () => {
       arenaBowlLight,
       skyTextures,
       envTextures,
+      skyEnv,
+      pipeline,
       gridHelper,
       stadiumRoot: null,
       placedMap: new Map(),
@@ -580,6 +625,7 @@ export const Viewport: React.FC = () => {
 
     return () => {
       registerViewportCaptureHandler(null);
+      registerPathTraceHandler(null);
       resizeObserver.disconnect();
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
@@ -593,9 +639,13 @@ export const Viewport: React.FC = () => {
       skyTextures.day.dispose();
       skyTextures.dusk.dispose();
       skyTextures.night.dispose();
-      envTextures.day.dispose();
-      envTextures.dusk.dispose();
-      envTextures.night.dispose();
+      if (skyEnv) skyEnv.dispose();
+      else {
+        envTextures.day.dispose();
+        envTextures.dusk.dispose();
+        envTextures.night.dispose();
+      }
+      pipeline?.dispose();
       if (engineRef.current?.stadiumRoot) {
         disposeObject3D(engineRef.current.stadiumRoot);
       }
@@ -622,8 +672,12 @@ export const Viewport: React.FC = () => {
 
     // Update sky dome, outdoor PBR environment reflections, atmospheric haze, and stadium match floodlights
     const applyAtmosphere = (mode: LightingMode) => {
-      engine.scene.background = engine.skyTextures[mode];
+      // The physical sky mesh draws day and dusk; the painted texture stays for night.
+      engine.scene.background = engine.skyEnv && mode !== 'night' ? null : engine.skyTextures[mode];
       engine.scene.environment = engine.envTextures[mode];
+      engine.skyEnv?.applySky(mode);
+      engine.pipeline?.setMode(mode);
+      engine.keyLight.position.copy(getSunDirection(mode)).multiplyScalar(260);
       engine.gridHelper.visible = cameraMode === 'plan2d' || cameraMode === 'cross_section';
       engine.gridHelper.material.opacity = 0.14;
       engine.gridHelper.material.transparent = true;
@@ -633,14 +687,16 @@ export const Viewport: React.FC = () => {
         rigMode === 'none' ? 0.24 : rigMode === 'both' ? 1.22 : 1.0;
 
       if (mode === 'day') {
-        engine.scene.environmentIntensity = 1.05;
-        engine.scene.fog = new THREE.FogExp2(0xcbd5e1, 0.00068);
+        engine.scene.environmentIntensity = 1.1;
+        // Light aerial haze matching the sky's horizon colour.
+        engine.scene.fog = new THREE.FogExp2(0xc9d8e8, 0.00045);
         engine.keyLight.color.setHex(0xfffbeb);
         engine.keyLight.intensity = 2.55;
         engine.hemiLight.color.setHex(0xe0f2fe);
         engine.hemiLight.groundColor.setHex(0x334155);
-        engine.hemiLight.intensity = 0.88;
-        engine.rimLight.intensity = 0.52;
+        // The sky environment already fills the shadows; extra fill lights flatten the volumes.
+        engine.hemiLight.intensity = 0.5;
+        engine.rimLight.intensity = 0.12;
         engine.arenaBowlLight.intensity = 0.22;
       } else if (mode === 'dusk') {
         engine.scene.environmentIntensity = 0.92;

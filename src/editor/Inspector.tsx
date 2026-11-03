@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { MIN_PITCH_SETBACK } from '../stadium/bowlRing';
 import {
   calculateStadiumMetrics,
   getTrackRadialOffset,
@@ -42,7 +43,7 @@ import {
   DEFAULT_TIER_OVERHANG_M,
   resolveStandTiers,
 } from '../stadium/sightlines';
-import { useStadiumStore } from '../state/useStadiumStore';
+import { StandTarget, useStadiumStore } from '../state/useStadiumStore';
 import { ObjectList } from './ObjectList';
 import { ProjectsPanel } from './ProjectsPanel';
 import type { EditorNode } from './StructureTree';
@@ -109,6 +110,11 @@ export const SHAPE_OPTIONS: { id: StadiumShape; label: string; desc: string }[] 
     id: 'circular_bowl',
     label: 'Bol circulaire',
     desc: 'Enceinte ronde : virages près des buts, tribunes latérales éloignées',
+  },
+  {
+    id: 'arc_stands',
+    label: 'Tribunes en arc de cercle',
+    desc: '4 tribunes cintrées tournées vers le centre, virages très arrondis, coins ouverts',
   },
 ];
 
@@ -213,7 +219,8 @@ const SEATING_TYPE_OPTIONS: { id: SeatingType; label: string; desc: string }[] =
   },
 ];
 
-const STAND_TABS: { id: StandSide; label: string }[] = [
+const STAND_TABS: { id: StandTarget; label: string }[] = [
+  { id: 'all', label: 'Toutes' },
   { id: 'south', label: 'Sud' },
   { id: 'north', label: 'Nord' },
   { id: 'east', label: 'Est' },
@@ -788,12 +795,14 @@ const SightlineProfile: React.FC<{
 
 const StandInspector: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
-  const side = useStadiumStore((s) => s.activeStandTab);
+  const target = useStadiumStore((s) => s.activeStandTab);
   const setActiveStandTab = useStadiumStore((s) => s.setActiveStandTab);
+  const editAll = target === 'all';
+  // With all stands selected, the south stand's values are shown and edits go to all four.
+  const side: StandSide = editAll ? 'south' : target;
   const updateStand = useStadiumStore((s) => s.updateStand);
   const updateStandTier = useStadiumStore((s) => s.updateStandTier);
   const resetStandTiersUniform = useStadiumStore((s) => s.resetStandTiersUniform);
-  const updateAllStands = useStadiumStore((s) => s.updateAllStands);
   const convertStandToKopWall = useStadiumStore((s) => s.convertStandToKopWall);
   const metrics = useMemo(() => calculateStadiumMetrics(doc), [doc]);
 
@@ -825,9 +834,11 @@ const StandInspector: React.FC = () => {
   return (
     <>
       <PanelHeader
-        title={`Tribune ${STAND_LABELS[side]}`}
+        title={editAll ? 'Toutes les tribunes' : `Tribune ${STAND_LABELS[side]}`}
         meta={
-          off
+          editAll
+            ? `${fr(metrics.totalCapacity)} places · réglages appliqués aux 4 tribunes`
+            : off
             ? 'Désactivée'
             : `${fr(sm.capacity)} places · ${sm.seatsPerRow} par rang · ${fr1(sm.maxHeight)} m de haut`
         }
@@ -835,7 +846,7 @@ const StandInspector: React.FC = () => {
           <Switch
             label="Tribune active"
             checked={stand.enabled}
-            onChange={(v) => updateStand(side, { enabled: v })}
+            onChange={(v) => updateStand(target, { enabled: v })}
           />
         }
       />
@@ -843,7 +854,7 @@ const StandInspector: React.FC = () => {
         <Segmented
           label="Sélection de la tribune"
           size="sm"
-          value={side}
+          value={target}
           onChange={setActiveStandTab}
           options={STAND_TABS}
         />
@@ -855,7 +866,7 @@ const StandInspector: React.FC = () => {
             size="sm"
             disabled={off}
             value={stand.tiers}
-            onChange={(t) => updateStand(side, { tiers: t })}
+            onChange={(t) => updateStand(target, { tiers: t })}
             options={TIER_OPTIONS.map((t) => ({ id: t, label: String(t) }))}
           />
         </FieldRow>
@@ -868,7 +879,7 @@ const StandInspector: React.FC = () => {
           disabled={off}
           value={slope}
           display={`${fr1(slope)}°`}
-          onChange={(v) => updateStand(side, { slopeAngleDeg: v })}
+          onChange={(v) => updateStand(target, { slopeAngleDeg: v })}
         />
         <SliderField
           label="Rangs totaux"
@@ -878,17 +889,22 @@ const StandInspector: React.FC = () => {
           disabled={off}
           value={stand.rows}
           display={`${stand.rows} · ${Math.round(stand.rows / stand.tiers)} par niveau`}
-          onChange={(v) => updateStand(side, { rows: v })}
+          onChange={(v) => updateStand(target, { rows: v })}
         />
         <SliderField
-          label="Recul par rapport au terrain"
-          min={4.5}
+          label={doc.pitch.hasTrack ? 'Recul par rapport à la piste' : 'Recul par rapport au terrain'}
+          hint={
+            doc.pitch.hasTrack
+              ? 'Mesuré depuis le bord extérieur de la piste : 0 m pose le pied de la tribune contre la piste'
+              : undefined
+          }
+          min={doc.pitch.hasTrack ? 0 : MIN_PITCH_SETBACK}
           max={20}
           step={0.5}
           disabled={off}
           value={stand.distanceToPitch}
           display={`${fr1(stand.distanceToPitch)} m`}
-          onChange={(v) => updateStand(side, { distanceToPitch: v })}
+          onChange={(v) => updateStand(target, { distanceToPitch: v })}
         />
         {stand.tiers >= 2 && (
           <SliderField
@@ -900,7 +916,7 @@ const StandInspector: React.FC = () => {
             disabled={off}
             value={tierOverhang}
             display={tierOverhang > 0 ? `+${fr1(tierOverhang)} m` : 'Aligné'}
-            onChange={(v) => updateStand(side, { tierOverhang: v })}
+            onChange={(v) => updateStand(target, { tierOverhang: v })}
           />
         )}
       </PanelSection>
@@ -913,7 +929,7 @@ const StandInspector: React.FC = () => {
                 : 'Réglage séparé des rangs, pentes et surplombs'}
             </span>
             {hasAsymmetricTiers && (
-              <Button disabled={off} onClick={() => resetStandTiersUniform(side)}>
+              <Button disabled={off} onClick={() => resetStandTiersUniform(target)}>
                 Réuniformiser
               </Button>
             )}
@@ -947,7 +963,7 @@ const StandInspector: React.FC = () => {
                   value={tSpec.rows}
                   display={`${tSpec.rows} rangs`}
                   onChange={(r) =>
-                    updateStandTier(side, tSpec.tierIndex, { rows: r })
+                    updateStandTier(target, tSpec.tierIndex, { rows: r })
                   }
                 />
                 <SliderField
@@ -959,7 +975,7 @@ const StandInspector: React.FC = () => {
                   value={tSpec.slopeAngleDeg}
                   display={`${fr1(tSpec.slopeAngleDeg)}°`}
                   onChange={(ang) =>
-                    updateStandTier(side, tSpec.tierIndex, { slopeAngleDeg: ang })
+                    updateStandTier(target, tSpec.tierIndex, { slopeAngleDeg: ang })
                   }
                 />
                 {tSpec.tierIndex > 0 && (
@@ -972,7 +988,7 @@ const StandInspector: React.FC = () => {
                     value={tSpec.overhang}
                     display={tSpec.overhang > 0 ? `+${fr1(tSpec.overhang)} m` : '0,0 m'}
                     onChange={(ov) =>
-                      updateStandTier(side, tSpec.tierIndex, { overhang: ov })
+                      updateStandTier(target, tSpec.tierIndex, { overhang: ov })
                     }
                   />
                 )}
@@ -991,7 +1007,7 @@ const StandInspector: React.FC = () => {
           disabled={off}
           value={vomSpec.count}
           display={vomSpec.count === 0 ? 'Aucun' : `${vomSpec.count} ouvertures`}
-          onChange={(v) => updateStand(side, { vomitoryCount: v })}
+          onChange={(v) => updateStand(target, { vomitoryCount: v })}
         />
         <SliderField
           label="Position verticale"
@@ -1002,7 +1018,7 @@ const StandInspector: React.FC = () => {
           disabled={off || vomSpec.count === 0}
           value={vomSpec.rowRatio}
           display={`${Math.round(vomSpec.rowRatio * 100)} % du niveau`}
-          onChange={(v) => updateStand(side, { vomitoryRowRatio: v })}
+          onChange={(v) => updateStand(target, { vomitoryRowRatio: v })}
         />
         <SliderField
           label="Décalage latéral"
@@ -1017,7 +1033,7 @@ const StandInspector: React.FC = () => {
               ? 'Centré'
               : `${vomSpec.offsetRatio > 0 ? '+' : ''}${Math.round(vomSpec.offsetRatio * 100)} %`
           }
-          onChange={(v) => updateStand(side, { vomitoryOffsetRatio: v })}
+          onChange={(v) => updateStand(target, { vomitoryOffsetRatio: v })}
         />
         <SliderField
           label="Escaliers radiaux"
@@ -1027,7 +1043,7 @@ const StandInspector: React.FC = () => {
           disabled={off}
           value={stand.aisleCount}
           display={stand.aisleCount === 0 ? 'Aucun' : `${stand.aisleCount} volées`}
-          onChange={(v) => updateStand(side, { aisleCount: v })}
+          onChange={(v) => updateStand(target, { aisleCount: v })}
         />
         <SliderField
           label="Largeur d’escalier"
@@ -1037,7 +1053,7 @@ const StandInspector: React.FC = () => {
           disabled={off || stand.aisleCount === 0}
           value={stand.aisleWidth}
           display={`${fr1(stand.aisleWidth)} m`}
-          onChange={(v) => updateStand(side, { aisleWidth: v })}
+          onChange={(v) => updateStand(target, { aisleWidth: v })}
         />
         <FieldRow
           label="Évacuation"
@@ -1056,7 +1072,7 @@ const StandInspector: React.FC = () => {
           disabled={off}
           value={stand.seatingType ?? 'seated'}
           onChange={(id) =>
-            updateStand(side, {
+            updateStand(target, {
               seatingType: id,
               ...(id === 'telescopic' && stand.distanceToPitch < 8.5 ? { distanceToPitch: 10.5 } : {}),
             })
@@ -1068,7 +1084,7 @@ const StandInspector: React.FC = () => {
             label="Loges VIP entre les niveaux"
             disabled={off}
             checked={stand.vipLoges !== false}
-            onChange={(v) => updateStand(side, { vipLoges: v })}
+            onChange={(v) => updateStand(target, { vipLoges: v })}
           />
         )}
         {!isContinuousBowlShape(doc.shape) && (
@@ -1077,7 +1093,7 @@ const StandInspector: React.FC = () => {
             disabled={off}
             value={stand.roofStyleOverride ?? 'inherit'}
             onChange={(v) =>
-              updateStand(side, { roofStyleOverride: v === 'inherit' ? undefined : v })
+              updateStand(target, { roofStyleOverride: v === 'inherit' ? undefined : v })
             }
             options={STAND_ROOF_OVERRIDES}
           />
@@ -1111,7 +1127,7 @@ const StandInspector: React.FC = () => {
           value={stand.rowDepth}
           display={`${Math.round(stand.rowDepth * 100)} cm`}
           scale={100}
-          onChange={(v) => updateStand(side, { rowDepth: v })}
+          onChange={(v) => updateStand(target, { rowDepth: v })}
         />
         <SliderField
           label="Largeur de siège"
@@ -1122,13 +1138,13 @@ const StandInspector: React.FC = () => {
           value={stand.seatWidth}
           display={`${Math.round(stand.seatWidth * 100)} cm`}
           scale={100}
-          onChange={(v) => updateStand(side, { seatWidth: v })}
+          onChange={(v) => updateStand(target, { seatWidth: v })}
         />
         <div className="flex flex-wrap gap-2 pt-1">
           <Button
             disabled={off}
             onClick={() =>
-              updateAllStands({
+              updateStand('all', {
                 rows: stand.rows,
                 tiers: stand.tiers,
                 slopeAngleDeg: slope,
@@ -1157,7 +1173,7 @@ const StandInspector: React.FC = () => {
                 ? `Un seul niveau monté jusqu’à ${fr1(tallestOther)} m, la hauteur de la plus haute tribune`
                 : 'Un seul niveau pleine hauteur'
             }
-            onClick={() => convertStandToKopWall(side)}
+            onClick={() => convertStandToKopWall(target)}
           >
             Transformer en kop
           </Button>
@@ -1371,6 +1387,13 @@ const RoofInspector: React.FC = () => {
           disabled={none}
           checked={roof.overConcourse !== false}
           onChange={(overConcourse) => updateRoof({ overConcourse })}
+        />
+        <ToggleField
+          label="Fermer l’espace sous la toiture"
+          hint="Habille d’une peau à lames le vide entre le haut de la façade (ou de la coursive) et le toit"
+          disabled={none}
+          checked={roof.enclosed !== false}
+          onChange={(enclosed) => updateRoof({ enclosed })}
         />
       </PanelSection>
     </>

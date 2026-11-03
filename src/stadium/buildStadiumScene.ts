@@ -6,6 +6,7 @@ import {
 } from './capacity';
 import { sampleRoundedBowlRing } from './bowlRing';
 import { generateConcourseGroup } from './generateConcourse';
+import { generateEnvelopeSkirt } from './generateEnvelopeSkirt';
 import {
   generateFloodlightRigGroup,
   generatePlacedObjectGroup,
@@ -170,10 +171,13 @@ export function buildStadiumSceneGraph(
     aniso
   );
 
+  const skirtGroup = generateEnvelopeSkirt(doc, roofGroup, Boolean(options.crossSectionClip), aniso);
+
   rootGroup.add(
     pitchGroup,
     standsGroup,
     concourseGroup,
+    skirtGroup,
     roofGroup,
     floodlightRigGroup,
     objectsContainer

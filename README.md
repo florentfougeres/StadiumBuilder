@@ -8,12 +8,14 @@ la capacité, les lignes de vue et une estimation de coût se recalculent en tem
 
 ## Fonctionnalités
 
-- **10 morphologies d'enceinte** : bol moderne, bol circulaire, chaudron, ovale olympique avec piste,
+- **11 morphologies d'enceinte** : bol moderne, bol circulaire, chaudron, ovale olympique avec piste,
   bol enterré, arène octogonale, stade urbain compact, rectangulaire à l'anglaise, 4 tribunes, fer à
-  cheval.
+  cheval, tribunes en arc de cercle (cintrées vers le centre, coins ouverts).
 - **Tribunes paramétriques** (nord, sud, est, ouest) : rangs, 1 à 5 niveaux, pente, profondeur de
   rang, hauteur de contremarche, largeur de siège, allées, loges VIP, places debout ou modules
   télescopiques. Chaque rang porte de vrais sièges 3D, avec allées et couleurs alternées par niveau.
+  Chaque tribune se règle seule, ou les quatre à la fois (onglet « Toutes »). Avec une piste, le
+  recul se mesure depuis la piste et peut descendre à 0 m.
 - **Coursive extérieure** réglable (profondeur et hauteur) : socle bas ou façade continue autour des
   gradins.
 - **15 systèmes de toiture** : porte-à-faux, poteaux, poutre-portique, charpente treillis,
@@ -26,10 +28,14 @@ la capacité, les lignes de vue et une estimation de coût se recalculent en tem
 - **Équipements 3D** déplaçables : écrans, projecteurs, bancs de touche, vestiaires, boutiques,
   parkings, parvis, clôtures. Les écrans géants se fixent sous le toit ou en haut d'une tribune.
 - **Caméras** : drone, bord terrain, vue siège, coupe 3D et plan 2D ; éclairage jour, crépuscule,
-  nuit.
+  nuit avec ciel physique (diffusion atmosphérique, nuages), occlusion ambiante et halo des
+  projecteurs.
+- **Détail architectural** : toitures à nervures et rives épaisses, façades en mur-rideau (montants,
+  nez de dalle) et peau de lames fermant l'espace entre façade et toit.
 - **Fenêtre d'exemples** au premier lancement (et via « Exemples ») : 16 stades types avec aperçu
   3D, annuler / rétablir, sauvegarde automatique locale (IndexedDB).
-- **Exports** : PNG, plan PDF, projet JSON et maquette GLB.
+- **Exports** : PNG, image photoréaliste en lancer de rayons (three-gpu-pathtracer), plan PDF,
+  projet JSON et maquette GLB.
 
 ## Stack
 

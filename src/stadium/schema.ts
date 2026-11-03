@@ -8,7 +8,8 @@ export type StadiumShape =
   | 'english_rectangular'
   | 'four_stands'
   | 'horseshoe'
-  | 'circular_bowl';
+  | 'circular_bowl'
+  | 'arc_stands';
 
 export type StandSide = 'north' | 'south' | 'east' | 'west';
 
@@ -127,6 +128,8 @@ export interface RoofConfig {
   coveredSides?: StandSide[];
   /** Extends the outer edge of all roofs across the outer concourse up to the facade (enabled by default). */
   overConcourse?: boolean;
+  /** Closes the band between the facade (or concourse) top and the roof with a fin screen (default on). */
+  enclosed?: boolean;
   /** Skylight / daylight cutout pattern across the canopy. */
   skylightMode?: SkylightMode;
   /** Share of canopy area opened to direct sunlight (`0..0.75`). */
@@ -418,7 +421,8 @@ export function isContinuousBowlShape(shape: StadiumShape): boolean {
     shape === 'sunken_bowl' ||
     shape === 'octagonal_arena' ||
     shape === 'horseshoe' ||
-    shape === 'circular_bowl'
+    shape === 'circular_bowl' ||
+    shape === 'arc_stands'
   );
 }
 
@@ -432,7 +436,16 @@ export function resolveCornerMode(doc: StadiumDocument, cornerId: CornerId): Cor
   if (doc.shape === 'four_stands') return 'open';
   if (doc.shape === 'english_rectangular') return doc.cornerFill ? 'filled' : 'open';
   if (doc.shape === 'horseshoe' && (cornerId === 'ne' || cornerId === 'se')) return 'open';
+  if (doc.shape === 'arc_stands') return 'open';
   return 'filled';
+}
+
+/**
+ * Whether a continuous bowl must treat this corner apart from the swept ring: the user chose a
+ * mode for it, or the shape itself leaves its corners open (`arc_stands`).
+ */
+export function isCornerConfigured(doc: StadiumDocument, cornerId: CornerId): boolean {
+  return doc.corners?.[cornerId] !== undefined || doc.shape === 'arc_stands';
 }
 
 export function resolveAllCorners(doc: StadiumDocument): Record<CornerId, CornerMode> {
@@ -513,6 +526,7 @@ export const STADIUM_SHAPE_LABELS: Record<StadiumShape, string> = {
   sunken_bowl: 'Amphithéâtre semi-enterré',
   octagonal_arena: 'Arène octogonale facettée',
   circular_bowl: 'Bol circulaire',
+  arc_stands: 'Tribunes en arc de cercle',
 };
 
 export function riserFromSlopeDeg(slopeDeg: number, rowDepth: number): number {

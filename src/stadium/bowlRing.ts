@@ -14,6 +14,26 @@ export interface RoundedBowlGeometry {
   cornerRadius: number;
   facetedCorners: boolean;
   perimeter: number;
+  /**
+   * Outward bow (sagitta, m) of the long sides (north/south) and of the ends (east/west): a
+   * positive value turns that side into a circular arc concave toward the pitch, so its middle
+   * stands further back than its ends. Absent or zero means a straight side.
+   */
+  sideBulgeX?: number;
+  sideBulgeZ?: number;
+}
+
+/** Circular arc through a straight side's two ends, bowed outward by `bulge`. */
+function sideArc(halfChord: number, bulge: number): { radius: number; halfAngle: number } | null {
+  if (bulge <= 0.01 || halfChord <= 0.01) return null;
+  const radius = (halfChord * halfChord + bulge * bulge) / (2 * bulge);
+  return { radius, halfAngle: Math.asin(Math.min(1, halfChord / radius)) };
+}
+
+/** Length of half a side: straight, or along its arc when bowed. */
+function halfSideLength(halfChord: number, bulge: number): number {
+  const arc = sideArc(halfChord, bulge);
+  return arc ? arc.radius * arc.halfAngle : halfChord;
 }
 
 export function computeSafeBowlCornerRadius(
@@ -43,15 +63,20 @@ export function createRoundedBowlRing(
   innerHalfX: number,
   innerHalfZ: number,
   cornerRadius: number = 14,
-  facetedCorners: boolean = false
+  facetedCorners: boolean = false,
+  sideBulgeX: number = 0,
+  sideBulgeZ: number = 0
 ): RoundedBowlGeometry {
   const maxFrac = facetedCorners ? 0.78 : 0.95;
   const r = Math.min(cornerRadius, innerHalfX * maxFrac, innerHalfZ * maxFrac);
   const halfStraightX = Math.max(2, innerHalfX - r);
   const halfStraightZ = Math.max(2, innerHalfZ - r);
 
-  const straightXLen = halfStraightX * 2;
-  const straightZLen = halfStraightZ * 2;
+  // Bowed sides only exist on rounded rings (the faceted octagon keeps its straight pans).
+  const bulgeX = facetedCorners ? 0 : sideBulgeX;
+  const bulgeZ = facetedCorners ? 0 : sideBulgeZ;
+  const straightXLen = halfSideLength(halfStraightX, bulgeX) * 2;
+  const straightZLen = halfSideLength(halfStraightZ, bulgeZ) * 2;
   const cornerSegLen = facetedCorners ? Math.SQRT2 * r : (Math.PI / 2) * r;
   const perimeter = 2 * straightXLen + 2 * straightZLen + 4 * cornerSegLen;
 
@@ -61,6 +86,8 @@ export function createRoundedBowlRing(
     cornerRadius: r,
     facetedCorners,
     perimeter,
+    sideBulgeX: bulgeX,
+    sideBulgeZ: bulgeZ,
   };
 }
 
@@ -85,6 +112,39 @@ export function getBowlArcRange(
   }
 
   return { tStart: 0, tEnd: 1.0, closed: true };
+}
+
+/**
+ * Lengths of the ring's nine segments, starting at East and going through South: half east
+ * side, SE corner, south side, SW corner, west side, NW corner, north side, NE corner, half east
+ * side. Odd indices are the corners.
+ */
+function ringSegmentLengths(ring: RoundedBowlGeometry): number[] {
+  const r = ring.cornerRadius;
+  const corner = ring.facetedCorners ? Math.SQRT2 * r : (Math.PI / 2) * r;
+  const halfX = halfSideLength(ring.halfStraightX, ring.sideBulgeX ?? 0);
+  const halfZ = halfSideLength(ring.halfStraightZ, ring.sideBulgeZ ?? 0);
+  return [halfZ, corner, halfX * 2, corner, halfZ * 2, corner, halfX * 2, corner, halfZ];
+}
+
+/** Segment of the ring at normalized position `u` in [0, 1), and the fraction along it. */
+function locateRingSegment(ring: RoundedBowlGeometry, u: number): { segIdx: number; f: number } {
+  const lengths = ringSegmentLengths(ring);
+  let s = u * ring.perimeter;
+  let segIdx = lengths.length - 1;
+  for (let i = 0; i < lengths.length; i++) {
+    if (s <= lengths[i]) {
+      segIdx = i;
+      break;
+    }
+    s -= lengths[i];
+  }
+  return { segIdx, f: Math.min(1, Math.max(0, s / Math.max(1e-6, lengths[segIdx]))) };
+}
+
+/** Whether ring position `t` lies on one of the four corner arcs (or chamfers). */
+export function isOnRingCorner(ring: RoundedBowlGeometry, t: number): boolean {
+  return locateRingSegment(ring, ((t % 1) + 1) % 1).segIdx % 2 === 1;
 }
 
 /**
@@ -116,29 +176,8 @@ export function sampleRoundedBowlRing(
     const cx = hx + d * k;
     const cz = hz + d * k;
 
-    const cLen = Math.SQRT2 * r;
-    const segLengths = [
-      hz, // 0: E lower
-      cLen, // 1: SE 45° chamfer
-      hx * 2, // 2: S straight
-      cLen, // 3: SW 45° chamfer
-      hz * 2, // 4: W straight
-      cLen, // 5: NW 45° chamfer
-      hx * 2, // 6: N straight
-      cLen, // 7: NE 45° chamfer
-      hz, // 8: E upper
-    ];
-
-    let s = u * ring.perimeter;
-    let segIdx = 0;
-    for (let i = 0; i < segLengths.length; i++) {
-      if (s <= segLengths[i] || i === segLengths.length - 1) {
-        segIdx = i;
-        break;
-      }
-      s -= segLengths[i];
-    }
-    const f = Math.min(1, Math.max(0, s / Math.max(1e-6, segLengths[segIdx])));
+    // Segments: E lower, SE chamfer, S, SW chamfer, W, NW chamfer, N, NE chamfer, E upper.
+    const { segIdx, f } = locateRingSegment(ring, u);
     const invSqrt2 = Math.SQRT1_2;
 
     let x = 0;
@@ -213,31 +252,35 @@ export function sampleRoundedBowlRing(
     };
   }
 
-  const qArc = (Math.PI / 2) * r;
-  const segLengths = [
-    hz,
-    qArc,
-    hx * 2,
-    qArc,
-    hz * 2,
-    qArc,
-    hx * 2,
-    qArc,
-    hz,
-  ];
+  const arcX = sideArc(hx, ring.sideBulgeX ?? 0);
+  const arcZ = sideArc(hz, ring.sideBulgeZ ?? 0);
 
-  let s = u * ring.perimeter;
-  let segIdx = 0;
-  for (let i = 0; i < segLengths.length; i++) {
-    if (s <= segLengths[i] || i === segLengths.length - 1) {
-      segIdx = i;
-      break;
-    }
-    s -= segLengths[i];
-  }
+  // Point on a bowed side: `along` runs from -1 to 1 over the side, `sign` picks which side of
+  // the axis it sits on, and the arc's outward normal tilts toward the side's ends.
+  const bowedEnd = (along: number, sign: number) => {
+    const arc = arcZ!;
+    const theta = along * arc.halfAngle;
+    const centre = hx + r + (ring.sideBulgeZ ?? 0) - arc.radius;
+    return {
+      bx: sign * (centre + arc.radius * Math.cos(theta)),
+      bz: arc.radius * Math.sin(theta),
+      nx: sign * Math.cos(theta),
+      nz: Math.sin(theta),
+    };
+  };
+  const bowedLongSide = (along: number, sign: number) => {
+    const arc = arcX!;
+    const theta = along * arc.halfAngle;
+    const centre = hz + r + (ring.sideBulgeX ?? 0) - arc.radius;
+    return {
+      bx: arc.radius * Math.sin(theta),
+      bz: sign * (centre + arc.radius * Math.cos(theta)),
+      nx: Math.sin(theta),
+      nz: sign * Math.cos(theta),
+    };
+  };
 
-  const segLen = Math.max(1e-6, segLengths[segIdx]);
-  const f = Math.min(1, Math.max(0, s / segLen));
+  const { segIdx, f } = locateRingSegment(ring, u);
 
   let bx = 0;
   let bz = 0;
@@ -246,10 +289,13 @@ export function sampleRoundedBowlRing(
 
   switch (segIdx) {
     case 0:
-      bx = hx + r;
-      bz = f * hz;
-      nx = 1;
-      nz = 0;
+      if (arcZ) ({ bx, bz, nx, nz } = bowedEnd(f, 1));
+      else {
+        bx = hx + r;
+        bz = f * hz;
+        nx = 1;
+        nz = 0;
+      }
       break;
     case 1: {
       const phi = f * (Math.PI / 2);
@@ -260,10 +306,13 @@ export function sampleRoundedBowlRing(
       break;
     }
     case 2:
-      bx = hx - f * (hx * 2);
-      bz = hz + r;
-      nx = 0;
-      nz = 1;
+      if (arcX) ({ bx, bz, nx, nz } = bowedLongSide(1 - 2 * f, 1));
+      else {
+        bx = hx - f * (hx * 2);
+        bz = hz + r;
+        nx = 0;
+        nz = 1;
+      }
       break;
     case 3: {
       const phi = Math.PI / 2 + f * (Math.PI / 2);
@@ -274,10 +323,13 @@ export function sampleRoundedBowlRing(
       break;
     }
     case 4:
-      bx = -(hx + r);
-      bz = hz - f * (hz * 2);
-      nx = -1;
-      nz = 0;
+      if (arcZ) ({ bx, bz, nx, nz } = bowedEnd(1 - 2 * f, -1));
+      else {
+        bx = -(hx + r);
+        bz = hz - f * (hz * 2);
+        nx = -1;
+        nz = 0;
+      }
       break;
     case 5: {
       const phi = Math.PI + f * (Math.PI / 2);
@@ -288,10 +340,13 @@ export function sampleRoundedBowlRing(
       break;
     }
     case 6:
-      bx = -hx + f * (hx * 2);
-      bz = -(hz + r);
-      nx = 0;
-      nz = -1;
+      if (arcX) ({ bx, bz, nx, nz } = bowedLongSide(-1 + 2 * f, -1));
+      else {
+        bx = -hx + f * (hx * 2);
+        bz = -(hz + r);
+        nx = 0;
+        nz = -1;
+      }
       break;
     case 7: {
       const phi = Math.PI * 1.5 + f * (Math.PI / 2);
@@ -303,10 +358,13 @@ export function sampleRoundedBowlRing(
     }
     case 8:
     default:
-      bx = hx + r;
-      bz = -hz + f * hz;
-      nx = 1;
-      nz = 0;
+      if (arcZ) ({ bx, bz, nx, nz } = bowedEnd(-1 + f, 1));
+      else {
+        bx = hx + r;
+        bz = -hz + f * hz;
+        nx = 1;
+        nz = 0;
+      }
       break;
   }
 
@@ -318,6 +376,13 @@ export function sampleRoundedBowlRing(
     angle: Math.atan2(nz, nx),
   };
 }
+
+/** Bow of the `arc_stands` shape as a share of the ring half-size: long sides, then ends. */
+const ARC_STANDS_SIDE_BOW = 0.09;
+const ARC_STANDS_END_BOW = 0.26;
+
+/** Smallest gap between the pitch edge and the front of the stands when there is no track (m). */
+export const MIN_PITCH_SETBACK = 4.5;
 
 export function buildShapeBowlRing(
   shape: StadiumShape,
@@ -339,22 +404,26 @@ export function buildShapeBowlRing(
 
   const octPush = shape === 'octagonal_arena' ? 6.2 : 0;
   const cauldronPull = shape === 'steep_cauldron' ? -0.6 : 0;
-  const olympicPush = shape === 'olympic_oval' ? 1.8 : 0;
+  // With a track the stand setback is measured from the track's outer edge and may be zero.
+  const olympicPush = shape === 'olympic_oval' && !hasTrack ? 1.8 : 0;
   const sunkenPush = shape === 'sunken_bowl' ? 0.6 : 0;
+  const minSetback = hasTrack ? 0 : MIN_PITCH_SETBACK;
 
   const innerHalfX =
     pitchLength / 2 +
-    Math.max(4.5, avgDistX + cauldronPull + olympicPush + octPush + sunkenPush) +
+    Math.max(minSetback, avgDistX + cauldronPull + olympicPush + octPush + sunkenPush) +
     endTrackOffset;
   const innerHalfZ =
     pitchWidth / 2 +
-    Math.max(4.5, avgDistZ + cauldronPull + olympicPush + octPush + sunkenPush) +
+    Math.max(minSetback, avgDistZ + cauldronPull + olympicPush + octPush + sunkenPush) +
     sideTrackOffset;
 
   const faceted = shape === 'octagonal_arena';
   const desiredR =
     shape === 'olympic_oval'
-      ? innerHalfZ * 0.94
+      ? hasTrack
+        ? innerHalfZ // bends follow the track's own semicircles
+        : innerHalfZ * 0.94
       : shape === 'sunken_bowl'
       ? hasTrack
         ? innerHalfZ * 0.9
@@ -373,6 +442,8 @@ export function buildShapeBowlRing(
         : 10.2
       : shape === 'octagonal_arena'
       ? 22
+      : shape === 'arc_stands'
+      ? 9
       : shape === 'horseshoe'
       ? hasTrack
         ? innerHalfZ * 0.88
@@ -411,6 +482,19 @@ export function buildShapeBowlRing(
     effectiveDesiredR,
     faceted
   );
+
+  if (shape === 'arc_stands') {
+    // Four stands each drawn on a circular arc: the ends bow more than the long sides, so every
+    // seat turns toward the centre spot; the narrow corners between them stay open by default.
+    return createRoundedBowlRing(
+      innerHalfX,
+      innerHalfZ,
+      cornerR,
+      false,
+      innerHalfX * ARC_STANDS_SIDE_BOW,
+      innerHalfZ * ARC_STANDS_END_BOW
+    );
+  }
 
   return createRoundedBowlRing(innerHalfX, innerHalfZ, cornerR, faceted);
 }

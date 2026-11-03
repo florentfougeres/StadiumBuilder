@@ -22,6 +22,7 @@ import {
   isContinuousBowlShape,
   LightingMode,
   PlacedObject,
+  isCornerConfigured,
   resolveAllCorners,
   resolveFloodlightRig,
   StadiumDocument,
@@ -725,7 +726,7 @@ export function generateFloodlightRigGroup(
     const cMode = cornerModes[item.id];
 
     if (isContinuousBowlShape(doc.shape)) {
-      const openCustom = doc.corners?.[item.id] !== undefined && cMode === 'open';
+      const openCustom = isCornerConfigured(doc, item.id) && cMode === 'open';
       const radOff = openCustom
         ? Math.max(8.5, bounds.avgDepth * 0.45)
         : bounds.avgDepth + concourseW + 7.5;

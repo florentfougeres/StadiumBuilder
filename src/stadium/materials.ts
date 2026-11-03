@@ -740,7 +740,7 @@ export function createFacadePbrMaterial(
   maxAnisotropy: number = 4
 ): THREE.MeshPhysicalMaterial {
   const isNight = lighting !== 'day';
-  const key = `facade_${facadeId}_${isNight ? 'lit' : 'day'}_v2`;
+  const key = `facade_${facadeId}_${isNight ? 'lit' : 'day'}_v3`;
 
   const buffers = synthesizeCachedPbrBuffers(key, 256, 256, 4.2, true, (u, v) => {
     const fbm = periodicFbm2D(u, v, 10, 3, 401);
@@ -815,9 +815,9 @@ export function createFacadePbrMaterial(
       }
       const lit = isNight && roomLitHash > 0.22;
       return {
-        r: lit ? 210 : 28 + fbm * 18,
-        g: lit ? 176 : 62 + fbm * 24,
-        b: lit ? 115 : 98 + fbm * 28,
+        r: lit ? 210 : 58 + fbm * 16,
+        g: lit ? 176 : 82 + fbm * 18,
+        b: lit ? 115 : 104 + fbm * 20,
         height: 0.5,
         roughness: 0.07 + fine * 0.03,
         emissiveR: lit ? 245 : 0,

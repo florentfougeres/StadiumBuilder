@@ -16,6 +16,133 @@ export interface FacadeRailSample {
   yTop: number;
 }
 
+/** Arc-length resampling of a facade rail, so features can be spaced in metres. */
+function createRailSampler(
+  samples: FacadeRailSample[],
+  closed: boolean
+): { totalLen: number; sampleAtArc: (s: number) => FacadeRailSample } | null {
+  if (samples.length < 2) return null;
+  const segCount = closed ? samples.length : samples.length - 1;
+  const cumLen: number[] = [0];
+  let totalLen = 0;
+  for (let i = 0; i < segCount; i++) {
+    const a = samples[i];
+    const b = samples[(i + 1) % samples.length];
+    totalLen += Math.hypot(b.x - a.x, b.z - a.z);
+    cumLen.push(totalLen);
+  }
+  if (totalLen < 3.0) return null;
+
+  const sampleAtArc = (s: number): FacadeRailSample => {
+    const clampedS = Math.max(0, Math.min(totalLen, s));
+    let lo = 0;
+    let hi = segCount - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cumLen[mid + 1] < clampedS) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    const s0 = cumLen[lo];
+    const s1 = cumLen[lo + 1];
+    const f = s1 > s0 + 1e-6 ? (clampedS - s0) / (s1 - s0) : 0;
+    const a = samples[lo];
+    const b = samples[(lo + 1) % samples.length];
+    const nxRaw = a.nx + (b.nx - a.nx) * f;
+    const nzRaw = a.nz + (b.nz - a.nz) * f;
+    const nLen = Math.max(1e-5, Math.hypot(nxRaw, nzRaw));
+    return {
+      x: a.x + (b.x - a.x) * f,
+      z: a.z + (b.z - a.z) * f,
+      nx: nxRaw / nLen,
+      nz: nzRaw / nLen,
+      yBottom: a.yBottom + (b.yBottom - a.yBottom) * f,
+      yTop: a.yTop + (b.yTop - a.yTop) * f,
+    };
+  };
+  return { totalLen, sampleAtArc };
+}
+
+/** Outward offset of a bowl's glazed envelope from the back of the stands (m). */
+export const BOWL_CURTAIN_WALL_OFFSET = 0.7;
+
+/** Curtain-wall module: mullion spacing, primary mullion rhythm and storey height (m). */
+const MULLION_SPACING = 1.5;
+const PRIMARY_EVERY = 6;
+const STOREY_HEIGHT = 4.5;
+
+/**
+ * Base articulation of a glazed or clad envelope: slim mullions on a 1.5 m module with a deeper
+ * primary mullion every 9 m, and a slab-edge band at every storey. This is what makes a facade
+ * read at building scale (the reference renders' fine vertical rhythm) rather than as a flat skin.
+ */
+export function buildCurtainWallArticulation(params: {
+  samples: FacadeRailSample[];
+  closed: boolean;
+  frameMat: THREE.Material;
+  /** How far the frame stands proud of the facade surface (m). */
+  offset?: number;
+  /** Slab-edge bands at each storey; off for a screen with no floors behind it. */
+  storeys?: boolean;
+}): THREE.Group | null {
+  const { samples, closed, frameMat, offset = 0.05, storeys = true } = params;
+  const rail = createRailSampler(samples, closed);
+  if (!rail) return null;
+  const { totalLen, sampleAtArc } = rail;
+
+  const count = Math.max(4, Math.round(totalLen / MULLION_SPACING));
+  const step = totalLen / count;
+  const dummy = new THREE.Object3D();
+  const mullions: THREE.Matrix4[] = [];
+  const slabs: THREE.Matrix4[] = [];
+
+  for (let i = 0; i < count; i++) {
+    const s = closed ? i * step : (i + 0.5) * step;
+    const pt = sampleAtArc(s);
+    const h = pt.yTop - pt.yBottom;
+    if (h < (storeys ? 2.5 : 0.8)) continue;
+    const yaw = Math.atan2(pt.nx, pt.nz);
+    const primary = i % PRIMARY_EVERY === 0;
+    const depth = primary ? 0.85 : 0.32;
+    const out = offset + depth * 0.5;
+    dummy.position.set(pt.x + pt.nx * out, pt.yBottom + h * 0.5, pt.z + pt.nz * out);
+    dummy.rotation.set(0, yaw, 0);
+    dummy.scale.set(primary ? 0.24 : 0.09, h, depth);
+    dummy.updateMatrix();
+    mullions.push(dummy.matrix.clone());
+
+    // Slab-edge band at each storey, one module long, standing slightly proud of the mullions.
+    for (let y = pt.yBottom + STOREY_HEIGHT; storeys && y < pt.yTop - 1; y += STOREY_HEIGHT) {
+      dummy.position.set(pt.x + pt.nx * (offset + 0.3), y, pt.z + pt.nz * (offset + 0.3));
+      dummy.rotation.set(0, yaw, 0);
+      dummy.scale.set(step * 1.02, 0.42, 0.6);
+      dummy.updateMatrix();
+      slabs.push(dummy.matrix.clone());
+    }
+  }
+
+  const group = new THREE.Group();
+  group.name = 'CurtainWallArticulation';
+  const box = new THREE.BoxGeometry(1, 1, 1);
+  for (const [name, list] of [
+    ['CurtainWallMullions', mullions],
+    ['CurtainWallSlabEdges', slabs],
+  ] as const) {
+    if (list.length === 0) continue;
+    const inst = new THREE.InstancedMesh(box, frameMat, list.length);
+    inst.name = name;
+    list.forEach((m, i) => inst.setMatrixAt(i, m));
+    inst.instanceMatrix.needsUpdate = true;
+    inst.computeBoundingSphere();
+    inst.castShadow = true;
+    inst.receiveShadow = true;
+    group.add(inst);
+  }
+  return group.children.length > 0 ? group : null;
+}
+
 /**
  * Generates a real 3D parametric facade relief assembly (`vertical_fins`, `diagrid`, or `cassette_panels`)
  * along a sequence of exterior wall samples (`samples[0..N-1]`).
@@ -49,49 +176,9 @@ export function buildParametricFacadeOnRail(params: {
   const safeDensity = Math.max(0.4, Math.min(2.2, density));
   const safeDepth = Math.max(0.15, Math.min(2.4, depth));
 
-  // Build cumulative arc-length table for uniform arc-length resampling
-  const segCount = closed ? samples.length : samples.length - 1;
-  const cumLen: number[] = [0];
-  let totalLen = 0;
-  for (let i = 0; i < segCount; i++) {
-    const a = samples[i];
-    const b = samples[(i + 1) % samples.length];
-    const ds = Math.hypot(b.x - a.x, b.z - a.z);
-    totalLen += ds;
-    cumLen.push(totalLen);
-  }
-
-  if (totalLen < 3.0) return null;
-
-  const sampleAtArc = (s: number): FacadeRailSample => {
-    const clampedS = Math.max(0, Math.min(totalLen, s));
-    let lo = 0;
-    let hi = segCount - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (cumLen[mid + 1] < clampedS) {
-        lo = mid + 1;
-      } else {
-        hi = mid;
-      }
-    }
-    const s0 = cumLen[lo];
-    const s1 = cumLen[lo + 1];
-    const f = s1 > s0 + 1e-6 ? (clampedS - s0) / (s1 - s0) : 0;
-    const a = samples[lo];
-    const b = samples[(lo + 1) % samples.length];
-    const nxRaw = a.nx + (b.nx - a.nx) * f;
-    const nzRaw = a.nz + (b.nz - a.nz) * f;
-    const nLen = Math.max(1e-5, Math.hypot(nxRaw, nzRaw));
-    return {
-      x: a.x + (b.x - a.x) * f,
-      z: a.z + (b.z - a.z) * f,
-      nx: nxRaw / nLen,
-      nz: nzRaw / nLen,
-      yBottom: a.yBottom + (b.yBottom - a.yBottom) * f,
-      yTop: a.yTop + (b.yTop - a.yTop) * f,
-    };
-  };
+  const rail = createRailSampler(samples, closed);
+  if (!rail) return null;
+  const { totalLen, sampleAtArc } = rail;
 
   const group = new THREE.Group();
   group.name = name;

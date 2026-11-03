@@ -99,11 +99,11 @@ function ensureCanvasMock() {
   }
 }
 
-describe('StadiumForge 10 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop Wall', () => {
+describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop Wall', () => {
   const forbiddenNameRe =
     /emirates|stade de france|at&t|marvingt|roazhon|bernab|allianz|olimpico|rome|beşiktaş|besiktas|villa park|tottenham|havre|wembley|dortmund|südtribüne|sudtribune|bordeaux|matmut|munich|maracan|francfort|amsterdam|cardiff|gelsenkirchen|mauroy/i;
 
-  it('guarantees zero real-world stadium names in templates and supports all 10 morphologies without pitch intrusion', () => {
+  it('guarantees zero real-world stadium names in templates and supports all 11 morphologies without pitch intrusion', () => {
     ensureCanvasMock();
 
     for (const preset of STADIUM_PRESETS) {
@@ -114,7 +114,7 @@ describe('StadiumForge 10 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
     }
 
     const shapes = Object.keys(STADIUM_SHAPE_LABELS) as StadiumShape[];
-    expect(shapes.length).toBe(10);
+    expect(shapes.length).toBe(11);
 
     const countWorldIntrusions = (docToTest: ReturnType<typeof createPresetDocument>) => {
       const bowlGroup = generateStandsGroup(docToTest, false);

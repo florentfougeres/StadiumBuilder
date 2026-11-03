@@ -5,6 +5,7 @@ import {
   computeRectangularCornerLayout,
   CornerQuadrantId,
   getBowlArcRange,
+  isOnRingCorner,
   RectangularCornerSpec,
   RoundedBowlGeometry,
   sampleCornerQuadrantPoint,
@@ -23,6 +24,8 @@ import {
   resolveStadiumMaterials,
 } from './materials';
 import {
+  BOWL_CURTAIN_WALL_OFFSET,
+  buildCurtainWallArticulation,
   buildParametricFacadeOnRail,
   buildStraightParametricFacade,
   FacadeRailSample,
@@ -34,6 +37,7 @@ import {
   EnvelopeStyle,
   getEffectiveSunkenDepth,
   isContinuousBowlShape,
+  isCornerConfigured,
   resolveAllCorners,
   resolveStandVomitories,
   StadiumDocument,
@@ -3418,9 +3422,14 @@ function buildModernBowlSweep(
     const t = tAtSlice(s);
     const baseSample = sampleRoundedBowlRing(bowlRing, t, 0);
 
-    // Identify corner quadrant when slice lies on a corner arc/chamfer (`|nx| > 0.22 && |nz| > 0.22`)
+    // Corner quadrant when the slice lies well inside a corner arc/chamfer; bowed sides also
+    // tilt their normals near their ends, hence the segment test.
     let cQuad: CornerId | null = null;
-    if (Math.abs(baseSample.nx) > 0.22 && Math.abs(baseSample.nz) > 0.22) {
+    if (
+      isOnRingCorner(bowlRing, t) &&
+      Math.abs(baseSample.nx) > 0.22 &&
+      Math.abs(baseSample.nz) > 0.22
+    ) {
       if (baseSample.nx > 0 && baseSample.nz > 0) cQuad = 'se';
       else if (baseSample.nx < 0 && baseSample.nz > 0) cQuad = 'sw';
       else if (baseSample.nx < 0 && baseSample.nz < 0) cQuad = 'nw';
@@ -3548,13 +3557,13 @@ function buildModernBowlSweep(
   // Custom corner cutouts (`open`, `building`, `screen`) when user configures `doc.corners` on a continuous bowl
   const resolvedCorners = resolveAllCorners(doc);
   const hasCustomCornerCutout = (['nw', 'ne', 'sw', 'se'] as CornerId[]).some(
-    (cid) => doc.corners?.[cid] !== undefined && resolvedCorners[cid] !== 'filled'
+    (cid) => isCornerConfigured(doc, cid) && resolvedCorners[cid] !== 'filled'
   );
   const isSliceInOpenCorner = (s: number): boolean => {
     if (!hasCustomCornerCutout) return false;
     const cid = sliceCornerId[s % ringCount];
     if (!cid) return false;
-    return doc.corners?.[cid] !== undefined && resolvedCorners[cid] !== 'filled';
+    return isCornerConfigured(doc, cid) && resolvedCorners[cid] !== 'filled';
   };
 
   // Map each terrace step `k` (`0..N_TERRACE_STEPS-1`) to its `[treadSegIdx, riserSegIdx]` in `profilePtsPerSlice`
@@ -3787,7 +3796,7 @@ function buildModernBowlSweep(
     const cStructMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
 
     for (const cid of ['se', 'sw', 'nw', 'ne'] as CornerId[]) {
-      if (doc.corners?.[cid] === undefined) continue;
+      if (!isCornerConfigured(doc, cid)) continue;
       const spec = cornerLayout.corners[cid];
       if (!spec.active) continue;
       if (doc.shape === 'horseshoe' && (cid === 'se' || cid === 'ne')) continue;
@@ -4366,7 +4375,9 @@ function buildModernBowlSweep(
             ? Math.sin(vf * Math.PI) * 3.8 + vf * 0.8
             : envelope === 'louver_curtain'
             ? -0.25
-            : 0.12 + vf * (doc.shape === 'steep_cauldron' ? 0.25 : 1.25);
+            : doc.shape === 'steep_cauldron'
+            ? 0.12 + vf * 0.25
+            : BOWL_CURTAIN_WALL_OFFSET;
 
           const fp = sampleRoundedBowlRing(bowlRing, t, outerD + bellyOut);
           const pIdx = (s * vBands + b) * 3;
@@ -4510,34 +4521,27 @@ function buildModernBowlSweep(
             }
           }
         } else {
-          const finCount = Math.max(20, Math.round(64 * arcFraction));
-          const finGeo = new THREE.BoxGeometry(0.55, 1, 2.2);
-          const fins = new THREE.InstancedMesh(finGeo, structureMat, finCount);
-          fins.castShadow = true;
-
-          const dummy = new THREE.Object3D();
-          for (let i = 0; i < finCount; i++) {
-            const frac = closed ? i / finCount : i / Math.max(1, finCount - 1);
-            const sliceIdx = Math.min(ringCount - 1, Math.floor(frac * activeSegments));
-            const t = tStart + frac * (tEnd - tStart);
-            const [outerD, crestY] = topCrestPerSlice[sliceIdx];
+          const rail: FacadeRailSample[] = [];
+          for (let s = 0; s < ringCount; s++) {
+            if (isSliceInOpenCorner(s)) continue;
+            const [outerD, crestY] = topCrestPerSlice[s];
             const gradeY = Math.min(sunkenDepth, crestY * 0.65);
-            const h = Math.max(2, crestY - gradeY);
-            const fPt = sampleRoundedBowlRing(bowlRing, t, outerD + 0.95);
-
-            dummy.position.set(fPt.x, gradeY + h / 2, fPt.z);
-            dummy.scale.set(1, h, 1);
-            dummy.rotation.set(
-              0,
-              -fPt.angle + Math.PI / 2,
-              doc.shape === 'octagonal_arena' ? 0 : i % 2 === 0 ? 0.08 : -0.08
-            );
-            dummy.updateMatrix();
-            fins.setMatrixAt(i, dummy.matrix);
+            const pt = sampleRoundedBowlRing(bowlRing, tAtSlice(s), outerD + BOWL_CURTAIN_WALL_OFFSET);
+            rail.push({
+              x: pt.x,
+              z: pt.z,
+              nx: pt.nx,
+              nz: pt.nz,
+              yBottom: Math.min(crestY - 0.8, gradeY + 3.5),
+              yTop: crestY,
+            });
           }
-          fins.instanceMatrix.needsUpdate = true;
-          fins.computeBoundingSphere();
-          group.add(fins);
+          const articulation = buildCurtainWallArticulation({
+            samples: rail,
+            closed: closed && !hasCustomCornerCutout,
+            frameMat: structureMat,
+          });
+          if (articulation) group.add(articulation);
         }
       }
     }
