@@ -6,6 +6,7 @@ import {
   getTrackGeometry,
   isContinuousBowlShape,
   resolveAllCorners,
+  resolveCornerPylonFrame,
   resolveFloodlightRig,
   resolveStandVomitories,
   RoofStyle,
@@ -465,6 +466,8 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       ? Number((maxStandHeight + doc.roof.heightOffset + 22).toFixed(1))
       : doc.roof.style === 'giant_arch'
       ? Number((maxStandHeight + doc.roof.heightOffset + 38).toFixed(1))
+      : doc.roof.style === 'corner_pylons'
+      ? Number(resolveCornerPylonFrame(doc.roof, maxStandHeight).pylonTopY.toFixed(1))
       : doc.roof.style === 'twin_arch'
       ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 29).toFixed(1))
       : Number((maxStandHeight + doc.roof.heightOffset).toFixed(1));
@@ -572,6 +575,9 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       break;
     case 'folded_plate':
       baseCostPerSeat += 900 * doc.roof.coverageRatio;
+      break;
+    case 'corner_pylons':
+      baseCostPerSeat += (doc.roof.spaceFrame ? 1280 : 1150) * doc.roof.coverageRatio;
       break;
     case 'retractable':
     case 'petal_iris':

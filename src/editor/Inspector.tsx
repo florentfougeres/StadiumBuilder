@@ -30,7 +30,9 @@ import {
   getEffectiveSunkenDepth,
   getMaxPitchLengthForTrack,
   isContinuousBowlShape,
+  CORNER_PYLON_MAX_HEIGHT,
   resolveAllCorners,
+  resolveCornerPylonFrame,
   resolveFloodlightRig,
   resolveSite,
   resolveRetractable,
@@ -157,6 +159,11 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
     id: 'giant_arch',
     label: 'Arche géante porteuse',
     desc: 'Grand arc métallique franchissant le stade & câbles suspente',
+  },
+  {
+    id: 'corner_pylons',
+    label: 'Méga-pylônes d’angle',
+    desc: '4 pylônes portant des méga-poutres au-dessus du bord de toit (Lens, Vélodrome)',
   },
   {
     id: 'bowstring_arch',
@@ -1275,6 +1282,12 @@ const RoofInspector: React.FC = () => {
   const covered = roof.coveredSides ?? COVERED_SIDE_ORDER;
   const skyMode = roof.skylightMode ?? 'none';
   const skyRatio = roof.skylightRatio ?? 0.35;
+  const cornerFrame = useMemo(() => {
+    const m = calculateStadiumMetrics(doc);
+    // Same floor as the roof builder's ring bounds.
+    const maxStandH = Math.max(12, ...Object.values(m.stands).map((s) => s.maxHeight));
+    return resolveCornerPylonFrame(doc.roof, maxStandH);
+  }, [doc]);
 
   const toggleSide = (side: StandSide) => {
     const next = covered.includes(side) ? covered.filter((s) => s !== side) : [...covered, side];
@@ -1316,6 +1329,35 @@ const RoofInspector: React.FC = () => {
           options={ROOF_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
         />
       </PanelSection>
+      {roof.style === 'corner_pylons' && (
+        <PanelSection title="Pylônes et méga-poutres">
+          <SliderField
+            label="Hauteur des pylônes"
+            hint="Au-dessus des poutres, des haubans relient la tête des pylônes aux poutres"
+            min={Math.ceil(cornerFrame.girderTopY + 2)}
+            max={CORNER_PYLON_MAX_HEIGHT}
+            step={1}
+            value={Math.round(cornerFrame.pylonTopY)}
+            display={`${Math.round(cornerFrame.pylonTopY)} m`}
+            onChange={(v) => updateRoof({ pylonHeight: v })}
+          />
+          <SliderField
+            label="Bombement de la couverture"
+            hint="Relève la couverture vers le terrain, comme le Vélodrome"
+            min={0}
+            max={25}
+            step={1}
+            value={cornerFrame.crownRise}
+            display={`${cornerFrame.crownRise} m`}
+            onChange={(v) => updateRoof({ crownRise: v })}
+          />
+          <ToggleField
+            label="Résille en treillis 3D"
+            checked={Boolean(roof.spaceFrame)}
+            onChange={(v) => updateRoof({ spaceFrame: v })}
+          />
+        </PanelSection>
+      )}
       {(roof.style === 'retractable' || roof.style === 'petal_iris') && (
         <RetractableRoofSection
           retractable={resolveRetractable(roof)}

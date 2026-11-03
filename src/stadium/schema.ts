@@ -239,6 +239,30 @@ export function resolveRetractable(roof: RoofConfig): RetractableConfig {
   };
 }
 
+/** Mega-girder depth of `corner_pylons` roofs (m). */
+const CORNER_GIRDER_DEPTH = 8;
+export const CORNER_PYLON_MAX_HEIGHT = 90;
+
+/**
+ * Vertical frame of a `corner_pylons` roof (Lens, Marseille): the four mega-girders clear the
+ * canopy front edge, and the pylons rise at least 2 m above them (default 6 m).
+ */
+export function resolveCornerPylonFrame(
+  roof: RoofConfig,
+  maxStandH: number
+): { canopyY: number; crownRise: number; girderBotY: number; girderTopY: number; pylonTopY: number } {
+  const canopyY = maxStandH + Math.max(4.0, roof.heightOffset);
+  const crownRise = Math.max(0, Math.min(25, roof.crownRise ?? 0));
+  const girderBotY = canopyY + 1.8 + crownRise + 2;
+  const girderTopY = girderBotY + CORNER_GIRDER_DEPTH;
+  const minTop = girderTopY + 2;
+  const pylonTopY = Math.max(
+    minTop,
+    Math.min(CORNER_PYLON_MAX_HEIGHT, roof.pylonHeight ?? girderTopY + 6)
+  );
+  return { canopyY, crownRise, girderBotY, girderTopY, pylonTopY };
+}
+
 export interface RoofConfig {
   style: RoofStyle;
   heightOffset: number;
@@ -248,6 +272,12 @@ export interface RoofConfig {
   retractableClosed?: boolean;
   /** Movable roof settings for `retractable` and `petal_iris`; missing fields use defaults. */
   retractable?: Partial<RetractableConfig>;
+  /** `corner_pylons`: height (m) of the four corner mega-pylons; stays reach the girders below. */
+  pylonHeight?: number;
+  /** `corner_pylons`: 3D lattice of trusses over the canopy, between girders and stand crests. */
+  spaceFrame?: boolean;
+  /** `corner_pylons`: rise (m) of the canopy toward its front edge, for a domed crown. */
+  crownRise?: number;
   /** Continuous bowls only: stands under the roof; absent means the whole bowl is covered. */
   coveredSides?: StandSide[];
   /** Extends the outer edge of all roofs across the outer concourse up to the facade (enabled by default). */

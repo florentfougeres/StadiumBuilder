@@ -27,6 +27,7 @@ import {
   isContinuousBowlShape,
   LightingMode,
   resolveAllCorners,
+  resolveCornerPylonFrame,
   resolveFloodlightRig,
   RoofStyle,
   StadiumDocument,
@@ -34,6 +35,7 @@ import {
   StandSide,
 } from './schema';
 import { buildRetractablePanels } from './generateRetractableRoof';
+import { beamGeometry, mergedMesh } from './roofBeams';
 
 function hasRoofGantryLights(doc: StadiumDocument): boolean {
   const rig = resolveFloodlightRig(doc);
@@ -1258,6 +1260,207 @@ function buildRetractableRoof(
       maxAnisotropy,
     })
   );
+  return group;
+}
+
+/** Even-odd point-in-polygon test in the XZ plane. */
+function insideXZ(poly: { x: number; z: number }[], x: number, z: number): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i];
+    const b = poly[j];
+    if (a.z > z !== b.z > z && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** Warren truss (top and bottom chords, alternating diagonals, posts) between two points. */
+function warrenTrussParts(
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+  depth: number,
+  bays: number,
+  chord: number,
+  web: number
+): THREE.BufferGeometry[] {
+  const parts: THREE.BufferGeometry[] = [];
+  const at = (f: number, top: boolean) => {
+    const p = new THREE.Vector3().lerpVectors(a, b, f);
+    if (top) p.y += depth;
+    return p;
+  };
+  parts.push(beamGeometry(at(0, false), at(1, false), chord, chord));
+  parts.push(beamGeometry(at(0, true), at(1, true), chord, chord));
+  for (let k = 0; k <= bays; k++) {
+    const f0 = k / bays;
+    parts.push(beamGeometry(at(f0, false), at(f0, true), web * 0.8, web * 0.8));
+    if (k < bays) {
+      parts.push(beamGeometry(at(f0, k % 2 === 0), at((k + 1) / bays, k % 2 !== 0), web, web));
+    }
+  }
+  return parts;
+}
+
+/**
+ * CORNER MEGA-PYLONS (`corner_pylons`), after Lens Bollaert-Delelis and the Marseille Vélodrome:
+ * four corner pylons carry four mega-girders framing the pitch above the canopy's front edge;
+ * the canopy hangs from them at the front and rests on the stand crests at the rear. Optional
+ * `spaceFrame` adds a two-layer lattice over the canopy, and `crownRise` domes it toward the pitch.
+ */
+function buildCornerPylonsRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const frame = resolveCornerPylonFrame(doc.roof, computeStadiumRingBounds(doc).maxStandH);
+  const { group, bounds, innerOffset, outerOffsetFn, primaryStructMat, surface } =
+    buildPerimeterCanopyCrown(doc, crossSectionClip, maxAnisotropy, {
+      segments: 160,
+      surface:
+        ({ roofY }) =>
+        (_t, f) =>
+          roofY + 1.8 * (1 - f) + frame.crownRise * Math.pow(1 - f, 1.6),
+    });
+  const { ring } = bounds;
+  const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
+  const zMax = crossSectionClip ? 0 : Infinity;
+
+  // Girder rectangle over the front quarter of the canopy depth.
+  const lineOffset = innerOffset + (bounds.avgDepth - innerOffset) * 0.25;
+  let gx = 0;
+  let gz = 0;
+  const innerPoly: { x: number; z: number }[] = [];
+  const outerPoly: { x: number; z: number }[] = [];
+  for (let s = 0; s < 128; s++) {
+    const t = s / 128;
+    const p = sampleRoundedBowlRing(ring, t, lineOffset);
+    gx = Math.max(gx, Math.abs(p.x));
+    gz = Math.max(gz, Math.abs(p.z));
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    innerPoly.push(sampleRoundedBowlRing(ring, t, innerOffset));
+    outerPoly.push(sampleRoundedBowlRing(ring, t, outerOffsetFn(n.nx, n.nz)));
+  }
+  const coversPoint = (x: number, z: number) =>
+    insideXZ(outerPoly, x, z) && !insideXZ(innerPoly, x, z);
+  const corners = [
+    new THREE.Vector3(gx, 0, gz),
+    new THREE.Vector3(-gx, 0, gz),
+    new THREE.Vector3(-gx, 0, -gz),
+    new THREE.Vector3(gx, 0, -gz),
+  ];
+
+  const pylonParts: THREE.BufferGeometry[] = [];
+  const steelParts: THREE.BufferGeometry[] = [];
+  const cableParts: THREE.BufferGeometry[] = [];
+  for (const c of corners) {
+    if (c.z > zMax) continue;
+    // Tapered lattice pylon: four legs converging toward the head, braced every ~8 m.
+    const baseHalf = 3.2;
+    const topHalf = 1.6;
+    const legs = [
+      [1, 1],
+      [-1, 1],
+      [-1, -1],
+      [1, -1],
+    ].map(([sx, sz]) => ({
+      bot: new THREE.Vector3(c.x + sx * baseHalf, 0, c.z + sz * baseHalf),
+      top: new THREE.Vector3(c.x + sx * topHalf, frame.pylonTopY, c.z + sz * topHalf),
+    }));
+    for (const leg of legs) pylonParts.push(beamGeometry(leg.bot, leg.top, 1.1, 1.1));
+    const levels = Math.max(3, Math.round(frame.pylonTopY / 8));
+    for (let l = 1; l <= levels; l++) {
+      const cur = legs.map((leg) => new THREE.Vector3().lerpVectors(leg.bot, leg.top, l / levels));
+      const prev = legs.map((leg) =>
+        new THREE.Vector3().lerpVectors(leg.bot, leg.top, (l - 1) / levels)
+      );
+      for (let k = 0; k < 4; k++) {
+        pylonParts.push(beamGeometry(cur[k], cur[(k + 1) % 4], 0.5, 0.5));
+        pylonParts.push(beamGeometry(prev[k], cur[(k + 1) % 4], 0.35, 0.35));
+      }
+    }
+  }
+
+  // Four mega-girders: Warren trusses between the pylon centrelines.
+  for (let i = 0; i < 4; i++) {
+    const a = corners[i].clone().setY(frame.girderBotY);
+    const b = corners[(i + 1) % 4].clone().setY(frame.girderBotY);
+    if (a.z > zMax && b.z > zMax) continue;
+    a.z = Math.min(a.z, zMax);
+    b.z = Math.min(b.z, zMax);
+    const span = a.distanceTo(b);
+    if (span < 1) continue;
+    steelParts.push(
+      ...warrenTrussParts(
+        a,
+        b,
+        frame.girderTopY - frame.girderBotY,
+        Math.max(6, Math.round(span / 8)),
+        1.6,
+        0.6
+      )
+    );
+    // Hangers down to the canopy wherever the girder runs over it.
+    const hangers = Math.max(4, Math.round(span / 10));
+    for (let k = 1; k < hangers; k++) {
+      const p = new THREE.Vector3().lerpVectors(a, b, k / hangers);
+      if (!coversPoint(p.x, p.z)) continue;
+      cableParts.push(beamGeometry(p, new THREE.Vector3(p.x, frame.canopyY + 1.0, p.z), 0.22, 0.22));
+    }
+    // Stays from pylon heads standing well above the girders down to their third points.
+    if (frame.pylonTopY > frame.girderTopY + 4) {
+      for (const [end, f] of [
+        [corners[i], 0.3],
+        [corners[(i + 1) % 4], 0.7],
+      ] as const) {
+        if (end.z > zMax) continue;
+        const head = end.clone().setY(frame.pylonTopY - 0.5);
+        const anchor = new THREE.Vector3().lerpVectors(a, b, f).setY(frame.girderTopY);
+        cableParts.push(beamGeometry(head, anchor, 0.25, 0.25));
+      }
+    }
+  }
+
+  if (doc.roof.spaceFrame) {
+    // Two-layer lattice following the canopy: bottom nodes on the deck, top nodes 3.5 m above.
+    const along = Math.max(24, Math.round(72 * Math.max(0.25, tEnd - tStart)));
+    const across = 4;
+    const node = (s: number, c: number, top: boolean): THREE.Vector3 => {
+      const t = tStart + (s / along) * (tEnd - tStart);
+      const n = sampleRoundedBowlRing(ring, t, 0);
+      const outer = outerOffsetFn(n.nx, n.nz);
+      const f = c / across;
+      const p = sampleRoundedBowlRing(ring, t, innerOffset + (outer - innerOffset) * f);
+      return new THREE.Vector3(p.x, surface(t, f) + (top ? 3.5 : 0.35), p.z);
+    };
+    const stations = closed ? along : along + 1;
+    for (let s = 0; s < stations; s++) {
+      const next = closed ? (s + 1) % along : s + 1;
+      const last = !closed && s === along;
+      for (let c = 0; c <= across; c++) {
+        steelParts.push(beamGeometry(node(s, c, false), node(s, c, true), 0.22, 0.22));
+        if (c < across) {
+          steelParts.push(beamGeometry(node(s, c, true), node(s, c + 1, true), 0.32, 0.32));
+          steelParts.push(beamGeometry(node(s, c, false), node(s, c + 1, true), 0.2, 0.2));
+        }
+        if (!last) {
+          steelParts.push(beamGeometry(node(s, c, true), node(next, c, true), 0.32, 0.32));
+          steelParts.push(beamGeometry(node(s, c, false), node(next, c, true), 0.2, 0.2));
+        }
+      }
+    }
+  }
+
+  const named: [THREE.BufferGeometry[], string][] = [
+    [pylonParts, 'CornerMegaPylons'],
+    [steelParts, 'CornerMegaGirders'],
+    [cableParts, 'CornerRoofHangers'],
+  ];
+  for (const [parts, name] of named) {
+    const mesh = mergedMesh(parts, primaryStructMat, name);
+    if (mesh) group.add(mesh);
+  }
   return group;
 }
 
@@ -2966,6 +3169,11 @@ function buildRoofAssembly(
 
     if (doc.roof.style === 'retractable' || doc.roof.style === 'petal_iris') {
       root.add(buildRetractableRoof(doc, crossSectionClip, maxAnisotropy));
+      return root;
+    }
+
+    if (doc.roof.style === 'corner_pylons') {
+      root.add(buildCornerPylonsRoof(doc, crossSectionClip, maxAnisotropy));
       return root;
     }
 
