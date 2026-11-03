@@ -905,7 +905,7 @@ export const STADIUM_SHAPE_LABELS: Record<StadiumShape, string> = {
   steep_cauldron: 'Chaudron parabolique raide',
   d_shape_vertical: 'Cuvette en D & loges verticales',
   olympic_oval: 'Stade avec piste d’athlétisme',
-  heritage_bowl: 'Stade années 30 avec vélodrome',
+  heritage_bowl: 'Stade années 30 à piste cycliste',
   horseshoe: 'Fer à cheval (en U)',
   sunken_bowl: 'Amphithéâtre semi-enterré',
   octagonal_arena: 'Arène octogonale facettée',

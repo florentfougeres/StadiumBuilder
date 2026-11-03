@@ -326,8 +326,8 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
     disposeObject3D(domeStands);
   });
 
-  it('calibrates realistic capacities across all 14 generic architectural templates', () => {
-    expect(STADIUM_PRESETS.length).toBe(16);
+  it('calibrates realistic capacities across all generic architectural templates', () => {
+    expect(STADIUM_PRESETS.length).toBe(29);
 
     const getCap = (id: string) =>
       calculateStadiumMetrics(createPresetDocument(id)).totalCapacity;

@@ -110,7 +110,7 @@ export const SHAPE_OPTIONS: { id: StadiumShape; label: string; desc: string }[] 
   },
   {
     id: 'heritage_bowl',
-    label: 'Stade années 30 avec vélodrome',
+    label: 'Stade années 30 à piste cycliste',
     desc: 'Ovale peu pentu autour d’une piste cycliste relevée, seule la tribune d’honneur couverte',
   },
   {
@@ -840,7 +840,7 @@ const BowlInspector: React.FC = () => {
           />
         )}
         <ToggleField
-          label="Piste cycliste relevée (vélodrome)"
+          label="Piste cycliste relevée"
           hint="Anneau en béton aux virages relevés, autour du terrain ou de la piste d’athlétisme"
           checked={Boolean(doc.pitch.cyclingTrack)}
           onChange={(v) => updatePitch({ cyclingTrack: v })}

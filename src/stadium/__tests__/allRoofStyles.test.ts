@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { disposeObject3D } from '../buildStadiumScene';
 import { generateRoofGroup } from '../generateRoof';
-import { createPresetDocument } from '../presets';
+import { createPresetDocument, STADIUM_PRESETS } from '../presets';
+import { calculateStadiumMetrics } from '../capacity';
 import { RoofStyle } from '../schema';
 
 /**
@@ -75,4 +76,13 @@ describe('every roof style has a builder', () => {
     };
     expect(top(12) - top(2)).toBeGreaterThan(8);
   });
+
+  for (const preset of STADIUM_PRESETS) {
+    it(`builds the ${preset.id} preset`, () => {
+      const doc = createPresetDocument(preset.id);
+      expect(calculateStadiumMetrics(doc).totalCapacity).toBeGreaterThan(8000);
+      const roof = generateRoofGroup(doc);
+      disposeObject3D(roof);
+    });
+  }
 });
