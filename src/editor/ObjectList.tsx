@@ -5,6 +5,7 @@ import {
   Copy,
   Fence,
   Lightbulb,
+  CircleDot,
   MonitorPlay,
   Plus,
   ShoppingBag,
@@ -23,6 +24,7 @@ const ADDABLE_ASSETS: {
   icon: React.ReactNode;
 }[] = [
   { type: 'screen', label: 'Écran géant', icon: <MonitorPlay className="w-3.5 h-3.5" /> },
+  { type: 'halo_screen', label: 'Écran halo central', icon: <CircleDot className="w-3.5 h-3.5" /> },
   { type: 'floodlight', label: 'Projecteur', icon: <Lightbulb className="w-3.5 h-3.5" /> },
   { type: 'dugout', label: 'Bancs de touche', icon: <Users className="w-3.5 h-3.5" /> },
   { type: 'locker_room', label: 'Vestiaires', icon: <Building2 className="w-3.5 h-3.5" /> },
