@@ -120,6 +120,54 @@ export const FACADE_MATERIAL_CATALOG: MaterialCatalogEntry<FacadeMaterialId>[] =
     swatchBackground:
       'repeating-linear-gradient(90deg, #b45309 0 5px, #1c1917 5px 8px), linear-gradient(180deg, #d97706 0%, #78350f 100%)',
   },
+  {
+    id: 'terracotta_baguettes',
+    label: 'Baguettes terre cuite',
+    subtitle: 'Tubes céramiques ocre-rouge en claire-voie verticale',
+    fallbackHex: '#b45f3c',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, #c2693f 0 5px, #3b2a22 5px 7px), linear-gradient(180deg, #d4774a 0%, #8f4328 100%)',
+  },
+  {
+    id: 'gold_anodized_panels',
+    label: 'Bardage alu anodisé or',
+    subtitle: 'Cassettes métalliques champagne-or satinées',
+    fallbackHex: '#c9a24a',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, rgba(60,40,10,0.35) 0 2px, transparent 2px 16px), linear-gradient(135deg, #f1d58a 0%, #c9a24a 55%, #8a6a24 100%)',
+  },
+  {
+    id: 'white_composite_panels',
+    label: 'Panneaux composite blancs',
+    subtitle: 'Grands panneaux lisses blanc pur à joints creux',
+    fallbackHex: '#f4f4f2',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, rgba(15,23,42,0.25) 0 1.5px, transparent 1.5px 20px), repeating-linear-gradient(0deg, rgba(15,23,42,0.18) 0 1.5px, transparent 1.5px 14px), linear-gradient(135deg, #ffffff 0%, #e7e5e4 100%)',
+  },
+  {
+    id: 'perforated_red_metal',
+    label: 'Tôle perforée rouge',
+    subtitle: 'Résille métallique laquée rouge, micro-perforée',
+    fallbackHex: '#b91c1c',
+    swatchBackground:
+      'radial-gradient(circle, rgba(15,23,42,0.55) 0 1.4px, transparent 1.6px) 0 0 / 6px 6px, linear-gradient(135deg, #dc2626 0%, #991b1b 100%)',
+  },
+  {
+    id: 'black_zinc_cladding',
+    label: 'Zinc anthracite à tasseaux',
+    subtitle: 'Bardage zinc prépatiné noir à joints verticaux',
+    fallbackHex: '#2b2f35',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, #1f2328 0 2px, #3a3f46 2px 4px, #2b2f35 4px 14px)',
+  },
+  {
+    id: 'living_green_wall',
+    label: 'Mur végétal',
+    subtitle: 'Façade plantée de grimpantes et jardinières',
+    fallbackHex: '#4d7c3a',
+    swatchBackground:
+      'radial-gradient(circle at 30% 30%, #6aa84f 0 3px, transparent 3.5px) 0 0 / 9px 9px, linear-gradient(135deg, #5b8c3e 0%, #2f5226 100%)',
+  },
 ];
 
 export const ROOF_MATERIAL_CATALOG: MaterialCatalogEntry<RoofMaterialId>[] = [
@@ -171,6 +219,54 @@ export const ROOF_MATERIAL_CATALOG: MaterialCatalogEntry<RoofMaterialId>[] = [
     swatchBackground:
       'repeating-linear-gradient(0deg, rgba(28,25,23,0.4) 0 1.5px, transparent 1.5px 7px), linear-gradient(135deg, #d97706 0%, #92400e 100%)',
   },
+  {
+    id: 'anthracite_pvc_membrane',
+    label: 'Membrane PVC anthracite',
+    subtitle: 'Toile tendue gris graphite mate',
+    fallbackHex: '#3a3f46',
+    swatchBackground:
+      'repeating-linear-gradient(45deg, rgba(255,255,255,0.06) 0 1px, transparent 1px 6px), linear-gradient(145deg, #4b5563 0%, #2b2f35 100%)',
+  },
+  {
+    id: 'copper_verdigris',
+    label: 'Cuivre vert-de-gris',
+    subtitle: 'Bacs cuivre patinés vert d’eau',
+    fallbackHex: '#5fa58f',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, rgba(20,60,50,0.4) 0 2px, transparent 2px 12px), linear-gradient(135deg, #8cc7b2 0%, #4f9580 60%, #2f6b5a 100%)',
+  },
+  {
+    id: 'red_steel_deck',
+    label: 'Bac acier rouge',
+    subtitle: 'Tôle nervurée laquée rouge brique',
+    fallbackHex: '#a3302a',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, #7f1d1d 0 2px, #c2412f 2px 5px, #a3302a 5px 12px)',
+  },
+  {
+    id: 'blue_steel_deck',
+    label: 'Bac acier bleu',
+    subtitle: 'Tôle nervurée laquée bleu nuit',
+    fallbackHex: '#1e3a8a',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, #172554 0 2px, #2c4fa8 2px 5px, #1e3a8a 5px 12px)',
+  },
+  {
+    id: 'solar_pv_panels',
+    label: 'Panneaux photovoltaïques',
+    subtitle: 'Modules solaires bleu nuit sur cadres alu',
+    fallbackHex: '#1e2a4a',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, #cbd5e1 0 1.5px, transparent 1.5px 14px), repeating-linear-gradient(0deg, #cbd5e1 0 1.5px, transparent 1.5px 9px), linear-gradient(135deg, #24345e 0%, #121a33 100%)',
+  },
+  {
+    id: 'perforated_aluminium',
+    label: 'Tôle alu perforée',
+    subtitle: 'Résille aluminium naturel micro-perforée',
+    fallbackHex: '#c7ccd2',
+    swatchBackground:
+      'radial-gradient(circle, rgba(15,23,42,0.45) 0 1.2px, transparent 1.4px) 0 0 / 5px 5px, linear-gradient(135deg, #e5e7eb 0%, #a8adb4 100%)',
+  },
 ];
 
 export const STRUCTURE_MATERIAL_CATALOG: MaterialCatalogEntry<StructureMaterialId>[] = [
@@ -210,6 +306,54 @@ export const STRUCTURE_MATERIAL_CATALOG: MaterialCatalogEntry<StructureMaterialI
     subtitle: 'Portiques acier autopatinable rouille mat',
     fallbackHex: '#7c2d12',
     swatchBackground: 'linear-gradient(135deg, #c2410c 0%, #7c2d12 65%, #431407 100%)',
+  },
+  {
+    id: 'stainless_steel',
+    label: 'Inox poli',
+    subtitle: 'Acier inoxydable brillant à reflets miroir',
+    fallbackHex: '#d4d8dd',
+    swatchBackground:
+      'linear-gradient(135deg, #ffffff 0%, #b6bcc4 45%, #eef0f2 70%, #8f969e 100%)',
+  },
+  {
+    id: 'bronze_steel',
+    label: 'Acier bronze anodisé',
+    subtitle: 'Métal mordoré brun-doré satiné',
+    fallbackHex: '#8a6236',
+    swatchBackground:
+      'linear-gradient(135deg, #c39a5f 0%, #8a6236 60%, #4f371d 100%)',
+  },
+  {
+    id: 'red_lacquer_steel',
+    label: 'Acier laqué rouge',
+    subtitle: 'Charpente peinte rouge signal',
+    fallbackHex: '#c0262d',
+    swatchBackground:
+      'linear-gradient(135deg, #ef4444 0%, #c0262d 60%, #7f1d1d 100%)',
+  },
+  {
+    id: 'navy_lacquer_steel',
+    label: 'Acier laqué bleu marine',
+    subtitle: 'Charpente peinte bleu nuit profond',
+    fallbackHex: '#1f3366',
+    swatchBackground:
+      'linear-gradient(135deg, #3b5bab 0%, #1f3366 60%, #0f1a36 100%)',
+  },
+  {
+    id: 'forest_green_steel',
+    label: 'Acier laqué vert sapin',
+    subtitle: 'Charpente peinte vert profond',
+    fallbackHex: '#1f5136',
+    swatchBackground:
+      'linear-gradient(135deg, #3f8a5c 0%, #1f5136 60%, #0f2a1c 100%)',
+  },
+  {
+    id: 'reinforced_concrete',
+    label: 'Béton armé',
+    subtitle: 'Poteaux et poutres en béton coulé',
+    fallbackHex: '#a8a59f',
+    swatchBackground:
+      'radial-gradient(circle at 30% 40%, rgba(15,23,42,0.25) 0 1.5px, transparent 2px) 0 0 / 8px 8px, linear-gradient(180deg, #b8b5ae 0%, #8f8c86 100%)',
   },
 ];
 
@@ -1004,6 +1148,92 @@ export function createFacadePbrMaterial(
       };
     }
 
+    // Glazed window behind any open or slatted cladding, lit at night in occupied rooms.
+    const windowTexel = (lit: boolean) => ({
+      r: lit ? 240 : 24,
+      g: lit ? 194 : 34,
+      b: lit ? 118 : 48,
+      height: 0.15,
+      roughness: 0.12,
+      emissiveR: lit ? 232 : 0,
+      emissiveG: lit ? 182 : 0,
+      emissiveB: lit ? 100 : 0,
+    });
+    const roomLit = isNight && roomLitHash > 0.27;
+
+    if (facadeId === 'terracotta_baguettes') {
+      const rod = (u * 48) % 1;
+      if (rod < 0.3) return windowTexel(roomLit && inVisionBand);
+      const profile = Math.sin(((rod - 0.3) / 0.7) * Math.PI);
+      const tone = hash2Periodic(Math.floor(u * 48), Math.floor(v * 6), 48, 6, 1501);
+      return {
+        r: 150 + tone * 40 + profile * 30,
+        g: 72 + tone * 20 + profile * 18,
+        b: 44 + tone * 10 + profile * 10,
+        height: 0.35 + profile * 0.6,
+        roughness: 0.7 + (1 - profile) * 0.15,
+      };
+    }
+
+    if (facadeId === 'gold_anodized_panels' || facadeId === 'white_composite_panels' || facadeId === 'black_zinc_cladding') {
+      const gold = facadeId === 'gold_anodized_panels';
+      const zinc = facadeId === 'black_zinc_cladding';
+      if (inVisionBand && ((v * 4) % 1) > 0.38 && ((v * 4) % 1) < 0.64) return windowTexel(roomLit);
+      const cols = zinc ? 24 : gold ? 8 : 4;
+      const rows = zinc ? 2 : gold ? 8 : 6;
+      const jointU = ((u * cols) % 1) < (zinc ? 0.08 : 0.025);
+      const jointV = ((v * rows) % 1) < 0.03;
+      if (jointU || jointV) {
+        return zinc
+          ? { r: 70, g: 74, b: 80, height: 0.95, roughness: 0.35 }
+          : { r: 40, g: 40, b: 42, height: 0.1, roughness: 0.9 };
+      }
+      const tone = hash2Periodic(Math.floor(u * cols), Math.floor(v * rows), cols, rows, 1502);
+      const base = gold
+        ? [196 + tone * 30, 158 + tone * 24, 82 + tone * 14]
+        : zinc
+        ? [44 + fbm * 10, 47 + fbm * 10, 52 + fbm * 10]
+        : [234 + tone * 8, 233 + tone * 8, 229 + tone * 8];
+      return {
+        r: base[0],
+        g: base[1],
+        b: base[2],
+        height: 0.6 + fine * 0.08,
+        roughness: gold ? 0.28 + tone * 0.1 : zinc ? 0.48 + fbm * 0.1 : 0.32 + fine * 0.08,
+      };
+    }
+
+    if (facadeId === 'perforated_red_metal') {
+      const hu = (u * 64) % 1;
+      const hv = (v * 64) % 1;
+      const hole = (hu - 0.5) ** 2 + (hv - 0.5) ** 2 < 0.06;
+      if (hole) return windowTexel(roomLit && inVisionBand);
+      const seam = ((u * 6) % 1) < 0.02;
+      return {
+        r: seam ? 90 : 176 + fbm * 22,
+        g: seam ? 18 : 30 + fbm * 8,
+        b: seam ? 20 : 34 + fbm * 8,
+        height: seam ? 0.9 : 0.6,
+        roughness: 0.36 + fine * 0.1,
+      };
+    }
+
+    if (facadeId === 'living_green_wall') {
+      if (floorBand < 0.07) {
+        return { r: 150, g: 146, b: 138, height: 0.9, roughness: 0.8 };
+      }
+      const leaf = periodicFbm2D(u, v, 24, 4, 1503);
+      const clump = periodicNoise2D(u, v, 64, 64, 1504);
+      const flower = clump > 0.93;
+      return {
+        r: flower ? 214 : 52 + leaf * 50,
+        g: flower ? 190 : 92 + leaf * 70,
+        b: flower ? 120 : 36 + leaf * 26,
+        height: 0.3 + leaf * 0.65,
+        roughness: 0.82,
+      };
+    }
+
     // Default: `architectural_concrete` facade
     if (inVisionBand && ((v * 4) % 1) > 0.36 && ((v * 4) % 1) < 0.66) {
       const lit = isNight && roomLitHash > 0.25;
@@ -1032,7 +1262,8 @@ export function createFacadePbrMaterial(
 
   const maps = wrapDataTextures(buffers, 7, 2, maxAnisotropy);
 
-  const isMetallic = facadeId === 'brushed_steel_mesh';
+  const isMetallic = facadeId === 'brushed_steel_mesh' || facadeId === 'gold_anodized_panels';
+  const isPaintedMetal = facadeId === 'perforated_red_metal' || facadeId === 'black_zinc_cladding';
   const isGlass = facadeId === 'glass_curtain';
   const isEtfe = facadeId === 'etfe_cushions_facade';
   const isCorten = facadeId === 'weathered_corten';
@@ -1043,8 +1274,8 @@ export function createFacadePbrMaterial(
     normalScale: new THREE.Vector2(isEtfe ? 1.35 : 1.0, isEtfe ? 1.35 : 1.0),
     roughnessMap: maps.roughnessMap,
     roughness: 1.0,
-    metalness: isMetallic ? 0.82 : isGlass ? 0.35 : isCorten ? 0.42 : 0.06,
-    clearcoat: isGlass || isEtfe ? 0.92 : isMetallic ? 0.35 : 0.0,
+    metalness: isMetallic ? 0.82 : isPaintedMetal ? 0.55 : isGlass ? 0.35 : isCorten ? 0.42 : 0.06,
+    clearcoat: isGlass || isEtfe ? 0.92 : isMetallic ? 0.35 : facadeId === 'white_composite_panels' ? 0.4 : 0.0,
     clearcoatRoughness: isGlass ? 0.08 : isEtfe ? 0.14 : 0.25,
     envMapIntensity: isGlass ? 1.45 : isMetallic ? 1.25 : isEtfe ? 1.15 : 0.85,
     emissive: new THREE.Color(isNight ? 0xffffff : 0x000000),
@@ -1360,6 +1591,79 @@ export function createRoofPbrMaterial(
       };
     }
 
+    if (roofId === 'anthracite_pvc_membrane') {
+      const weave = (Math.sin(u * Math.PI * 128) + Math.sin(v * Math.PI * 128)) * 0.25 + 0.5;
+      const panelJoint = ((u * 12) % 1) < 0.035;
+      const val = (panelJoint ? 46 : 64) + weave * 10 + (fbm - 0.5) * 8;
+      return {
+        r: val,
+        g: val * 1.03,
+        b: val * 1.1,
+        a: 255,
+        height: panelJoint ? 0.82 : 0.45 + weave * 0.2,
+        roughness: 0.62 + (1 - weave) * 0.16,
+      };
+    }
+
+    if (roofId === 'copper_verdigris') {
+      const isRib = ((u * 28) % 1) < 0.1;
+      const patina = clamp01(fbm * 0.8 + fine * 0.3);
+      const copper = patina < 0.28;
+      return {
+        r: copper ? 150 + fine * 30 : 88 + patina * 40,
+        g: copper ? 92 + fine * 20 : 158 + patina * 30,
+        b: copper ? 58 : 132 + patina * 26,
+        a: 255,
+        height: isRib ? 0.92 : 0.48 + patina * 0.1,
+        roughness: isRib ? 0.4 : 0.55 + patina * 0.2,
+      };
+    }
+
+    if (roofId === 'red_steel_deck' || roofId === 'blue_steel_deck') {
+      const rib = (u * 40) % 1;
+      const crest = rib < 0.3;
+      const flank = rib < 0.38 || (rib > 0.92);
+      const base = roofId === 'red_steel_deck' ? [164, 46, 40] : [36, 62, 140];
+      const k = crest ? 1.12 : flank ? 0.72 : 0.92;
+      return {
+        r: base[0] * k + (fbm - 0.5) * 10,
+        g: base[1] * k + (fbm - 0.5) * 6,
+        b: base[2] * k + (fbm - 0.5) * 8,
+        a: 255,
+        height: crest ? 0.9 : flank ? 0.6 : 0.3,
+        roughness: 0.38 + (fbm - 0.5) * 0.1,
+      };
+    }
+
+    if (roofId === 'solar_pv_panels') {
+      const frame = ((u * 10) % 1) < 0.03 || ((v * 6) % 1) < 0.04;
+      if (frame) return { r: 196, g: 202, b: 210, a: 255, height: 0.9, roughness: 0.3 };
+      const cellLine = ((u * 60) % 1) < 0.04 || ((v * 36) % 1) < 0.05;
+      return {
+        r: cellLine ? 70 : 24 + fine * 10,
+        g: cellLine ? 80 : 36 + fine * 12,
+        b: cellLine ? 110 : 78 + fine * 20,
+        a: 255,
+        height: 0.5,
+        roughness: cellLine ? 0.4 : 0.1,
+      };
+    }
+
+    if (roofId === 'perforated_aluminium') {
+      const hu = (u * 96) % 1;
+      const hv = (v * 48) % 1;
+      const hole = (hu - 0.5) ** 2 + (hv - 0.5) ** 2 < 0.05;
+      const val = 198 + (fbm - 0.5) * 14;
+      return {
+        r: val * 0.98,
+        g: val,
+        b: val * 1.03,
+        a: hole ? 90 : 255,
+        height: hole ? 0.1 : 0.6,
+        roughness: 0.32 + fine * 0.08,
+      };
+    }
+
     // Default: `ptfe_membrane` woven architectural fiberglass fabric
     const weaveU = Math.sin(u * Math.PI * 128) * 0.5 + 0.5;
     const weaveV = Math.sin(v * Math.PI * 128) * 0.5 + 0.5;
@@ -1388,7 +1692,13 @@ export function createRoofPbrMaterial(
 
   const isGlassRoof = roofId === 'polycarbonate_glass';
   const isEtfe = roofId === 'etfe_cushions';
-  const isMetalRoof = roofId === 'standing_seam_zinc' || roofId === 'titanium_scales';
+  const isMetalRoof =
+    roofId === 'standing_seam_zinc' ||
+    roofId === 'titanium_scales' ||
+    roofId === 'copper_verdigris' ||
+    roofId === 'perforated_aluminium';
+  const isPaintedDeck = roofId === 'red_steel_deck' || roofId === 'blue_steel_deck';
+  const isSolar = roofId === 'solar_pv_panels';
   const clampedOp = Math.max(0.14, Math.min(1.0, opacity));
   const effectiveOpacity = isGlassRoof
     ? Math.min(clampedOp, 0.82)
@@ -1404,8 +1714,8 @@ export function createRoofPbrMaterial(
     normalScale: new THREE.Vector2(isEtfe ? 1.35 : 0.95, isEtfe ? 1.35 : 0.95),
     roughnessMap: maps.roughnessMap,
     roughness: 1.0,
-    metalness: isMetalRoof ? 0.78 : isGlassRoof ? 0.18 : 0.06,
-    clearcoat: isGlassRoof ? 0.95 : isEtfe ? 0.75 : roofId === 'titanium_scales' ? 0.35 : 0.0,
+    metalness: isMetalRoof ? 0.78 : isPaintedDeck ? 0.5 : isSolar ? 0.3 : isGlassRoof ? 0.18 : 0.06,
+    clearcoat: isGlassRoof || isSolar ? 0.95 : isEtfe ? 0.75 : roofId === 'titanium_scales' || isPaintedDeck ? 0.35 : 0.0,
     clearcoatRoughness: 0.12,
     sheen: roofId === 'ptfe_membrane' ? 0.45 : 0,
     sheenColor: new THREE.Color(0xffffff),
@@ -1495,6 +1805,34 @@ export function createStructurePbrMaterial(
       };
     }
 
+    if (structureId === 'stainless_steel') {
+      const brush = periodicNoise2D(u, v, 4, 96, 1430);
+      const val = 214 + (brush - 0.5) * 26;
+      return { r: val * 0.98, g: val, b: val * 1.02, height: 0.5 + brush * 0.06, roughness: 0.1 + brush * 0.08 };
+    }
+
+    if (structureId === 'bronze_steel') {
+      const val = (fbm - 0.5) * 16 + (fine - 0.5) * 8;
+      return { r: 152 + val, g: 108 + val * 0.8, b: 62 + val * 0.5, height: 0.5 + fine * 0.1, roughness: 0.3 + fbm * 0.1 };
+    }
+
+    const lacquer: Partial<Record<StructureMaterialId, [number, number, number]>> = {
+      red_lacquer_steel: [190, 34, 40],
+      navy_lacquer_steel: [30, 50, 102],
+      forest_green_steel: [30, 82, 54],
+    };
+    const paint = lacquer[structureId];
+    if (paint) {
+      const val = (fbm - 0.5) * 10 + (fine - 0.5) * 4;
+      return { r: paint[0] + val, g: paint[1] + val, b: paint[2] + val, height: 0.5 + fine * 0.06, roughness: 0.32 + fbm * 0.08 };
+    }
+
+    if (structureId === 'reinforced_concrete') {
+      const formwork = ((v * 6) % 1) < 0.03;
+      const val = (formwork ? 140 : 172) + (fbm - 0.5) * 22 + (fine - 0.5) * 14;
+      return { r: val, g: val * 0.99, b: val * 0.95, height: formwork ? 0.3 : 0.55 + fbm * 0.2, roughness: 0.82 + fine * 0.1 };
+    }
+
     // Default: `white_steel` satin architectural steel
     const val = 236 + (fbm - 0.5) * 12;
     return {
@@ -1509,6 +1847,11 @@ export function createStructurePbrMaterial(
   const maps = wrapDataTextures(buffers, 3, 3, maxAnisotropy);
   const isWood = structureId === 'glulam_timber';
   const isCorten = structureId === 'corten_structure';
+  const isConcrete = structureId === 'reinforced_concrete';
+  const isLacquer =
+    structureId === 'red_lacquer_steel' ||
+    structureId === 'navy_lacquer_steel' ||
+    structureId === 'forest_green_steel';
 
   return new THREE.MeshPhysicalMaterial({
     map: maps.map,
@@ -1516,10 +1859,10 @@ export function createStructurePbrMaterial(
     normalScale: new THREE.Vector2(0.75, 0.75),
     roughnessMap: maps.roughnessMap,
     roughness: 1.0,
-    metalness: isWood ? 0.08 : isCorten ? 0.48 : 0.82,
-    clearcoat: structureId === 'white_steel' ? 0.35 : 0,
+    metalness: isWood || isConcrete ? 0.04 : isLacquer ? 0.45 : isCorten ? 0.48 : structureId === 'stainless_steel' ? 0.95 : 0.82,
+    clearcoat: structureId === 'white_steel' || isLacquer ? 0.4 : 0,
     clearcoatRoughness: 0.22,
-    envMapIntensity: isWood ? 0.75 : 1.15,
+    envMapIntensity: isWood || isConcrete ? 0.75 : 1.15,
   });
 }
 

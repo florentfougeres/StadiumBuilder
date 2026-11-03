@@ -7,7 +7,7 @@ import {
   createStructurePbrMaterial,
   resolveStadiumMaterials,
 } from './materials';
-import { buildCurtainWallArticulation, buildParametricFacadeOnRail } from './parametricFacade';
+import { buildEnvelopeDressing, buildParametricFacadeOnRail } from './parametricFacade';
 import { StadiumDocument } from './schema';
 
 /** Storey height of the concourse levels, read on the facade as slab bands. */
@@ -108,11 +108,17 @@ export function generateConcourseGroup(
     yTop: samples[i].height,
   }));
 
-  // Without a relief pattern the facade gets its curtain-wall frame (mullions and slab edges);
+  // The concourse is the outer face of the stadium, so it wears the chosen envelope: without a
+  // relief pattern it gets the envelope dressing (curtain wall, louvers, colonnade or bracing);
   // the slab rings below are only needed under a relief pattern.
   const articulation =
     facadePattern === 'none'
-      ? buildCurtainWallArticulation({ samples: facadeSamples, closed, frameMat: structMat })
+      ? buildEnvelopeDressing({
+          samples: facadeSamples,
+          closed,
+          style: mats.envelopeStyle ?? 'enveloping_skin',
+          frameMat: structMat,
+        })
       : null;
   if (articulation) group.add(articulation);
 

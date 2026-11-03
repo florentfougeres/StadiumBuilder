@@ -676,15 +676,15 @@ function pitchSurfaceExtent(pitch: PitchConfig) {
 }
 
 /**
- * Square site ground of `size` m with the pitch (or the whole track) cut out, so the site never
- * covers the turf. UVs are normalized over the square: u runs with +x, v against +z.
+ * Site ground of `width` × `depth` m with the pitch (or the whole track) cut out, so the site
+ * never covers the turf. UVs are normalized over the rectangle: u runs with +x, v against +z.
  */
-export function createSiteGroundGeometry(rawPitch: PitchConfig, size: number): THREE.ShapeGeometry {
+export function createSiteGroundGeometry(rawPitch: PitchConfig, width: number, depth: number): THREE.ShapeGeometry {
   const pitch = clampPitchToTrack(rawPitch);
   const { track, totalLength, totalWidth } = pitchSurfaceExtent(pitch);
   return track
-    ? createHollowStadiumFrameGeometry(size, size, track.straightHalfLength, track.outerRadius - 0.15, 'normalized')
-    : createHollowHorizontalFrameGeometry(size, size, totalLength - 0.24, totalWidth - 0.24, 'normalized');
+    ? createHollowStadiumFrameGeometry(width, depth, track.straightHalfLength, track.outerRadius - 0.15, 'normalized')
+    : createHollowHorizontalFrameGeometry(width, depth, totalLength - 0.24, totalWidth - 0.24, 'normalized');
 }
 
 export function generatePitchGroup(

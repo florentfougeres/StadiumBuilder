@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { FacadePatternId } from './schema';
+import { EnvelopeStyle, FacadePatternId } from './schema';
 
 export interface FacadeRailSample {
   /** World or local X coordinate on the exterior facade surface */
@@ -139,6 +139,133 @@ export function buildCurtainWallArticulation(params: {
     inst.castShadow = true;
     inst.receiveShadow = true;
     group.add(inst);
+  }
+  return group.children.length > 0 ? group : null;
+}
+
+/** Instanced unit boxes from a list of transforms, or null when the list is empty. */
+function instancedBoxes(name: string, list: THREE.Matrix4[], mat: THREE.Material): THREE.InstancedMesh | null {
+  if (list.length === 0) return null;
+  const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, list.length);
+  inst.name = name;
+  list.forEach((m, i) => inst.setMatrixAt(i, m));
+  inst.instanceMatrix.needsUpdate = true;
+  inst.computeBoundingSphere();
+  inst.castShadow = true;
+  inst.receiveShadow = true;
+  return inst;
+}
+
+/** Unit box stretched from `a` to `b` with a square section `size`. */
+function strutMatrix(a: THREE.Vector3, b: THREE.Vector3, size: number): THREE.Matrix4 {
+  const dir = new THREE.Vector3().subVectors(b, a);
+  const len = dir.length();
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  return new THREE.Matrix4().compose(
+    new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5),
+    q,
+    new THREE.Vector3(size, len, size)
+  );
+}
+
+/**
+ * Envelope style applied in front of a facade rail (the outer concourse wall, or the band
+ * between it and the roof), so the chosen envelope stays visible when a concourse wraps the
+ * stands:
+ * - `enveloping_skin`: the curtain-wall articulation;
+ * - `louver_curtain`: horizontal brise-soleil blades hung on slim vertical hangers;
+ * - `colonnade_forest`: two staggered rows of slender full-height columns;
+ * - `exposed_structure`: deep columns with crossed diagonal bracing between them.
+ */
+export function buildEnvelopeDressing(params: {
+  samples: FacadeRailSample[];
+  closed: boolean;
+  style: EnvelopeStyle;
+  frameMat: THREE.Material;
+  storeys?: boolean;
+}): THREE.Group | null {
+  const { samples, closed, style, frameMat, storeys = true } = params;
+  if (style === 'enveloping_skin') {
+    return buildCurtainWallArticulation({ samples, closed, frameMat, storeys });
+  }
+  const rail = createRailSampler(samples, closed);
+  if (!rail) return null;
+  const { totalLen, sampleAtArc } = rail;
+  const dummy = new THREE.Object3D();
+  const place = (pt: FacadeRailSample, out: number, y: number, sx: number, sy: number, sz: number) => {
+    dummy.position.set(pt.x + pt.nx * out, y, pt.z + pt.nz * out);
+    dummy.rotation.set(0, Math.atan2(pt.nx, pt.nz), 0);
+    dummy.scale.set(sx, sy, sz);
+    dummy.updateMatrix();
+    return dummy.matrix.clone();
+  };
+  const at = (pt: FacadeRailSample, out: number, y: number) =>
+    new THREE.Vector3(pt.x + pt.nx * out, y, pt.z + pt.nz * out);
+
+  const primary: THREE.Matrix4[] = [];
+  const secondary: THREE.Matrix4[] = [];
+
+  if (style === 'louver_curtain') {
+    const module = 3;
+    const count = Math.max(4, Math.round(totalLen / module));
+    const step = totalLen / count;
+    for (let i = 0; i < count; i++) {
+      const pt = sampleAtArc(closed ? i * step : (i + 0.5) * step);
+      const h = pt.yTop - pt.yBottom;
+      if (h < 0.8) continue;
+      secondary.push(place(pt, 1.1, pt.yBottom + h / 2, 0.08, h, 0.6));
+      for (let y = pt.yBottom + 0.55; y < pt.yTop - 0.2; y += 0.85) {
+        dummy.position.set(pt.x + pt.nx * 1.1, y, pt.z + pt.nz * 1.1);
+        dummy.rotation.set(-0.35, Math.atan2(pt.nx, pt.nz), 0, 'YXZ');
+        dummy.scale.set(step * 1.01, 0.05, 0.75);
+        dummy.updateMatrix();
+        primary.push(dummy.matrix.clone());
+      }
+    }
+  } else if (style === 'colonnade_forest') {
+    const spacing = 2.4;
+    const count = Math.max(4, Math.round(totalLen / spacing));
+    const step = totalLen / count;
+    for (let i = 0; i < count; i++) {
+      for (const [out, shift] of [
+        [1.8, 0],
+        [3.6, 0.5],
+      ] as const) {
+        const pt = sampleAtArc(((closed ? i : i + 0.5) + shift) * step);
+        const h = pt.yTop - pt.yBottom;
+        if (h < 0.8) continue;
+        primary.push(place(pt, out, pt.yBottom + h / 2, 0.36, h, 0.36));
+      }
+    }
+  } else {
+    const spacing = 9;
+    const count = Math.max(4, Math.round(totalLen / spacing));
+    const step = totalLen / count;
+    for (let i = 0; i < count; i++) {
+      const s = closed ? i * step : (i + 0.5) * step;
+      const pt = sampleAtArc(s);
+      const h = pt.yTop - pt.yBottom;
+      if (h < 0.8) continue;
+      primary.push(place(pt, 0.9, pt.yBottom + h / 2, 0.7, h, 1.1));
+      if (!closed && i === count - 1) continue;
+      const next = sampleAtArc(closed ? ((i + 1) % count) * step : s + step);
+      if (next.yTop - next.yBottom < 0.8) continue;
+      secondary.push(
+        strutMatrix(at(pt, 0.9, pt.yBottom), at(next, 0.9, next.yTop), 0.32),
+        strutMatrix(at(pt, 0.9, pt.yTop), at(next, 0.9, next.yBottom), 0.32),
+        // Ring beam along the top of the bay.
+        strutMatrix(at(pt, 0.9, pt.yTop - 0.2), at(next, 0.9, next.yTop - 0.2), 0.45)
+      );
+    }
+  }
+
+  const group = new THREE.Group();
+  group.name = 'EnvelopeDressing';
+  for (const mesh of [
+    instancedBoxes('EnvelopePrimary', primary, frameMat),
+    instancedBoxes('EnvelopeSecondary', secondary, frameMat),
+  ]) {
+    if (mesh) group.add(mesh);
   }
   return group.children.length > 0 ? group : null;
 }

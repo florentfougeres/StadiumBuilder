@@ -1562,6 +1562,7 @@ const MaterialsInspector: React.FC = () => {
 };
 
 export const SITE_OPTIONS: { id: SiteSetting; label: string; detail: string }[] = [
+  { id: 'none', label: 'Aucun', detail: 'Sol d’origine, sans décor urbain ni paysager autour du stade' },
   { id: 'urban', label: 'Quartier urbain', detail: 'Îlots d’immeubles à toits de tuiles, rues arborées et boulevard circulaire' },
   { id: 'esplanade', label: 'Esplanade', detail: 'Grand parvis minéral planté, allées axiales et pelouses' },
   { id: 'park', label: 'Parc arboré', detail: 'Bosquets, chemins sinueux, étang et promenade sous les arbres' },

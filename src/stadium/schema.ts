@@ -251,7 +251,13 @@ export type FacadeMaterialId =
   | 'weathered_corten'
   | 'heritage_brick'
   | 'limestone_travertine'
-  | 'timber_diagrid';
+  | 'timber_diagrid'
+  | 'terracotta_baguettes'
+  | 'gold_anodized_panels'
+  | 'white_composite_panels'
+  | 'perforated_red_metal'
+  | 'black_zinc_cladding'
+  | 'living_green_wall';
 
 export type RoofMaterialId =
   | 'ptfe_membrane'
@@ -259,14 +265,26 @@ export type RoofMaterialId =
   | 'polycarbonate_glass'
   | 'standing_seam_zinc'
   | 'titanium_scales'
-  | 'glulam_acoustic_deck';
+  | 'glulam_acoustic_deck'
+  | 'anthracite_pvc_membrane'
+  | 'copper_verdigris'
+  | 'red_steel_deck'
+  | 'blue_steel_deck'
+  | 'solar_pv_panels'
+  | 'perforated_aluminium';
 
 export type StructureMaterialId =
   | 'white_steel'
   | 'anthracite_steel'
   | 'galvanized_steel'
   | 'glulam_timber'
-  | 'corten_structure';
+  | 'corten_structure'
+  | 'stainless_steel'
+  | 'bronze_steel'
+  | 'red_lacquer_steel'
+  | 'navy_lacquer_steel'
+  | 'forest_green_steel'
+  | 'reinforced_concrete';
 
 export type SeatMaterialId =
   | 'molded_poly_mosaic'
@@ -352,7 +370,7 @@ export interface ConcourseConfig {
 }
 
 /** Character of the land around the stadium (see generateSite). */
-export type SiteSetting = 'urban' | 'esplanade' | 'park' | 'parking';
+export type SiteSetting = 'none' | 'urban' | 'esplanade' | 'park' | 'parking';
 
 export interface SiteConfig {
   setting: SiteSetting;

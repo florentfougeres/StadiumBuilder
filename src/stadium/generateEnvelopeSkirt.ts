@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { getBowlArcRange, sampleRoundedBowlRing } from './bowlRing';
 import { computeStadiumRingBounds } from './generateRoof';
-import { createStructurePbrMaterial, resolveStadiumMaterials } from './materials';
+import { createFacadePbrMaterial, createStructurePbrMaterial, resolveStadiumMaterials } from './materials';
 import {
   BOWL_CURTAIN_WALL_OFFSET,
-  buildCurtainWallArticulation,
+  buildEnvelopeDressing,
+  buildParametricFacadeOnRail,
   FacadeRailSample,
 } from './parametricFacade';
 import { isContinuousBowlShape, StadiumDocument, StandSide } from './schema';
@@ -114,22 +115,24 @@ export function generateEnvelopeSkirt(
   if (run.length > 0) runs.push(run);
   const loop = unbroken && runs.length === 1;
 
-  const screenMat = new THREE.MeshStandardMaterial({
-    color: 0xd9dee5,
-    roughness: 0.5,
-    metalness: 0.55,
-    side: THREE.DoubleSide,
-  });
+  // The band continues the facade up to the roof, in the same cladding and envelope.
+  const screenMat = createFacadePbrMaterial(mats.facade, doc.lighting, false, maxAnisotropy);
+  const facadePattern = mats.facadePattern ?? 'none';
   const finMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
 
   for (const rail of runs) {
     if (rail.length < 2) continue;
     // Screen panel set just behind the fins.
     const pos: number[] = [];
+    const uv: number[] = [];
     const idx: number[] = [];
-    for (const p of rail) {
+    let run = 0;
+    rail.forEach((p, i) => {
+      if (i > 0) run += Math.hypot(p.x - rail[i - 1].x, p.z - rail[i - 1].z);
       pos.push(p.x, p.yBottom, p.z, p.x, p.yTop + 0.3, p.z);
-    }
+      // Same scale as the concourse facade (12 m per tile), continuing its storeys upward.
+      uv.push(run / 12, p.yBottom / 12, run / 12, (p.yTop + 0.3) / 12);
+    });
     const segs = loop ? rail.length : rail.length - 1;
     for (let i = 0; i < segs; i++) {
       const a = i * 2;
@@ -138,6 +141,7 @@ export function generateEnvelopeSkirt(
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     geo.setIndex(idx);
     geo.computeVertexNormals();
     const panel = new THREE.Mesh(geo, screenMat);
@@ -145,13 +149,26 @@ export function generateEnvelopeSkirt(
     panel.receiveShadow = true;
     group.add(panel);
 
-    const fins = buildCurtainWallArticulation({
-      samples: rail,
-      closed: loop,
-      frameMat: finMat,
-      storeys: false,
-    });
-    if (fins) group.add(fins);
+    const dressing =
+      facadePattern === 'none'
+        ? buildEnvelopeDressing({
+            samples: rail,
+            closed: loop,
+            style: mats.envelopeStyle ?? 'enveloping_skin',
+            frameMat: finMat,
+            storeys: false,
+          })
+        : buildParametricFacadeOnRail({
+            samples: rail,
+            closed: loop,
+            pattern: facadePattern,
+            density: mats.facadeDensity ?? 1.0,
+            depth: mats.facadeDepth ?? 0.85,
+            primaryMat: screenMat,
+            accentMat: finMat,
+            name: 'SkirtParametricFacade',
+          });
+    if (dressing) group.add(dressing);
   }
   return group;
 }
