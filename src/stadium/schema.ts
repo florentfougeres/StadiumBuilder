@@ -41,7 +41,15 @@ export type RoofStyle =
   | 'timber_lattice'
   | 'wave_canopy'
   | 'petal_iris'
-  | 'historic_gable';
+  | 'historic_gable'
+  | 'girder_grid'
+  | 'saddle_vault'
+  | 'dished_canopy'
+  | 'faceted_shell'
+  | 'pleated_crown'
+  | 'saucer_dome'
+  | 'rising_canopy'
+  | 'crossed_arches';
 
 /**
  * Silhouette of a continuous bowl's outer skin: upright, bulging out at mid-height (a calabash),

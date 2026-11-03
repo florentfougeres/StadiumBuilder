@@ -221,6 +221,14 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
       'wave_canopy',
       'historic_gable',
       'fixed_dome',
+      'girder_grid',
+      'saddle_vault',
+      'dished_canopy',
+      'faceted_shell',
+      'pleated_crown',
+      'saucer_dome',
+      'rising_canopy',
+      'crossed_arches',
     ];
 
     for (const style of styles) {

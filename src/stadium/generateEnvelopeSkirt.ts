@@ -26,6 +26,8 @@ function hasNoRoof(doc: StadiumDocument): boolean {
 /** Gaps smaller than this are left open (m); the cap stops rays from catching distant roofs. */
 const MIN_SKIRT = 1;
 const MAX_SKIRT = 60;
+/** Inward distances (m) from the facade line at which the roof underside is looked for. */
+const ROOF_EDGE_PROBES = [0, 1.5, 3];
 const CANOPY_NAMES = new Set(['RoofCanopySurface', 'RetractableRoofLeaf']);
 
 /**
@@ -49,10 +51,18 @@ export function generateEnvelopeSkirt(
   // Bowls carry a curtain wall set slightly proud of the stand backs (see generateStand).
   const facadeOffset = isContinuousBowlShape(doc.shape) ? BOWL_CURTAIN_WALL_OFFSET : 0.3;
 
-  const { ring, innerHalfX, innerHalfZ, standDepthAtNormal, standHeightAtNormal } =
-    computeStadiumRingBounds(doc);
+  const {
+    ring,
+    innerHalfX,
+    innerHalfZ,
+    overConcourse,
+    standDepthAtNormal,
+    standHeightAtNormal,
+    standShiftAtNormal,
+  } = computeStadiumRingBounds(doc);
   const concourseWidth = doc.concourse?.width ?? 0;
-  const hasConcourse = concourseWidth > 0.5;
+  // A roof stopping at the stand backs is closed there, from the crest up, not at the concourse.
+  const hasConcourse = concourseWidth > 0.5 && overConcourse;
   const concourseRatio = Math.min(1, Math.max(0.15, doc.concourse?.heightRatio ?? 0.5));
   const covered = doc.roof.coveredSides;
   const sideAt = (x: number, z: number): StandSide =>
@@ -92,16 +102,23 @@ export function generateEnvelopeSkirt(
     const n = sampleRoundedBowlRing(ring, t, 0);
     const depth = standDepthAtNormal(n.nx, n.nz);
     const standTop = standHeightAtNormal(n.nx, n.nz);
-    const offset = hasConcourse ? depth + concourseWidth : depth + facadeOffset;
+    const offset =
+      standShiftAtNormal(n.nx, n.nz) + (hasConcourse ? depth + concourseWidth : depth + facadeOffset);
     const baseY = hasConcourse ? Math.max(4.5, standTop * concourseRatio) : standTop;
     const p = sampleRoundedBowlRing(ring, t, offset);
 
     let topY: number | null = null;
     if (!covered || covered.includes(sideAt(p.x, p.z))) {
-      origin.set(p.x, baseY + 0.2, p.z);
-      raycaster.set(origin, up);
-      const hit = raycaster.intersectObject(roofGroup, true).find((h) => isCanopy(h.object));
-      if (hit && hit.distance > MIN_SKIRT) topY = hit.point.y;
+      // The roof edge may stop just short of the facade line: probe a little inward too.
+      for (const inset of ROOF_EDGE_PROBES) {
+        origin.set(p.x - p.nx * inset, baseY + 0.2, p.z - p.nz * inset);
+        raycaster.set(origin, up);
+        const hit = raycaster.intersectObject(roofGroup, true).find((h) => isCanopy(h.object));
+        if (hit && hit.distance > MIN_SKIRT) {
+          topY = hit.point.y;
+          break;
+        }
+      }
     }
 
     if (topY === null) {

@@ -523,6 +523,16 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 10).toFixed(1))
       : doc.roof.style === 'corner_pylons'
       ? Number(resolveCornerPylonFrame(doc.roof, maxStandHeight).pylonTopY.toFixed(1))
+      : doc.roof.style === 'crossed_arches'
+      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 21).toFixed(1))
+      : doc.roof.style === 'saddle_vault'
+      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 14).toFixed(1))
+      : doc.roof.style === 'rising_canopy' || doc.roof.style === 'dished_canopy'
+      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 8).toFixed(1))
+      : doc.roof.style === 'saucer_dome' || doc.roof.style === 'girder_grid'
+      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 7.5).toFixed(1))
+      : doc.roof.style === 'faceted_shell'
+      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 4.5).toFixed(1))
       : doc.roof.style === 'twin_arch'
       ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 29).toFixed(1))
       : Number((maxStandHeight + doc.roof.heightOffset).toFixed(1));
@@ -636,6 +646,22 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       break;
     case 'wave_canopy':
       baseCostPerSeat += 1320 * doc.roof.coverageRatio;
+      break;
+    case 'dished_canopy':
+    case 'rising_canopy':
+      baseCostPerSeat += 980 * doc.roof.coverageRatio;
+      break;
+    case 'pleated_crown':
+    case 'faceted_shell':
+      baseCostPerSeat += 1240 * doc.roof.coverageRatio;
+      break;
+    case 'saucer_dome':
+    case 'saddle_vault':
+      baseCostPerSeat += 1380 * doc.roof.coverageRatio;
+      break;
+    case 'girder_grid':
+    case 'crossed_arches':
+      baseCostPerSeat += 1300 * doc.roof.coverageRatio;
       break;
     case 'historic_gable':
       baseCostPerSeat += 520 * doc.roof.coverageRatio;

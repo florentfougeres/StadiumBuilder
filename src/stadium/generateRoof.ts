@@ -176,6 +176,21 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     return (wE * dE + wW * dW + wS * dS + wN * dN) / sum;
   };
 
+  // Separate stands sit at their own distance from the pitch, while the ring uses the mean per
+  // axis: this is how far a stand's front (and back) is pushed out from the ring.
+  const separateStands = !isContinuousBowlShape(doc.shape);
+  const standShiftAtNormal = (nx: number, nz: number): number => {
+    if (!separateStands) return 0;
+    const wE = Math.pow(Math.max(0, nx), 2.2);
+    const wW = Math.pow(Math.max(0, -nx), 2.2);
+    const wS = Math.pow(Math.max(0, nz), 2.2);
+    const wN = Math.pow(Math.max(0, -nz), 2.2);
+    const sum = wE + wW + wS + wN || 1;
+    const halfX = (doc.stands.east.distanceToPitch - doc.stands.west.distanceToPitch) / 2;
+    const halfZ = (doc.stands.south.distanceToPitch - doc.stands.north.distanceToPitch) / 2;
+    return (wE * halfX - wW * halfX + wS * halfZ - wN * halfZ) / sum;
+  };
+
   const concourseWidth = Math.max(0, doc.concourse?.width ?? 0);
   const hasConcourse = concourseWidth > 0.5;
   const overConcourse = doc.roof.overConcourse !== false;
@@ -243,6 +258,7 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     exteriorSupportMinOffsetAt,
     standHeightAtNormal,
     standDepthAtNormal,
+    standShiftAtNormal,
     trackOffsets,
     standsMetrics: {
       south: southMetrics,
@@ -3568,6 +3584,518 @@ function buildSingleStandRoofGroup(
  * geometry) clipped to its sector, bounded by vertical planes through the stadium diagonals.
  * Needs `renderer.localClippingEnabled`.
  */
+/** Cross-section of a ring loft at ring position `t`: points as (radial offset, height). */
+type RingProfile = (t: number, nx: number, nz: number, s: number) => { r: number; y: number }[];
+
+/**
+ * Surface swept around the bowl through a cross-section that may vary with `t`. With
+ * `flat`, every triangle keeps its own normal, which reads as folded or faceted panels.
+ */
+function buildRingLoft(
+  ring: ReturnType<typeof buildShapeBowlRing>,
+  shape: StadiumShape,
+  crossSectionClip: boolean,
+  segments: number,
+  profile: RingProfile,
+  mat: THREE.Material,
+  name: string,
+  flat: boolean = false
+): THREE.Mesh {
+  const { tStart, tEnd, closed } = getBowlArcRange(shape, crossSectionClip);
+  const segs = Math.max(8, Math.round(segments * Math.max(0.25, tEnd - tStart)));
+  const count = closed ? segs : segs + 1;
+  const pos: number[] = [];
+  const uv: number[] = [];
+  let cols = 0;
+  for (let s = 0; s < count; s++) {
+    const t = tStart + (s / segs) * (tEnd - tStart);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const pts = profile(t, n.nx, n.nz, s);
+    cols = pts.length;
+    pts.forEach((pt, k) => {
+      const p = sampleRoundedBowlRing(ring, t, pt.r);
+      pos.push(p.x, pt.y, p.z);
+      uv.push((s / segs) * 24, k / Math.max(1, pts.length - 1));
+    });
+  }
+  const idx: number[] = [];
+  for (let s = 0; s < segs; s++) {
+    const a0 = s * cols;
+    const b0 = ((s + 1) % count) * cols;
+    for (let k = 0; k < cols - 1; k++) {
+      idx.push(a0 + k, b0 + k, a0 + k + 1, b0 + k, b0 + k + 1, a0 + k + 1);
+    }
+  }
+  let geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  if (flat) geo = geo.toNonIndexed();
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = name;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+/** Share of a ring normal pointing at a corner: 0 on the axes, 1 on the diagonals. */
+const cornerWeight = (nx: number, nz: number) => Math.min(1, 2 * Math.abs(nx * nz));
+
+/** Extra eave height (m) of a `saddle_vault` along the touchlines over the goal ends. */
+const SADDLE_RISE = 9;
+
+/**
+ * SADDLE VAULT (`saddle_vault`): one translucent shell rising from the ground in a curved
+ * facade and vaulting over the stands, higher along the touchlines than behind the goals, so
+ * the roof line dips like a saddle (Panathinaikos project, Stade Vélodrome).
+ */
+function buildSaddleVaultRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const group = new THREE.Group();
+  const mats = resolveStadiumMaterials(doc);
+  const { ring, maxStandH, avgDepth, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
+  const { surfaceMat, shadowDepthMat } = buildCanopyMaterialBundle(doc, maxAnisotropy, 24, 6, 1);
+  const roofY = maxStandH + Math.max(4, doc.roof.heightOffset);
+  const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
+  const shell: RingProfile = (_t, nx, nz) => {
+    const outer = canopyOuterOffsetAt(nx, nz, 3.8) + 2;
+    const eaveY = roofY + 2 + SADDLE_RISE * nz * nz;
+    const pts: { r: number; y: number }[] = [];
+    // Quarter-ellipse facade from the ground, leaning out, up to the eave.
+    for (let k = 0; k <= 6; k++) {
+      const a = (k / 6) * (Math.PI / 2);
+      pts.push({ r: outer - 6 + 6 * Math.cos(a), y: eaveY * Math.sin(a) });
+    }
+    // Vault over the stands, falling gently to a thin lip at the front edge.
+    for (let k = 1; k <= 8; k++) {
+      const f = k / 8;
+      pts.push({
+        r: outer - 6 + (innerOffset - (outer - 6)) * f,
+        y: eaveY + 3 * Math.sin(Math.PI * f * 0.8) - 2.5 * f * f,
+      });
+    }
+    return pts;
+  };
+  const skin = buildRingLoft(ring, doc.shape, crossSectionClip, 192, shell, surfaceMat, 'RoofCanopySurface');
+  skin.customDepthMaterial = shadowDepthMat;
+  skin.renderOrder = 2;
+  group.add(skin);
+
+  // Meridian ribs following the shell, and a ring beam along the front lip.
+  const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
+  const ribs = Math.max(16, Math.round(72 * Math.max(0.25, tEnd - tStart)));
+  const parts: THREE.BufferGeometry[] = [];
+  const lip: THREE.Vector3[] = [];
+  for (let i = 0; i < (closed ? ribs : ribs + 1); i++) {
+    const t = tStart + (i / ribs) * (tEnd - tStart);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const pts = shell(t, n.nx, n.nz, i).map((pt) => {
+      const p = sampleRoundedBowlRing(ring, t, pt.r);
+      return new THREE.Vector3(p.x, pt.y - 0.25, p.z);
+    });
+    for (let k = 0; k < pts.length - 1; k++) parts.push(beamGeometry(pts[k], pts[k + 1], 0.35, 0.5));
+    lip.push(pts[pts.length - 1]);
+  }
+  for (let i = 0; i < lip.length - (closed ? 0 : 1); i++) {
+    parts.push(beamGeometry(lip[i], lip[(i + 1) % lip.length], 0.9, 1.2));
+  }
+  const frame = mergedMesh(parts, createStructurePbrMaterial(mats.structure, maxAnisotropy), 'SaddleVaultRibs');
+  if (frame) group.add(frame);
+  return group;
+}
+
+/**
+ * DISHED CANOPY (`dished_canopy`): a concave canopy, raised at both its front and rear edges and
+ * sagging between them, whose eaves flare up at the corners, finished with a deep fascia (new
+ * Romareda).
+ */
+function buildDishedCanopyRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const { ring } = computeStadiumRingBounds(doc);
+  const flareAt = (t: number) => {
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    return 2 + 6 * cornerWeight(n.nx, n.nz) ** 2;
+  };
+  const { group, outerOffsetFn, primaryStructMat, surface } = buildPerimeterCanopyCrown(
+    doc,
+    crossSectionClip,
+    maxAnisotropy,
+    {
+      segments: 192,
+      surface:
+        ({ roofY }) =>
+        (t, f) =>
+          roofY + 2.2 * (1 - f) - 2.4 * Math.sin(Math.PI * f) + flareAt(t) * f ** 3,
+    }
+  );
+  // Deep fascia hanging from the eave.
+  const fascia = buildRingLoft(
+    ring,
+    doc.shape,
+    crossSectionClip,
+    192,
+    (t, nx, nz) => {
+      const r = outerOffsetFn(nx, nz);
+      const top = surface(t, 1) + 0.3;
+      return [
+        { r, y: top - 3.2 },
+        { r: r + 0.4, y: top - 1.6 },
+        { r: r + 0.4, y: top },
+      ];
+    },
+    primaryStructMat,
+    'DishedCanopyFascia'
+  );
+  group.add(fascia);
+  return group;
+}
+
+/**
+ * FACETED SHELL (`faceted_shell`): roof and facade wrapped in one angular metal shell of
+ * triangular facets that alternately bulge and recede around the stadium (Aspmyra project).
+ */
+function buildFacetedShellRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const group = new THREE.Group();
+  const { ring, maxStandH, avgDepth, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
+  const roofY = maxStandH + Math.max(4, doc.roof.heightOffset);
+  const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
+  // An even number of facets so the alternation closes around the bowl.
+  const facets = 2 * Math.max(6, Math.round(ring.perimeter / 70));
+  const shell: RingProfile = (_t, nx, nz, s) => {
+    const odd = s % 2 === 1;
+    const outer = canopyOuterOffsetAt(nx, nz, 3.8);
+    return [
+      { r: outer + (odd ? 8 : 4.5), y: 0 },
+      { r: outer + (odd ? 4.5 : 9), y: roofY * 0.55 },
+      { r: outer - 1, y: roofY + 2 + (odd ? 2.5 : 0) },
+      { r: innerOffset, y: roofY + 1 + (odd ? 0 : 2) },
+    ];
+  };
+  const metal = createFacadePbrMaterial('black_zinc_cladding', doc.lighting, false, maxAnisotropy);
+  const mesh = buildRingLoft(ring, doc.shape, crossSectionClip, facets, shell, metal, 'RoofCanopySurface', true);
+  group.add(mesh);
+
+  // Seams along every facet edge.
+  const pos = mesh.geometry.getAttribute('position');
+  const parts: THREE.BufferGeometry[] = [];
+  const v = (i: number) => new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
+  for (let i = 0; i < pos.count; i += 3) {
+    parts.push(beamGeometry(v(i), v(i + 1), 0.18, 0.18), beamGeometry(v(i + 1), v(i + 2), 0.18, 0.18));
+  }
+  const seams = mergedMesh(
+    parts,
+    createStructurePbrMaterial('galvanized_steel', maxAnisotropy),
+    'FacetedShellSeams'
+  );
+  if (seams) group.add(seams);
+  return group;
+}
+
+/** Radial depth (m) of a `pleated_crown` fold. */
+const PLEAT_DEPTH = 2.6;
+
+/**
+ * PLEATED CROWN (`pleated_crown`): a glazed ring roof framed by a metal facade folded into tall
+ * diamond pleats that run from the ground to the roof edge (Generali Stadium project).
+ */
+function buildPleatedCrownRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const { group, bounds, outerOffsetFn, surface } = buildPerimeterCanopyCrown(
+    doc,
+    crossSectionClip,
+    maxAnisotropy,
+    { segments: 160, surface: ({ roofY }) => (_t, f) => roofY + 0.8 * (1 - f) },
+    false
+  );
+  const pleats = 2 * Math.max(24, Math.round(bounds.ring.perimeter / 14));
+  const pleat: RingProfile = (t, nx, nz, s) => {
+    const base = outerOffsetFn(nx, nz) + 1;
+    const out = s % 2 === 0 ? PLEAT_DEPTH : 0;
+    const top = surface(t, 1) + 1.2;
+    return [
+      { r: base + out, y: 0 },
+      { r: base + PLEAT_DEPTH - out, y: top / 2 },
+      { r: base + out, y: top },
+      { r: base - 1, y: top },
+    ];
+  };
+  group.add(
+    buildRingLoft(
+      bounds.ring,
+      doc.shape,
+      crossSectionClip,
+      pleats,
+      pleat,
+      createFacadePbrMaterial('brushed_steel_mesh', doc.lighting, false, maxAnisotropy),
+      'PleatedCrownFacade',
+      true
+    )
+  );
+  return group;
+}
+
+/** Rise (m) of a `saucer_dome` from its rim to its front edge. */
+const SAUCER_CROWN = 6;
+
+/**
+ * SAUCER DOME (`saucer_dome`): a thick convex roof, highest at its front edge and rolling over a
+ * rounded rim, carried on a ring of inclined V-columns standing outside the facade (new Roma
+ * stadium project).
+ */
+function buildSaucerDomeRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const group = new THREE.Group();
+  const mats = resolveStadiumMaterials(doc);
+  const { ring, maxStandH, avgDepth, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
+  const { surfaceMat, shadowDepthMat } = buildCanopyMaterialBundle(doc, maxAnisotropy, 24, 4, 1);
+  const roofY = maxStandH + Math.max(4, doc.roof.heightOffset);
+  const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
+  const rimAt = (nx: number, nz: number) => canopyOuterOffsetAt(nx, nz, 3.8) + 3;
+  const saucer: RingProfile = (_t, nx, nz) => {
+    const rim = rimAt(nx, nz);
+    const pts: { r: number; y: number }[] = [];
+    for (let k = 0; k <= 8; k++) {
+      const f = k / 8;
+      pts.push({ r: innerOffset + (rim - innerOffset) * f, y: roofY + 1.5 + SAUCER_CROWN * (1 - f * f) });
+    }
+    // Rounded rim rolling under to the soffit.
+    pts.push({ r: rim + 1.6, y: roofY + 0.4 }, { r: rim + 1.2, y: roofY - 1.6 }, { r: rim - 1, y: roofY - 2.4 });
+    return pts;
+  };
+  const shell = buildRingLoft(ring, doc.shape, crossSectionClip, 192, saucer, surfaceMat, 'RoofCanopySurface');
+  shell.customDepthMaterial = shadowDepthMat;
+  shell.renderOrder = 2;
+  group.add(shell);
+
+  // Inclined V-columns: pairs springing from one foot outside the facade up to the soffit.
+  const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
+  const fullBays = Math.max(12, Math.round(ring.perimeter / 11));
+  const bays = Math.max(4, Math.round(fullBays * Math.max(0.25, tEnd - tStart)));
+  const dt = 0.5 / fullBays;
+  const parts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < bays; i++) {
+    const t = tStart + ((closed ? i : i + 0.5) / bays) * (tEnd - tStart);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const foot = sampleRoundedBowlRing(ring, t, rimAt(n.nx, n.nz) + 4);
+    const base = new THREE.Vector3(foot.x, 0, foot.z);
+    for (const side of [-1, 1]) {
+      const tt = t + side * dt;
+      const m = sampleRoundedBowlRing(ring, tt, 0);
+      const head = sampleRoundedBowlRing(ring, tt, rimAt(m.nx, m.nz) - 0.5);
+      parts.push(beamGeometry(base, new THREE.Vector3(head.x, roofY - 2.2, head.z), 0.8, 0.8));
+    }
+  }
+  const columns = mergedMesh(parts, createStructurePbrMaterial(mats.structure, maxAnisotropy), 'SaucerVColumns');
+  if (columns) group.add(columns);
+  return group;
+}
+
+/** Height (m) the `rising_canopy` gains from its eave to its front edge. */
+const RISING_CANOPY_RISE = 8;
+
+/**
+ * RISING CANOPY (`rising_canopy`): a canopy climbing steadily from the eave toward the pitch, its
+ * high front edge stiffened by a lattice compression ring around the opening (new Jan Breydel
+ * project).
+ */
+function buildRisingCanopyRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const { group, bounds, innerOffset, primaryStructMat, surface } = buildPerimeterCanopyCrown(
+    doc,
+    crossSectionClip,
+    maxAnisotropy,
+    {
+      segments: 160,
+      surface:
+        ({ roofY }) =>
+        (_t, f) =>
+          roofY + RISING_CANOPY_RISE * (1 - f) ** 1.3,
+    }
+  );
+  const { ring } = bounds;
+  const { tStart, tEnd } = getBowlArcRange(doc.shape, crossSectionClip);
+  const nodes = Math.max(24, Math.round((ring.perimeter / 6) * Math.max(0.25, tEnd - tStart)));
+  const at = (i: number, r: number, dy: number) => {
+    const t = tStart + (i / nodes) * (tEnd - tStart);
+    const p = sampleRoundedBowlRing(ring, t, innerOffset + r);
+    return new THREE.Vector3(p.x, surface(t, 0) + dy, p.z);
+  };
+  // Triangular lattice ring: two bottom chords and a top chord, braced by diagonals.
+  const parts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < nodes; i++) {
+    const j = i + 1;
+    parts.push(
+      beamGeometry(at(i, 0.3, 0), at(j, 0.3, 0), 0.5, 0.5),
+      beamGeometry(at(i, 3.5, -0.6), at(j, 3.5, -0.6), 0.5, 0.5),
+      beamGeometry(at(i, 1.8, 3), at(j, 1.8, 3), 0.6, 0.6),
+      beamGeometry(at(i, 0.3, 0), at(j, 1.8, 3), 0.25, 0.25),
+      beamGeometry(at(i, 3.5, -0.6), at(j, 1.8, 3), 0.25, 0.25),
+      beamGeometry(at(i, 0.3, 0), at(i, 3.5, -0.6), 0.25, 0.25)
+    );
+  }
+  const truss = mergedMesh(parts, primaryStructMat, 'RisingCanopyCompressionRing');
+  if (truss) group.add(truss);
+  return group;
+}
+
+/**
+ * GIRDER GRID (`girder_grid`): two primary trusses along the touchlines and two behind the goals
+ * cross over the canopy's front edge in a « # », resting on cores beyond the corners; secondary
+ * trusses run from them out to the eaves, so the roof is carried both ways (Emirates Stadium).
+ */
+function buildGirderGridRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const { group, bounds, roofY, innerOffset, primaryStructMat } = buildPerimeterCanopyCrown(
+    doc,
+    crossSectionClip,
+    maxAnisotropy
+  );
+  const { ring, innerHalfX, innerHalfZ, canopyOuterOffsetAt } = bounds;
+  const eave = Array.from({ length: 128 }, (_, s) => {
+    const n = sampleRoundedBowlRing(ring, s / 128, 0);
+    const p = sampleRoundedBowlRing(ring, s / 128, canopyOuterOffsetAt(n.nx, n.nz, 3.8));
+    return { x: p.x, z: p.z };
+  });
+  const lineX = innerHalfX + innerOffset + 1;
+  const lineZ = innerHalfZ + innerOffset + 1;
+  const springY = roofY + 2;
+  const steel: THREE.BufferGeometry[] = [];
+  const primary = (a: THREE.Vector3, b: THREE.Vector3) => {
+    steel.push(...warrenTrussParts(a, b, 5, Math.max(8, Math.round(a.distanceTo(b) / 6)), 1.2, 0.5));
+    for (const end of [a, b]) {
+      if (crossSectionClip && end.z > 0) continue;
+      steel.push(beamGeometry(new THREE.Vector3(end.x, 0, end.z), end, 3, 3));
+    }
+  };
+  // Primary girders overshoot the eave to cores beyond the corners.
+  const halfX = Math.max(...eave.map((p) => p.x)) + 4;
+  const halfZ = Math.max(...eave.map((p) => p.z)) + 4;
+  for (const z of crossSectionClip ? [-lineZ] : [-lineZ, lineZ]) {
+    primary(new THREE.Vector3(-halfX, springY, z), new THREE.Vector3(halfX, springY, z));
+  }
+  for (const x of [-lineX, lineX]) {
+    primary(new THREE.Vector3(x, springY, -halfZ), new THREE.Vector3(x, springY, crossSectionClip ? 0 : halfZ));
+  }
+  // Secondary trusses from the primaries out to the eaves, every 10 m.
+  const secondary = (axis: 'x' | 'z', along: number, from: number, sign: number) => {
+    const chord = chordAt(eave, axis, along);
+    if (!chord) return;
+    const to = sign > 0 ? chord[1] : chord[0];
+    if ((to - from) * sign < 3) return;
+    const a = axis === 'x' ? new THREE.Vector3(along, springY, from) : new THREE.Vector3(from, springY, along);
+    const b = axis === 'x' ? new THREE.Vector3(along, springY - 1.2, to) : new THREE.Vector3(to, springY - 1.2, along);
+    steel.push(...warrenTrussParts(a, b, 2.2, Math.max(3, Math.round(a.distanceTo(b) / 4)), 0.45, 0.22));
+  };
+  for (let x = -lineX + 8; x < lineX - 4; x += 10) {
+    secondary('x', x, -lineZ, -1);
+    if (!crossSectionClip) secondary('x', x, lineZ, 1);
+  }
+  for (let z = -lineZ + 8; z < (crossSectionClip ? 0 : lineZ - 4); z += 10) {
+    secondary('z', z, -lineX, -1);
+    secondary('z', z, lineX, 1);
+  }
+  const grid = mergedMesh(steel, primaryStructMat, 'GirderGridTrusses');
+  if (grid) group.add(grid);
+  return group;
+}
+
+/** Apex height (m) of the touchline arches of `crossed_arches` above the canopy. */
+const CROSSED_ARCH_RISE = 20;
+
+/**
+ * CROSSED ARCHES (`crossed_arches`): four tubular arches over the canopy, two along the
+ * touchlines and two behind the goals, crossing near the corners, with a zigzag of hangers down
+ * to the roof (Estádio da Luz).
+ */
+function buildCrossedArchesRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const { group, bounds, roofY, innerOffset } = buildPerimeterCanopyCrown(
+    doc,
+    crossSectionClip,
+    maxAnisotropy
+  );
+  const mats = resolveStadiumMaterials(doc);
+  const { innerHalfX, innerHalfZ, nominalOuterOffset } = bounds;
+  const outer = nominalOuterOffset(3.8);
+  const mid = (innerOffset + outer) / 2;
+  const deckY = roofY + 1;
+  const tubes: THREE.BufferGeometry[] = [];
+  const hangers: THREE.BufferGeometry[] = [];
+  // Parabolic arch along `axis` at `offset`, springing from the ground at `±foot`.
+  const arch = (axis: 'x' | 'z', offset: number, foot: number, apexY: number) => {
+    const end = axis === 'z' && crossSectionClip ? 0 : foot;
+    const at = (u: number) => {
+      const s = -foot + (foot + end) * u;
+      const y = apexY * (1 - (s / foot) ** 2);
+      return axis === 'x' ? new THREE.Vector3(s, y, offset) : new THREE.Vector3(offset, y, s);
+    };
+    const pts = Array.from({ length: 41 }, (_, k) => at(k / 40));
+    tubes.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 80, 1.1, 10, false));
+    // Zigzag hangers wherever the arch rides well above the deck.
+    for (let k = 1; k < 40; k++) {
+      const p = at(k / 40);
+      if (p.y < deckY + 3) continue;
+      const q = at((k + (k % 2 === 0 ? 1 : -1)) / 40);
+      hangers.push(
+        beamGeometry(p, new THREE.Vector3(p.x, deckY, p.z), 0.3, 0.3),
+        beamGeometry(p, new THREE.Vector3(q.x, deckY, q.z), 0.3, 0.3)
+      );
+    }
+  };
+  for (const sign of crossSectionClip ? [-1] : [-1, 1]) {
+    arch('x', sign * (innerHalfZ + mid), innerHalfX + outer + 8, roofY + CROSSED_ARCH_RISE);
+  }
+  for (const sign of [-1, 1]) {
+    arch('z', sign * (innerHalfX + mid), innerHalfZ + outer + 8, roofY + CROSSED_ARCH_RISE * 0.7);
+  }
+  const steelMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
+  const archMesh = mergedMesh(tubes, steelMat, 'CrossedArchTubes');
+  if (archMesh) group.add(archMesh);
+  const hangerMesh = mergedMesh(hangers, steelMat, 'CrossedArchHangers');
+  if (hangerMesh) group.add(hangerMesh);
+  return group;
+}
+
+/** Whole-arena roof systems built from the ring loft and perimeter crown helpers above. */
+const SIGNATURE_ROOF_BUILDERS: Partial<
+  Record<RoofStyle, (doc: StadiumDocument, crossSectionClip: boolean, maxAnisotropy: number) => THREE.Group>
+> = {
+  girder_grid: buildGirderGridRoof,
+  saddle_vault: buildSaddleVaultRoof,
+  dished_canopy: buildDishedCanopyRoof,
+  faceted_shell: buildFacetedShellRoof,
+  pleated_crown: buildPleatedCrownRoof,
+  saucer_dome: buildSaucerDomeRoof,
+  rising_canopy: buildRisingCanopyRoof,
+  crossed_arches: buildCrossedArchesRoof,
+};
+
 function clipRoofToSides(doc: StadiumDocument, roof: THREE.Group, sides: StandSide[]): THREE.Group {
   const { innerHalfX, innerHalfZ } = computeStadiumRingBounds(doc);
   const ax = 1 / innerHalfX;
@@ -3681,6 +4209,12 @@ function buildRoofAssembly(
 
     if (doc.roof.style === 'timber_lattice') {
       root.add(buildTimberLatticeRoof(doc, crossSectionClip, maxAnisotropy));
+      return root;
+    }
+
+    const signatureBuilder = SIGNATURE_ROOF_BUILDERS[doc.roof.style];
+    if (signatureBuilder) {
+      root.add(signatureBuilder(doc, crossSectionClip, maxAnisotropy));
       return root;
     }
 

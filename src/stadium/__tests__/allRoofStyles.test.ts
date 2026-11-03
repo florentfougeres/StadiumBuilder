@@ -35,6 +35,14 @@ const SIGNATURE: Record<RoofStyle, string | null> = {
   wave_canopy: 'WaveCanopyLaceSkin',
   petal_iris: 'RetractableRoofIrisPin',
   historic_gable: 'HistoricGableTrusses',
+  girder_grid: 'GirderGridTrusses',
+  saddle_vault: 'SaddleVaultRibs',
+  dished_canopy: 'DishedCanopyFascia',
+  faceted_shell: 'FacetedShellSeams',
+  pleated_crown: 'PleatedCrownFacade',
+  saucer_dome: 'SaucerVColumns',
+  rising_canopy: 'RisingCanopyCompressionRing',
+  crossed_arches: 'CrossedArchTubes',
 };
 
 const PER_STAND = new Set<RoofStyle>(['historic_gable', 'truss', 'column_supported', 'goalpost_truss']);

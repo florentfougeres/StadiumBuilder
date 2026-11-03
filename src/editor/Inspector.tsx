@@ -182,6 +182,46 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
     desc: 'Peau ajourée en béton fibré dont la hauteur ondule autour du stade',
   },
   {
+    id: 'girder_grid',
+    label: 'Grille de méga-poutres',
+    desc: '4 poutres en « # » au bord du toit, poutres secondaires jusqu’aux rives',
+  },
+  {
+    id: 'crossed_arches',
+    label: 'Arches entrecroisées',
+    desc: '4 arcs tubulaires qui se croisent aux angles, suspentes en zigzag',
+  },
+  {
+    id: 'saddle_vault',
+    label: 'Voûte en selle',
+    desc: 'Coque translucide d’un seul tenant, plus haute le long des touches',
+  },
+  {
+    id: 'saucer_dome',
+    label: 'Coupole soucoupe',
+    desc: 'Toit bombé à rive arrondie sur couronne de poteaux en V',
+  },
+  {
+    id: 'rising_canopy',
+    label: 'Toit montant vers le centre',
+    desc: 'Toit qui s’élève vers le terrain, anneau treillis autour de l’ouverture',
+  },
+  {
+    id: 'dished_canopy',
+    label: 'Toit creusé',
+    desc: 'Toit concave relevé aux deux rives, coins retroussés et rive épaisse',
+  },
+  {
+    id: 'faceted_shell',
+    label: 'Coque à facettes',
+    desc: 'Toit et façade d’un seul tenant en facettes triangulaires de métal',
+  },
+  {
+    id: 'pleated_crown',
+    label: 'Couronne plissée',
+    desc: 'Façade métallique plissée en losanges intégrée au toit vitré',
+  },
+  {
     id: 'historic_gable',
     label: 'Toit à pignon historique',
     desc: 'Toit à deux pans sur fermes rivetées, fronton au centre (stades d’avant-guerre)',
