@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   calculateStandMetrics,
   getTrackRadialOffset,
@@ -137,6 +138,11 @@ export function buildStadiumSceneGraph(
     selectedObjectId?: string | null;
     crossSectionClip?: boolean;
     maxAnisotropy?: number;
+    /**
+     * Merge the stadium's static meshes per material (see mergeStaticMeshes) to cut draw calls.
+     * Off by default so tests and exports keep the named part hierarchy.
+     */
+    mergeStatic?: boolean;
   } = {}
 ): BuiltStadiumScene {
   const rootGroup = new THREE.Group();
@@ -208,10 +214,98 @@ export function buildStadiumSceneGraph(
     objectsContainer
   );
 
+  if (options.mergeStatic) {
+    // Placed objects stay separate: they are picked, highlighted and moved one by one.
+    for (const group of rootGroup.children) {
+      if (group !== objectsContainer) mergeStaticMeshes(group);
+    }
+  }
+
   return {
     rootGroup,
     placedObjectMap,
   };
+}
+
+/** Mesh flags and vertex layout that must match for two meshes to share one draw call. */
+function mergeKey(mesh: THREE.Mesh): string | null {
+  const geo = mesh.geometry;
+  const mat = mesh.material;
+  if (
+    (mesh as THREE.InstancedMesh).isInstancedMesh ||
+    (mesh as THREE.SkinnedMesh).isSkinnedMesh ||
+    (geo as THREE.InstancedBufferGeometry).isInstancedBufferGeometry ||
+    Array.isArray(mat) ||
+    (mat as THREE.ShaderMaterial).isShaderMaterial ||
+    // One merged transparent mesh can no longer be depth-sorted part by part.
+    mat.transparent ||
+    Object.keys(geo.morphAttributes).length > 0 ||
+    // Mirrored parts would come out with inverted winding.
+    mesh.matrixWorld.determinant() <= 0
+  ) {
+    return null;
+  }
+  const attrs = Object.entries(geo.attributes)
+    .map(([name, a]) => {
+      const attr = a as THREE.BufferAttribute;
+      return `${name}:${attr.itemSize}:${attr.normalized}:${attr.array?.constructor.name}`;
+    })
+    .sort()
+    .join(',');
+  return [
+    mat.uuid,
+    mesh.castShadow,
+    mesh.receiveShadow,
+    mesh.renderOrder,
+    mesh.frustumCulled,
+    geo.index ? 'i' : 'n',
+    attrs,
+  ].join('|');
+}
+
+/**
+ * Bakes every visible, opaque, plain mesh under `root` into one mesh per material, in `root`'s
+ * space. A stadium is ~700-2 000 small meshes but only ~60-220 materials, and per-draw overhead
+ * (heavy on Windows' ANGLE/D3D) dominates on integrated GPUs; the colour, shadow and AO passes
+ * each pay it. Meshes that cannot merge (instanced, transparent, multi-material, mirrored…) stay.
+ */
+export function mergeStaticMeshes(root: THREE.Object3D): void {
+  root.updateMatrixWorld(true);
+  const toRoot = root.matrixWorld.clone().invert();
+  const buckets = new Map<string, THREE.Mesh[]>();
+  root.traverseVisible((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const key = mergeKey(mesh);
+    if (!key) return;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(mesh);
+    else buckets.set(key, [mesh]);
+  });
+
+  const local = new THREE.Matrix4();
+  for (const meshes of buckets.values()) {
+    if (meshes.length < 2) continue;
+    const parts = meshes.map((mesh) => {
+      const g = mesh.geometry.clone();
+      g.clearGroups();
+      g.applyMatrix4(local.multiplyMatrices(toRoot, mesh.matrixWorld));
+      return g;
+    });
+    const merged = mergeGeometries(parts, false);
+    parts.forEach((g) => g.dispose());
+    if (!merged) continue;
+    const first = meshes[0];
+    const mesh = new THREE.Mesh(merged, first.material);
+    mesh.name = `Merged_${(first.material as THREE.Material).name || first.name || 'static'}`;
+    mesh.castShadow = first.castShadow;
+    mesh.receiveShadow = first.receiveShadow;
+    mesh.renderOrder = first.renderOrder;
+    mesh.frustumCulled = first.frustumCulled;
+    root.add(mesh);
+    // Originals were never drawn, so they hold no GPU buffers; geometries may be shared caches.
+    for (const m of meshes) m.removeFromParent();
+  }
 }
 
 /**

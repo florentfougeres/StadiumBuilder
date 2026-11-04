@@ -121,10 +121,12 @@ export function createRenderPipeline(
   /** `interactive` skips ambient occlusion, which re-renders the whole scene for its normals. */
   render: (interactive?: boolean) => void;
   setSize: (width: number, height: number) => void;
+  /** Call after renderer.setPixelRatio, so the offscreen targets follow. */
+  setPixelRatio: (pixelRatio: number, width: number, height: number) => void;
   setMode: (mode: LightingMode) => void;
   dispose: () => void;
 } {
-  const pixelRatio = renderer.getPixelRatio();
+  let pixelRatio = renderer.getPixelRatio();
   const target = new THREE.WebGLRenderTarget(width * pixelRatio, height * pixelRatio, {
     type: THREE.HalfFloatType,
     samples: 4,
@@ -148,15 +150,22 @@ export function createRenderPipeline(
 
   composer.addPass(new OutputPass());
 
+  const setSize = (w: number, h: number) => {
+    composer.setSize(w, h);
+    gtao.setSize(w * pixelRatio, h * pixelRatio);
+    bloom.setSize(w * pixelRatio, h * pixelRatio);
+  };
+
   return {
     render: (interactive = false) => {
       gtao.enabled = !interactive;
       composer.render();
     },
-    setSize: (w, h) => {
-      composer.setSize(w, h);
-      gtao.setSize(w * pixelRatio, h * pixelRatio);
-      bloom.setSize(w * pixelRatio, h * pixelRatio);
+    setSize,
+    setPixelRatio: (pr, w, h) => {
+      pixelRatio = pr;
+      composer.setPixelRatio(pr);
+      setSize(w, h);
     },
     setMode: (mode) => {
       bloom.enabled = mode !== 'day';

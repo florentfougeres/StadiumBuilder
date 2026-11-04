@@ -362,6 +362,24 @@ export const Viewport: React.FC = () => {
       lastMotion = performance.now();
     }
 
+    // Adaptive resolution: when camera motion stays below ~30 fps (integrated GPUs, 4K panels),
+    // drop the pixel ratio a step. It only steps down, so the view never oscillates.
+    const MIN_PIXEL_RATIO = 0.75;
+    const motionFrameTimes: number[] = [];
+    function trackMotionFrame(dt: number) {
+      motionFrameTimes.push(dt);
+      if (motionFrameTimes.length < 12) return;
+      const sorted = [...motionFrameTimes].sort((a, b) => a - b);
+      motionFrameTimes.length = 0;
+      const current = renderer.getPixelRatio();
+      if (sorted[6] < 34 || current <= MIN_PIXEL_RATIO) return;
+      const next = Math.max(MIN_PIXEL_RATIO, current >= 1.25 ? 1 : current - 0.25);
+      const { clientWidth: w, clientHeight: h } = container!;
+      renderer.setPixelRatio(next);
+      renderer.setSize(w, h);
+      pipeline?.setPixelRatio(next, w, h);
+    }
+
     function afterDraw(cb: () => void) {
       const gl = renderer.getContext() as WebGL2RenderingContext;
       if (gl && typeof gl.fenceSync === 'function') {
@@ -391,6 +409,8 @@ export const Viewport: React.FC = () => {
       renderBusy = true;
       frameId = requestAnimationFrame((now) => {
         renderDirty = false;
+        // Consecutive motion frames measure real throughput; a gap after idle does not.
+        if (now - lastMotion < SETTLE_MS && now - lastTime < 250) trackMotionFrame(now - lastTime);
         const dt = Math.min(0.08, Math.max(0.001, (now - lastTime) / 1000));
         lastTime = now;
 
@@ -756,6 +776,7 @@ export const Viewport: React.FC = () => {
       selectedObjectId,
       crossSectionClip: cameraMode === 'cross_section',
       maxAnisotropy: engine.maxAnisotropy,
+      mergeStatic: true,
     });
 
     engine.scene.add(rootGroup);
