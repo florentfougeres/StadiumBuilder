@@ -10,6 +10,7 @@ import {
   resolveCornerPylonFrame,
   resolveFloodlightRig,
   resolveStandVomitories,
+  vomitoryLevelsOfTier,
   resolveWaveAmplitude,
   RoofStyle,
   SeatingType,
@@ -379,15 +380,14 @@ export function calculateStandMetrics(
   }
 
   // Account for custom vomitory portal cutouts relative to baseline
-  if (stand.vomitoryCount !== undefined) {
+  // (one row of the default count per tier is the baseline; extra rows of them take seats too).
+  if (stand.vomitoryCount !== undefined || (stand.vomitoryLevels ?? 1) > 1) {
     const defaultVom = Math.max(2, Math.min(8, Math.round(stand.aisleCount * 0.5)));
     const resolvedVom = resolveStandVomitories(stand);
-    const deltaPortals = resolvedVom.count - defaultVom;
+    const portals = tierSpecs.reduce((n, t) => n + resolvedVom.count * vomitoryLevelsOfTier(stand, t.rows), 0);
+    const deltaPortals = portals - defaultVom * tierSpecs.length;
     const seatsPerPortal = Math.round((2.8 / safeSeatWidth) * 5);
-    totalRowSeats = Math.max(
-      120,
-      totalRowSeats - deltaPortals * tierSpecs.length * seatsPerPortal
-    );
+    totalRowSeats = Math.max(120, totalRowSeats - deltaPortals * seatsPerPortal);
   }
 
   // A vehicle tunnel takes the rows under its deck over the access width, widening with the
@@ -459,12 +459,13 @@ function computeEvacuationMinutes(
   const totalRows = tierSpecs.reduce((acc, t) => acc + t.rows, 0);
   if (capacity <= 0 || totalRows <= 0) return 0;
   const vomitories = resolveStandVomitories(stand).count;
-  const exitWidth =
+  // Every row of vomitories of a tier adds its openings to that tier's exits.
+  const exitWidth = (tierRows: number) =>
     vomitories > 0
-      ? vomitories * VOMITORY_WIDTH_M
+      ? vomitories * vomitoryLevelsOfTier(stand, tierRows) * VOMITORY_WIDTH_M
       : Math.max(1, stand.aisleCount) * stand.aisleWidth;
   const worst = Math.max(
-    ...tierSpecs.map((t) => (capacity * t.rows) / totalRows / (exitWidth * STAIRWAY_FLOW_PER_M_MIN))
+    ...tierSpecs.map((t) => (capacity * t.rows) / totalRows / (exitWidth(t.rows) * STAIRWAY_FLOW_PER_M_MIN))
   );
   return Number(worst.toFixed(1));
 }

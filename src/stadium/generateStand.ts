@@ -72,6 +72,7 @@ import {
   isCornerConfigured,
   resolveAllCorners,
   resolveStandVomitories,
+  vomitoryLevelLayout,
   StadiumDocument,
   StandConfig,
   StandSide,
@@ -770,46 +771,51 @@ function buildStraightStandMesh(
       const nBandRows = band.treadSegIndices.length;
       if (nBandRows < 5 || band.dEnd - band.dStart < 3.6) continue;
 
-      const openRows = Math.min(5, Math.max(3, Math.round(nBandRows * 0.24)));
-      const centerRow = Math.min(
-        nBandRows - 2,
-        Math.max(1, Math.round((nBandRows - 1) * vomSpec.rowRatio))
-      );
-      const rStart = Math.max(1, Math.min(nBandRows - openRows, centerRow - Math.floor(openRows * 0.5)));
-      const rEnd = Math.min(nBandRows - 1, rStart + openRows - 1);
+      // One or more rows of openings up the tier, each in its share of the rows.
+      const layout = vomitoryLevelLayout(stand, nBandRows);
+      const rowsPerLevel = nBandRows / layout.length;
+      const openRows = Math.min(5, Math.max(3, Math.round(rowsPerLevel * 0.24)));
+      layout.forEach((level, k) => {
+        const lo = Math.max(1, Math.round(k * rowsPerLevel));
+        const hi = Math.min(nBandRows - 1, Math.round((k + 1) * rowsPerLevel) - 1);
+        const centerRow = Math.min(nBandRows - 2, Math.max(1, Math.round((nBandRows - 1) * level.ratio)));
+        const rStart = Math.max(lo, Math.min(hi - openRows + 1, centerRow - Math.floor(openRows * 0.5)));
+        const rEnd = Math.min(hi, rStart + openRows - 1);
+        if (rEnd - rStart < 2) return;
 
-      const segSet = new Set<number>();
-      for (let r = rStart; r <= rEnd; r++) {
-        const tSeg = band.treadSegIndices[r];
-        segSet.add(tSeg); // horizontal tread
-        segSet.add(tSeg + 1); // vertical riser behind tread
-      }
-      const firstSeg = band.treadSegIndices[rStart];
-      const lastSeg = band.treadSegIndices[rEnd];
-      const [dOpenStart, yOpenStart] = profilePts[firstSeg];
-      const [dOpenEnd, yOpenEnd] = profilePts[Math.min(profilePts.length - 1, lastSeg + 2)];
-
-      for (const posFrac of vomSpec.positions) {
-        const vx = -spanLength * 0.5 + posFrac * spanLength;
-        if (stand.id === 'south' && band.tierIdx === 0 && Math.abs(vx) < 6.4) {
-          continue;
+        const segSet = new Set<number>();
+        for (let r = rStart; r <= rEnd; r++) {
+          const tSeg = band.treadSegIndices[r];
+          segSet.add(tSeg); // horizontal tread
+          segSet.add(tSeg + 1); // vertical riser behind tread
         }
-        const xMin = Math.max(-spanLength * 0.5 + 0.8, vx - vomHalfW);
-        const xMax = Math.min(spanLength * 0.5 - 0.8, vx + vomHalfW);
-        if (xMax - xMin < 1.2) continue;
+        const firstSeg = band.treadSegIndices[rStart];
+        const lastSeg = band.treadSegIndices[rEnd];
+        const [dOpenStart, yOpenStart] = profilePts[firstSeg];
+        const [dOpenEnd, yOpenEnd] = profilePts[Math.min(profilePts.length - 1, lastSeg + 2)];
 
-        carvedZones.push({
-          tierIdx: band.tierIdx,
-          vx: (xMin + xMax) * 0.5,
-          xMin,
-          xMax,
-          dStart: dOpenStart,
-          yStart: yOpenStart,
-          dEnd: dOpenEnd,
-          yEnd: yOpenEnd,
-          segSet,
-        });
-      }
+        for (const posFrac of level.positions) {
+          const vx = -spanLength * 0.5 + posFrac * spanLength;
+          if (stand.id === 'south' && band.tierIdx === 0 && k === 0 && Math.abs(vx) < 6.4) {
+            continue;
+          }
+          const xMin = Math.max(-spanLength * 0.5 + 0.8, vx - vomHalfW);
+          const xMax = Math.min(spanLength * 0.5 - 0.8, vx + vomHalfW);
+          if (xMax - xMin < 1.2) continue;
+
+          carvedZones.push({
+            tierIdx: band.tierIdx,
+            vx: (xMin + xMax) * 0.5,
+            xMin,
+            xMax,
+            dStart: dOpenStart,
+            yStart: yOpenStart,
+            dEnd: dOpenEnd,
+            yEnd: yOpenEnd,
+            segSet,
+          });
+        }
+      });
     }
   }
 
@@ -1120,14 +1126,16 @@ function buildStraightStandMesh(
       // Central brushed-steel stair handrail per run of rows: stopped at each cross aisle and
       // around any carved vomitory.
       for (const band of railBands) {
-        const hitZone = carvedZones.find(
-          (cz) =>
-            cz.tierIdx === band.tierIdx &&
-            ax > cz.xMin - 0.35 &&
-            ax < cz.xMax + 0.35 &&
-            cz.dStart < band.dEnd &&
-            cz.dEnd > band.dStart
-        );
+        const zones = carvedZones
+          .filter(
+            (cz) =>
+              cz.tierIdx === band.tierIdx &&
+              ax > cz.xMin - 0.35 &&
+              ax < cz.xMax + 0.35 &&
+              cz.dStart < band.dEnd &&
+              cz.dEnd > band.dStart
+          )
+          .sort((a, b) => a.dStart - b.dStart);
         const rail = (d0: number, y0: number, d1: number, y1: number) =>
           group.add(
             createStrut(
@@ -1139,16 +1147,19 @@ function buildStraightStandMesh(
               6
             )
           );
-        if (hitZone) {
-          if (hitZone.dStart - band.dStart > 1.2) {
-            rail(band.dStart + 0.25, band.yStart, hitZone.dStart - 0.15, hitZone.yStart);
-          }
-          if (band.dEnd - hitZone.dEnd > 1.2) {
-            rail(hitZone.dEnd + 0.25, hitZone.yEnd, band.dEnd - 0.25, band.yEnd);
-          }
-        } else if (band.dEnd - band.dStart > 1.8) {
-          rail(band.dStart + 0.25, band.yStart, band.dEnd - 0.25, band.yEnd);
+        if (zones.length === 0) {
+          if (band.dEnd - band.dStart > 1.8) rail(band.dStart + 0.25, band.yStart, band.dEnd - 0.25, band.yEnd);
+          continue;
         }
+        // From the band's foot to the first opening, between openings, then on to its top.
+        let d = band.dStart;
+        let y = band.yStart;
+        for (const z of zones) {
+          if (z.dStart - d > 1.2) rail(d + 0.25, y, z.dStart - 0.15, z.yStart);
+          d = z.dEnd;
+          y = z.yEnd;
+        }
+        if (band.dEnd - d > 1.2) rail(d + 0.25, y, band.dEnd - 0.25, band.yEnd);
       }
     }
 
@@ -4685,84 +4696,97 @@ function buildModernBowlSweep(
     const vomSpec = resolveStandVomitories(st);
     if (vomSpec.count <= 0) continue;
 
-    // Three treads (and their risers) of the lower tier carved out for the vomitory mouth.
-    const vomTreads: number[] = [];
+    // Three treads (and their risers) of the lower tier carved out for each vomitory mouth, on
+    // one or more rows of openings up the tier.
+    const vomLevels: { treads: number[]; positions: number[] }[] = [];
     if (sectionModel) {
       const rowsHere = sectionModel.specs[sec.side].tiers[0]?.rows ?? 0;
-      const lastStart = rowsHere - 4;
-      if (lastStart < 1) continue;
-      const rStart = Math.max(1, Math.min(lastStart, Math.round(lastStart * vomSpec.rowRatio)));
-      for (let dr = 0; dr < 3; dr++) vomTreads.push(sectionModel.treadSeg[0][rStart + dr]);
+      if (rowsHere - 4 < 1) continue;
+      const layout = vomitoryLevelLayout(st, rowsHere);
+      const share = rowsHere / layout.length;
+      layout.forEach((level, k) => {
+        const lo = Math.max(1, Math.round(k * share));
+        const hi = Math.min(rowsHere - 4, Math.round((k + 1) * share) - 3);
+        if (hi < lo) return;
+        const rStart = Math.max(lo, Math.min(hi, Math.round((rowsHere - 4) * level.ratio)));
+        const treads = [0, 1, 2].map((dr) => sectionModel.treadSeg[0][rStart + dr]);
+        vomLevels.push({ treads, positions: level.positions });
+      });
     } else {
-      // Pick step range on lower/primary tier (`kStart .. kStart + 2`) avoiding break slots `6, 12, 18, 24`
+      // Pick step ranges on the lower/primary tier (`kStart .. kStart + 2`) avoiding break slots `6, 12, 18, 24`
       const maxStep = st.tiers >= 2 ? 10 : N_TERRACE_STEPS - 4;
-      let kStart = Math.max(
-        2,
-        Math.min(maxStep, Math.round(maxStep * vomSpec.rowRatio))
-      );
-      if (kStart === 5 || kStart === 6) kStart = 7;
-      for (let dk = 0; dk < 3 && kStart + dk < N_TERRACE_STEPS; dk++) vomTreads.push(stepSegPairs[kStart + dk][0]);
+      const used = new Set<number>();
+      for (const level of vomitoryLevelLayout(st, st.tiers >= 2 ? st.rows / st.tiers : st.rows)) {
+        let kStart = Math.max(2, Math.min(maxStep, Math.round(maxStep * level.ratio)));
+        if (kStart === 5 || kStart === 6) kStart = 7;
+        if ([...used].some((k) => Math.abs(k - kStart) < 4)) continue;
+        used.add(kStart);
+        const treads: number[] = [];
+        for (let dk = 0; dk < 3 && kStart + dk < N_TERRACE_STEPS; dk++) treads.push(stepSegPairs[kStart + dk][0]);
+        vomLevels.push({ treads, positions: level.positions });
+      }
     }
 
-    const segSet = new Set<number>();
-    for (const tSeg of vomTreads) {
-      segSet.add(tSeg);
-      segSet.add(tSeg + 1);
-    }
+    for (const { treads: vomTreads, positions } of vomLevels) {
+      const segSet = new Set<number>();
+      for (const tSeg of vomTreads) {
+        segSet.add(tSeg);
+        segSet.add(tSeg + 1);
+      }
 
-    for (let v = 0; v < vomSpec.count; v++) {
-      const frac =
-        (v + 0.5) / vomSpec.count - 0.5 + vomSpec.offsetRatio * 0.35;
-      let tTarget = sec.tCenter + frac * (sec.halfSpan * 2);
-      tTarget = ((tTarget % 1) + 1) % 1;
+      for (const pos of positions) {
+        const frac = pos - 0.5;
+        let tTarget = sec.tCenter + frac * (sec.halfSpan * 2);
+        tTarget = ((tTarget % 1) + 1) % 1;
 
-      // Find nearest active slice
-      let bestS = -1;
-      let bestDist = 999;
-      for (let s = 0; s < activeSegments; s++) {
-        const ts = ((tAtSlice(s) % 1) + 1) % 1;
-        let diff = Math.abs(ts - tTarget);
-        if (diff > 0.5) diff = 1 - diff;
-        if (diff < bestDist) {
-          bestDist = diff;
-          bestS = s;
+        // Find nearest active slice
+        let bestS = -1;
+        let bestDist = 999;
+        for (let s = 0; s < activeSegments; s++) {
+          const ts = ((tAtSlice(s) % 1) + 1) % 1;
+          let diff = Math.abs(ts - tTarget);
+          if (diff > 0.5) diff = 1 - diff;
+          if (diff < bestDist) {
+            bestDist = diff;
+            bestS = s;
+          }
         }
-      }
-      if (bestS < 0 || bestDist > 0.025 || isSliceInOpenCorner(bestS)) continue;
+        if (bestS < 0 || bestDist > 0.025 || isSliceInOpenCorner(bestS)) continue;
 
-      let existing = bowlHoleMap.get(bestS);
-      if (!existing) {
-        existing = new Set<number>();
-        bowlHoleMap.set(bestS, existing);
-      }
-      for (const segId of segSet) existing.add(segId);
+        let existing = bowlHoleMap.get(bestS);
+        if (!existing) {
+          existing = new Set<number>();
+          bowlHoleMap.set(bestS, existing);
+        }
+        for (const segId of segSet) existing.add(segId);
 
-      // Place 3D recessed vomitory portal centered on slice `bestS` -> `nextS`
-      const nextS = closed ? (bestS + 1) % ringCount : Math.min(ringCount - 1, bestS + 1);
-      const tMid = 0.5 * (tAtSlice(bestS) + tAtSlice(nextS));
-      // Foot of the first tread, top of the last riser.
-      const pStart = profilePtsPerSlice[bestS][vomTreads[0]];
-      const pEnd = profilePtsPerSlice[bestS][vomTreads[vomTreads.length - 1] + 2];
-      if (pStart && pEnd) {
-        const ptA = sampleRoundedBowlRing(bowlRing, tAtSlice(bestS), pStart[0]);
-        const ptB = sampleRoundedBowlRing(bowlRing, tAtSlice(nextS), pStart[0]);
-        const chordW = Math.max(1.8, Math.hypot(ptB.x - ptA.x, ptB.z - ptA.z) * 0.94);
-        const openD = Math.max(1.6, pEnd[0] - pStart[0]);
-        const openH = Math.max(1.4, pEnd[1] - pStart[1]);
-        const midPt = sampleRoundedBowlRing(bowlRing, tMid, pStart[0]);
+        // Place 3D recessed vomitory portal centered on slice `bestS` -> `nextS`
+        const nextS = closed ? (bestS + 1) % ringCount : Math.min(ringCount - 1, bestS + 1);
+        const tMid = 0.5 * (tAtSlice(bestS) + tAtSlice(nextS));
+        // Foot of the first tread, top of the last riser.
+        const pStart = profilePtsPerSlice[bestS][vomTreads[0]];
+        const pEnd = profilePtsPerSlice[bestS][vomTreads[vomTreads.length - 1] + 2];
+        if (pStart && pEnd) {
+          const ptA = sampleRoundedBowlRing(bowlRing, tAtSlice(bestS), pStart[0]);
+          const ptB = sampleRoundedBowlRing(bowlRing, tAtSlice(nextS), pStart[0]);
+          const chordW = Math.max(1.8, Math.hypot(ptB.x - ptA.x, ptB.z - ptA.z) * 0.94);
+          const openD = Math.max(1.6, pEnd[0] - pStart[0]);
+          const openH = Math.max(1.4, pEnd[1] - pStart[1]);
+          const midPt = sampleRoundedBowlRing(bowlRing, tMid, pStart[0]);
 
-        const portal = createCarvedVomitoryTunnel(
-          chordW,
-          openD,
-          openH,
-          vomPortalMat,
-          darkVomMat,
-          vomRailMat,
-          doc.lighting !== 'day'
-        );
-        portal.position.set(midPt.x, pStart[1], midPt.z);
-        portal.rotation.y = Math.atan2(midPt.nx, midPt.nz);
-        group.add(portal);
+          const portal = createCarvedVomitoryTunnel(
+            chordW,
+            openD,
+            openH,
+            vomPortalMat,
+            darkVomMat,
+            vomRailMat,
+            doc.lighting !== 'day'
+          );
+          portal.position.set(midPt.x, pStart[1], midPt.z);
+          portal.rotation.y = Math.atan2(midPt.nx, midPt.nz);
+          group.add(portal);
+        }
       }
     }
   }

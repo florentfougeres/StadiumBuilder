@@ -215,9 +215,12 @@ export interface StandConfig {
   tierConfigs?: StandTierConfig[];
   /** Number of carved physical vomitory openings per tier/level (`0..12`). */
   vomitoryCount?: number;
-  /** Vertical levels of vomitory entrances on a single-tier / Kop stand (`1..4`, applies when `tiers === 1`). */
+  /**
+   * Rows of vomitories stacked up each tier (`1..4`), for tall tiers such as a Kop wall; a tier
+   * keeps only as many as its rows allow (see `vomitoryLevelsOfTier`).
+   */
   vomitoryLevels?: 1 | 2 | 3 | 4;
-  /** Staggered ("quinconce") horizontal alternation across vomitory levels on single-tier stands. */
+  /** Staggered ("quinconce") vomitories: each row of them shifted half a bay from the one below. */
   vomitoryStaggered?: boolean;
   /** Normalized vertical row position of vomitory openings inside each tier (`0.18..0.82`). */
   vomitoryRowRatio?: number;
@@ -964,18 +967,16 @@ export function resolveFloodlightRig(doc: StadiumDocument): FloodlightRigMode {
 }
 
 /**
- * Resolves vomitory count, multi-level Kop rows (`levels = 1..4` when `tiers === 1`),
- * optional staggered ("quinconce") horizontal positions, and normalized positions in `[0.08, 0.92]`.
+ * Resolves vomitory count, rows of them per tier (`levels`, `1..4`), optional staggered
+ * ("quinconce") positions, and normalized positions along the stand in `[0.08, 0.92]`.
  */
 export function resolveStandVomitories(stand: StandConfig): {
   count: number;
   levels: 1 | 2 | 3 | 4;
   staggered: boolean;
   rowRatio: number;
-  rowRatios: number[];
   offsetRatio: number;
   positions: number[];
-  positionsByLevel: number[][];
 } {
   const defaultCount = Math.max(2, Math.min(8, Math.round(stand.aisleCount * 0.5)));
   const count =
@@ -984,63 +985,47 @@ export function resolveStandVomitories(stand: StandConfig): {
       : defaultCount;
   const rowRatio = Math.max(0.18, Math.min(0.82, stand.vomitoryRowRatio ?? 0.44));
   const offsetRatio = Math.max(-0.25, Math.min(0.25, stand.vomitoryOffsetRatio ?? 0));
-
-  const requestedLevels =
-    stand.tiers === 1 ? Math.max(1, Math.min(4, Math.round(stand.vomitoryLevels ?? 1))) : 1;
-  const maxPracticalLevels =
-    stand.tiers === 1 ? Math.max(1, Math.min(4, Math.floor(Math.max(5, stand.rows) / 5))) : 1;
-  const levels = Math.min(requestedLevels, maxPracticalLevels) as 1 | 2 | 3 | 4;
+  const levels = Math.max(1, Math.min(4, Math.round(stand.vomitoryLevels ?? 1))) as 1 | 2 | 3 | 4;
   const staggered = levels > 1 && Boolean(stand.vomitoryStaggered);
+  return { count, levels, staggered, rowRatio, offsetRatio, positions: vomitoryPositions(count, offsetRatio, 0.5) };
+}
 
-  const shift = (rowRatio - 0.44) * (levels > 1 ? 0.24 : 1.0);
-  const baseLevelRatios =
-    levels === 1
-      ? [rowRatio]
-      : levels === 2
-      ? [0.3, 0.7]
-      : levels === 3
-      ? [0.23, 0.51, 0.79]
-      : [0.19, 0.4, 0.61, 0.82];
-  const rowRatios =
-    levels === 1
-      ? [rowRatio]
-      : baseLevelRatios.map((b) => Math.max(0.15, Math.min(0.86, b + shift)));
-
-  const buildPositions = (phaseBias: number): number[] => {
-    const arr: number[] = [];
-    if (count > 0) {
-      for (let i = 0; i < count; i++) {
-        const base = (i + phaseBias) / count;
-        const shifted = Math.max(
-          0.08,
-          Math.min(0.92, base + offsetRatio * (1 - 1 / Math.max(2, count)))
-        );
-        arr.push(shifted);
-      }
-    }
-    return arr;
-  };
-
-  const positions = buildPositions(0.5);
-  const positionsByLevel: number[][] = [];
-  for (let lv = 0; lv < levels; lv++) {
-    if (!staggered) {
-      positionsByLevel.push(positions);
-    } else {
-      positionsByLevel.push(buildPositions(lv % 2 === 0 ? 0.34 : 0.66));
-    }
+function vomitoryPositions(count: number, offsetRatio: number, phase: number): number[] {
+  const arr: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const base = (i + phase) / count;
+    arr.push(Math.max(0.08, Math.min(0.92, base + offsetRatio * (1 - 1 / Math.max(2, count)))));
   }
+  return arr;
+}
 
-  return {
-    count,
-    levels,
-    staggered,
-    rowRatio,
-    rowRatios,
-    offsetRatio,
-    positions,
-    positionsByLevel,
-  };
+/** Fewest rows of a tier per row of vomitories (an opening takes 3 to 5 rows, plus seats around). */
+export const VOMITORY_ROWS_PER_LEVEL = 8;
+
+/** Rows of vomitories a tier of `tierRows` rows takes: as many as asked, while each has room. */
+export function vomitoryLevelsOfTier(stand: StandConfig, tierRows: number): number {
+  const { levels } = resolveStandVomitories(stand);
+  return Math.max(1, Math.min(levels, Math.floor(tierRows / VOMITORY_ROWS_PER_LEVEL)));
+}
+
+/**
+ * Each row of vomitories of a tier of `tierRows` rows: where it sits up the tier (share of its
+ * rows; the levels share the tier evenly, the vertical position shifting them all within their
+ * share) and its positions along the stand, offset half a bay on every other row when staggered.
+ */
+export function vomitoryLevelLayout(
+  stand: StandConfig,
+  tierRows: number
+): { ratio: number; positions: number[] }[] {
+  const spec = resolveStandVomitories(stand);
+  const levels = vomitoryLevelsOfTier(stand, tierRows);
+  return Array.from({ length: levels }, (_, k) => ({
+    ratio: (k + spec.rowRatio) / levels,
+    positions:
+      spec.staggered && levels > 1
+        ? vomitoryPositions(spec.count, spec.offsetRatio, k % 2 === 0 ? 0.34 : 0.66)
+        : spec.positions,
+  }));
 }
 
 /**

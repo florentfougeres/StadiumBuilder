@@ -47,6 +47,8 @@ import {
   resolveWaveAmplitude,
   resolveRetractable,
   resolveStandVomitories,
+  vomitoryLevelsOfTier,
+  VOMITORY_ROWS_PER_LEVEL,
   resolveCrossAisles,
   RETRACTABLE_PANEL_LIMITS,
   RetractableConfig,
@@ -1693,6 +1695,40 @@ const StandsPanel: React.FC = () => {
           display={vomSpec.count === 0 ? 'Aucun' : `${vomSpec.count} ouvertures`}
           onChange={(v) => updateStand(target, { vomitoryCount: v })}
         />
+        <FieldRow
+          label="Rangées par étage"
+          hint="Plusieurs rangées de vomitoires superposées dans un même étage, pour un étage très haut comme un mur de Kop"
+        >
+          <Segmented
+            label="Rangées de vomitoires par étage"
+            size="sm"
+            disabled={off || vomSpec.count === 0}
+            value={vomSpec.levels}
+            onChange={(v) => updateStand(target, { vomitoryLevels: v })}
+            options={([1, 2, 3, 4] as const).map((n) => ({ id: n, label: String(n) }))}
+          />
+        </FieldRow>
+        {vomSpec.count > 0 && vomSpec.levels > 1 && (
+          <>
+            {resolvedTiers.some((t) => vomitoryLevelsOfTier(stand, t.rows) < vomSpec.levels) && (
+              <p className="text-2xs text-ink-muted">
+                {resolvedTiers
+                  .map((t) => ({ t, n: vomitoryLevelsOfTier(stand, t.rows) }))
+                  .filter(({ n }) => n < vomSpec.levels)
+                  .map(({ t, n }) => `${resolvedTiers.length > 1 ? `Étage ${t.tierIndex + 1}` : 'L’étage'} : ${n} rangée${n > 1 ? 's' : ''} (${t.rows} rangs)`)
+                  .join(' · ')}
+                {` — il faut ${VOMITORY_ROWS_PER_LEVEL} rangs par rangée de vomitoires.`}
+              </p>
+            )}
+            <ToggleField
+              label="En quinconce"
+              hint="Chaque rangée de vomitoires décalée d’une demi-travée par rapport à celle du dessous"
+              disabled={off}
+              checked={vomSpec.staggered}
+              onChange={(vomitoryStaggered) => updateStand(target, { vomitoryStaggered })}
+            />
+          </>
+        )}
         <SliderField
           label="Position verticale"
           min={0.2}
@@ -1701,7 +1737,7 @@ const StandsPanel: React.FC = () => {
           scale={100}
           disabled={off || vomSpec.count === 0}
           value={vomSpec.rowRatio}
-          display={`${Math.round(vomSpec.rowRatio * 100)} % du niveau`}
+          display={`${Math.round(vomSpec.rowRatio * 100)} % ${vomSpec.levels > 1 ? 'de chaque rangée' : 'du niveau'}`}
           onChange={(v) => updateStand(target, { vomitoryRowRatio: v })}
         />
         <SliderField
@@ -1906,6 +1942,8 @@ const StandsPanel: React.FC = () => {
                 vomitoryCount: stand.vomitoryCount,
                 vomitoryRowRatio: stand.vomitoryRowRatio,
                 vomitoryOffsetRatio: stand.vomitoryOffsetRatio,
+                vomitoryLevels: stand.vomitoryLevels,
+                vomitoryStaggered: stand.vomitoryStaggered,
                 tierOverhang: stand.tierOverhang,
                 tierConfigs: stand.tierConfigs
                   ? stand.tierConfigs.map((tc) => ({ ...tc }))

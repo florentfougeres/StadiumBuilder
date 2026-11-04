@@ -156,3 +156,33 @@ describe('dugouts, press box and fence', () => {
     expect(calculateStadiumMetrics(doc).totalCapacity).toBe(before);
   });
 });
+
+describe('vomitory rows per tier', () => {
+  const portals = (doc: StadiumDocument) => count(generateStandsGroup(doc), 'VomitoryOpeningPortal');
+
+  it.each<StadiumShape>(['four_stands', 'modern_bowl'])('stacks rows of openings up a tall tier on %s', (shape) => {
+    const doc = docOf(shape);
+    for (const side of SIDES) Object.assign(doc.stands[side], { tiers: 1, rows: 40, tierConfigs: undefined, vomitoryCount: 4 });
+    const one = portals(doc);
+    for (const side of SIDES) doc.stands[side].vomitoryLevels = 3;
+    expect(portals(doc)).toBe(one * 3);
+    for (const side of SIDES) doc.stands[side].vomitoryStaggered = true;
+    expect(portals(doc)).toBe(one * 3);
+  });
+
+  it('keeps one row on a tier too short for more', () => {
+    const doc = docOf('four_stands');
+    Object.assign(doc.stands.north, { tiers: 1, rows: 12, tierConfigs: undefined, vomitoryCount: 4 });
+    const one = portals(doc);
+    doc.stands.north.vomitoryLevels = 3;
+    expect(portals(doc)).toBe(one);
+  });
+
+  it('shortens the evacuation', () => {
+    const doc = docOf('four_stands');
+    Object.assign(doc.stands.north, { tiers: 1, rows: 40, tierConfigs: undefined, vomitoryCount: 4 });
+    const before = calculateStadiumMetrics(doc).stands.north.evacuationMinutes;
+    doc.stands.north.vomitoryLevels = 2;
+    expect(calculateStadiumMetrics(doc).stands.north.evacuationMinutes).toBeLessThan(before);
+  });
+});
