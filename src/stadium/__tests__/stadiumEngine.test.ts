@@ -32,6 +32,7 @@ import {
   TURF_MATERIAL_CATALOG,
 } from '../materials';
 import { createPresetDocument, STADIUM_PRESETS } from '../presets';
+import { isContinuousBowlShape } from '../schema';
 import {
   clampPitchToTrack,
   EnvelopeStyle,
@@ -334,36 +335,42 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
     disposeObject3D(domeStands);
   });
 
-  it('calibrates realistic capacities across all generic architectural templates', () => {
-    expect(STADIUM_PRESETS.length).toBe(28);
-
-    const getCap = (id: string) =>
-      calculateStadiumMetrics(createPresetDocument(id)).totalCapacity;
-
-    expect(getCap('octagonal_cantilever_26k')).toBeGreaterThan(22000);
-    expect(getCap('octagonal_cantilever_26k')).toBeLessThan(31000);
-
-    expect(getCap('asymmetric_modular_30k')).toBeGreaterThan(26000);
-    expect(getCap('asymmetric_modular_30k')).toBeLessThan(35000);
-
-    expect(getCap('horseshoe_amphitheatre_38k')).toBeGreaterThan(31000);
-    expect(getCap('horseshoe_amphitheatre_38k')).toBeLessThan(45000);
-
-    expect(getCap('traditional_four_stands_42k')).toBeGreaterThan(38000);
-    expect(getCap('traditional_four_stands_42k')).toBeLessThan(48000);
-
-    expect(getCap('bowl_bowstring_60k')).toBeGreaterThan(56000);
-    expect(getCap('bowl_bowstring_60k')).toBeLessThan(67000);
-
-    expect(getCap('olympic_masts_80k')).toBeGreaterThan(75000);
-    expect(getCap('olympic_masts_80k')).toBeLessThan(90000);
-
-    expect(getCap('urban_cathedral_84k')).toBeGreaterThan(78000);
-    expect(getCap('urban_cathedral_84k')).toBeLessThan(92000);
-
-    expect(getCap('mega_retractable_88k')).toBeGreaterThan(80000);
-    expect(getCap('mega_retractable_88k')).toBeLessThan(98000);
-  });
+  it(
+    'announces the capacity the 3D stands actually seat',
+    () => {
+      ensureCanvasMock();
+      expect(STADIUM_PRESETS.length).toBe(28);
+      const off: string[] = [];
+      for (const preset of STADIUM_PRESETS) {
+        const doc = createPresetDocument(preset.id);
+        const stands = Object.values(doc.stands);
+        // Standing terraces and deployable rows hold spectators the seat instances do not draw;
+        // a bowl whose stands have very different row counts is drawn with one count all round.
+        const rows = stands.filter((s) => s.enabled).map((s) => s.rows);
+        if (
+          stands.some((s) => s.seatingType === 'safe_standing' || s.seatingType === 'telescopic') ||
+          (isContinuousBowlShape(doc.shape) && Math.max(...rows) > Math.min(...rows) * 1.25)
+        ) {
+          continue;
+        }
+        // Hospitality boxes hold real seats that are not drawn as seat instances.
+        stands.forEach((s) => (s.vipLoges = false));
+        const announced = calculateStadiumMetrics(doc).totalCapacity;
+        const { rootGroup } = buildStadiumSceneGraph(doc, { maxAnisotropy: 1 });
+        let drawn = 0;
+        rootGroup.traverse((o) => {
+          if ((o as THREE.InstancedMesh).isInstancedMesh && o.name === 'Seats') {
+            drawn += (o as THREE.InstancedMesh).count;
+          }
+        });
+        disposeObject3D(rootGroup);
+        const ratio = announced / drawn;
+        if (ratio < 0.9 || ratio > 1.1) off.push(`${preset.id}: ${announced} announced, ${drawn} drawn`);
+      }
+      expect(off).toEqual([]);
+    },
+    FULL_SCENE_TIMEOUT_MS
+  );
 
   it('supports 1 to 5 tiers, FIFA C-values, and distinct four_stands vs compact_urban geometry', () => {
     ensureCanvasMock();

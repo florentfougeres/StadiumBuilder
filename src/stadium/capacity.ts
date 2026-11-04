@@ -1,4 +1,4 @@
-import { buildShapeBowlRing } from './bowlRing';
+import { buildShapeBowlRing, computeRectangularCornerLayout, ringSideSpans } from './bowlRing';
 import {
   clampPitchToTrack,
   CornerId,
@@ -214,12 +214,13 @@ export function calculateStandMetrics(
         avgDistZ,
         trackOffsets.endOffset,
         trackOffsets.sideOffset,
-        safePitch.hasTrack
+        safePitch.hasTrack,
+        undefined,
+        true
       );
 
-  const trimmedSpan = isSideStand
-    ? bowlRing.halfStraightX * 2
-    : bowlRing.halfStraightZ * 2;
+  const spans = ringSideSpans(bowlRing);
+  const trimmedSpan = isSideStand ? spans.longSide : spans.end;
   const openSpan =
     doc.shape === 'four_stands'
       ? isSideStand
@@ -254,9 +255,35 @@ export function calculateStandMetrics(
     }
   }
 
-  const innerCornerArcPerQuadrant = bowlRing.facetedCorners
-    ? Math.SQRT2 * bowlRing.cornerRadius
-    : (Math.PI / 2) * bowlRing.cornerRadius;
+  let cornerRadius = bowlRing.cornerRadius;
+  if (!isContinuousBowlShape(doc.shape)) {
+    // Separate stands: the same spans and corner quadrants the 3D stands are built on.
+    const layout = computeRectangularCornerLayout({
+      shape: doc.shape,
+      cornerFill: doc.cornerFill,
+      cornerModes,
+      crossSectionClip: false,
+      pitchLength: safePitch.length,
+      pitchWidth: safePitch.width,
+      endTrackOffset: trackOffsets.endOffset,
+      sideTrackOffset: trackOffsets.sideOffset,
+      stands: doc.stands,
+    });
+    straightFrontSpan = layout.straight[side].span;
+    const seatedCorners = adjEnds
+      .map(({ corner }) => layout.corners[corner])
+      .filter((c) => c.active && c.mode === 'filled');
+    // Each seated corner is shared with the neighbouring stand.
+    cornerQuadrants = seatedCorners.length * 0.5;
+    if (seatedCorners.length > 0) {
+      cornerRadius = seatedCorners.reduce((sum, c) => sum + c.radius, 0) / seatedCorners.length;
+    }
+  }
+
+  // A bowl's corner is the ring's own (shorter than a quarter circle once the sides are bowed).
+  const innerCornerArcPerQuadrant = isContinuousBowlShape(doc.shape)
+    ? spans.corner
+    : (Math.PI / 2) * cornerRadius;
 
   const effectiveLength = Number(
     (straightFrontSpan + cornerQuadrants * innerCornerArcPerQuadrant).toFixed(1)
@@ -310,30 +337,24 @@ export function calculateStandMetrics(
     };
   }
 
-  const totalAisleWidth = stand.aisleCount * (stand.aisleWidth * 0.82);
-  const cornerExpansionEfficiency = bowlRing.facetedCorners
-    ? 0.92
-    : isContinuousBowlShape(doc.shape)
-    ? 1.08
-    : doc.shape === 'compact_urban'
-    ? 0.96
-    : 0.9;
-
-  const multiTierWingBonus = 1 + upperTierCount * 0.068;
-  const safeSeatWidth = Math.max(0.44, stand.seatWidth * 0.94);
+  // Same rules as the 3D seats (buildSweepSeatInstances): one seat per seat width along each row,
+  // none within half an aisle plus 0.4 seat of an aisle's centre line.
+  const safeSeatWidth = Math.max(0.42, stand.seatWidth);
+  const totalAisleWidth = stand.aisleCount * (stand.aisleWidth + 0.8 * safeSeatWidth);
 
   let totalRowSeats = 0;
 
   for (const row of section.rows) {
-    const curOutwardD = row.d + 0.06;
-    const openEndWingFlare = cornerQuadrants === 0 ? curOutwardD * 0.38 : 0;
+    // Seats sit just past the middle of their tread, as in the 3D build.
+    const curOutwardD = row.d + stand.rowDepth * 0.52;
+    // A row set back by d runs along the corner offset by d: a quarter turn adds (π/2)·d, and a
+    // mitered chamfer adds 2·tan(22.5°)·d at each of its two vertices.
     const cornerDelta = bowlRing.facetedCorners
-      ? 2 * (Math.SQRT2 - 1) * curOutwardD * cornerExpansionEfficiency
-      : (Math.PI / 2) * curOutwardD * cornerExpansionEfficiency;
+      ? 4 * (Math.SQRT2 - 1) * curOutwardD
+      : (Math.PI / 2) * curOutwardD;
 
     const rowArcSpan =
-      straightFrontSpan * multiTierWingBonus +
-      openEndWingFlare +
+      straightFrontSpan +
       cornerQuadrants * (innerCornerArcPerQuadrant + cornerDelta);
 
     const netSeatLen = Math.max(0, (rowArcSpan - totalAisleWidth) * 0.975);

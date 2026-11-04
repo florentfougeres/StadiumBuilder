@@ -104,6 +104,39 @@ function optionBase(shape: StadiumShape = 'modern_bowl'): StadiumDocument {
   return doc;
 }
 
+/**
+ * Stands each shape preview borrows from the preset that shows it best. One shared stadium made
+ * shapes that differ mostly in rake, height or corners (bowl, cauldron, compact, rounded
+ * rectangle; four stands vs modular) render alike.
+ */
+const SHAPE_STANDS_PRESET: Partial<Record<StadiumShape, string>> = {
+  compact_urban: 'urban_cathedral_84k',
+  steep_cauldron: 'cauldron_cable_42k',
+  english_rectangular: 'asymmetric_modular_30k',
+  four_stands: 'traditional_four_stands_42k',
+  horseshoe: 'horseshoe_amphitheatre_38k',
+  olympic_oval: 'olympic_masts_80k',
+};
+
+const LOW_VIEW_SHAPES = new Set<StadiumShape>(['tilted_bowl', 'saddle_bowl', 'steep_cauldron']);
+
+/** A shape on its characteristic stands, uncovered, so the footprint and section are what read. */
+function shapeThumbnailDoc(shape: StadiumShape): StadiumDocument {
+  const doc = optionBase();
+  const source = createPresetDocument(SHAPE_STANDS_PRESET[shape] ?? 'concrete_portals_48k');
+  doc.stands = structuredClone(source.stands);
+  applyShape(doc, shape);
+  doc.roof = { ...doc.roof, style: 'none' };
+  if (shape === 'english_rectangular') {
+    // Modular: each corner set apart, open, filled or built over.
+    doc.corners = { nw: 'filled', ne: 'building', sw: 'open', se: 'filled' };
+  } else if (shape === 'rounded_rectangle') {
+    // Tightest bends: wider ones are clamped to the bowl's own radius and look the same.
+    doc.cornerRoundness = 0;
+  }
+  return doc;
+}
+
 /** Every shipped thumbnail, by folder. */
 export function thumbnailJobs(
   shapes: StadiumShape[],
@@ -115,11 +148,12 @@ export function thumbnailJobs(
       ...STADIUM_PRESETS.map((p) => ({ id: p.id, doc: createPresetDocument(p.id) })),
     ],
     // Uncovered and seen from higher up, so the footprint of the stands is what reads.
-    shapes: shapes.map((shape) => {
-      const doc = optionBase(shape);
-      doc.roof = { ...doc.roof, style: 'none' };
-      return { id: shape, doc, elevation: 1.05 };
-    }),
+    shapes: shapes.map((shape) => ({
+      id: shape,
+      doc: shapeThumbnailDoc(shape),
+      // A lower view shows the rim's slope (tilted, saddle) or the steep rake (cauldron).
+      elevation: LOW_VIEW_SHAPES.has(shape) ? 0.6 : 1.05,
+    })),
     roofs: roofs.map((style) => {
       const doc = optionBase(STAND_ONLY_ROOFS.has(style) ? 'four_stands' : 'modern_bowl');
       doc.roof = { ...doc.roof, style };

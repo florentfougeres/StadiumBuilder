@@ -450,24 +450,61 @@ function createGoalGroup(sideSign: -1 | 1, netTex: THREE.CanvasTexture): THREE.G
   return goal;
 }
 
+/** Closed floor contour in world (x, z), such as the front edge of the stands. */
+export type ApronOutline = { x: number; z: number }[];
+
+/**
+ * Outline grown to clear the centred `halfW` x `halfH` hole with a 1 m gap: a bowl's rounded
+ * corner passes over the corner of the turf margins. Points inside are pushed out along the ray
+ * from the centre, and the hole's corner joins the outline where they were, so no edge cuts it.
+ * The outline must be star-shaped around the origin, as stand fronts are.
+ */
+function clearOutlineOfRect(outline: ApronOutline, halfW: number, halfH: number): ApronOutline {
+  const w = halfW + 1;
+  const h = halfH + 1;
+  const corners = new Set<string>();
+  const points = outline.map((p) => {
+    const k = Math.min(w / Math.max(1e-6, Math.abs(p.x)), h / Math.max(1e-6, Math.abs(p.z)));
+    if (k <= 1) return p;
+    corners.add(`${Math.sign(p.x) || 1},${Math.sign(p.z) || 1}`);
+    return { x: p.x * k, z: p.z * k };
+  });
+  for (const key of corners) {
+    const [sx, sz] = key.split(',').map(Number);
+    points.push({ x: sx * w, z: sz * h });
+  }
+  points.sort((p, q) => Math.atan2(p.z, p.x) - Math.atan2(q.z, q.x));
+  return points.filter((p, i) => {
+    const n = points[(i + 1) % points.length];
+    return Math.hypot(p.x - n.x, p.z - n.z) > 0.05;
+  });
+}
+
 function createHollowHorizontalFrameGeometry(
   outerW: number,
   outerH: number,
   holeW: number,
   holeH: number,
-  uvMode: 'normalized' | 'metric_004'
+  uvMode: 'normalized' | 'metric_004',
+  /** Outer contour in world (x, z), around the origin, replacing the `outerW` x `outerH` rectangle. */
+  outline?: ApronOutline
 ): THREE.ShapeGeometry {
   const hw = outerW * 0.5;
   const hh = outerH * 0.5;
-  const shape = new THREE.Shape();
-  shape.moveTo(-hw, -hh);
-  shape.lineTo(hw, -hh);
-  shape.lineTo(hw, hh);
-  shape.lineTo(-hw, hh);
-  shape.closePath();
-
   const ihw = Math.max(1, Math.min(hw - 0.5, holeW * 0.5));
   const ihh = Math.max(1, Math.min(hh - 0.5, holeH * 0.5));
+  const shape = new THREE.Shape();
+  if (outline && outline.length >= 3) {
+    // Shape y becomes world -z once the geometry is laid flat below.
+    clearOutlineOfRect(outline, ihw, ihh).forEach((p, i) => (i === 0 ? shape.moveTo(p.x, -p.z) : shape.lineTo(p.x, -p.z)));
+  } else {
+    shape.moveTo(-hw, -hh);
+    shape.lineTo(hw, -hh);
+    shape.lineTo(hw, hh);
+    shape.lineTo(-hw, hh);
+  }
+  shape.closePath();
+
   const hole = new THREE.Path();
   hole.moveTo(-ihw, -ihh);
   hole.lineTo(-ihw, ihh);
@@ -822,7 +859,9 @@ export function generatePitchGroup(
   _colors: StadiumColors,
   maxAnisotropy: number = 4,
   lighting: LightingMode = 'day',
-  materials?: StadiumMaterialsConfig
+  materials?: StadiumMaterialsConfig,
+  /** Front edge of the stands: the anthracite apron stops there instead of running 28 m out. */
+  apronOutline?: ApronOutline
 ): THREE.Group {
   const pitch = clampPitchToTrack(rawPitch);
   const { track, effectiveMarginEnd, effectiveMarginSide, totalLength, totalWidth } =
@@ -909,7 +948,8 @@ export function generatePitchGroup(
           pitch.width + 56,
           moatOutL,
           moatOutW,
-          'metric_004'
+          'metric_004',
+          apronOutline
         ),
         pitApronMat
       );
@@ -1030,7 +1070,8 @@ export function generatePitchGroup(
         pitch.width + 56,
         totalLength - 0.24,
         totalWidth - 0.24,
-        'metric_004'
+        'metric_004',
+        apronOutline
       );
       const pitApron = new THREE.Mesh(pitApronGeo, pitApronMat);
       pitApron.name = 'TechnicalPitApron';

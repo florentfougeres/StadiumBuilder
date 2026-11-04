@@ -12,7 +12,7 @@ import {
   generateFloodlightRigGroup,
   generatePlacedObjectGroup,
 } from './generateLights';
-import { generatePitchGroup } from './generatePitch';
+import { ApronOutline, generatePitchGroup } from './generatePitch';
 import { computeStadiumRingBounds, generateRoofGroup } from './generateRoof';
 import { generateSiteGroup, SiteFootprint } from './generateSite';
 import { generateStandsGroup } from './generateStand';
@@ -39,6 +39,37 @@ const FACE_PITCH: Record<StandSide, number> = {
 
 /** Ring parameter of each stand's axis (east at t = 0, counter-clockwise through south). */
 const SIDE_RING_T: Record<StandSide, number> = { east: 0, south: 0.25, west: 0.5, north: 0.75 };
+
+/** Overlap under the front row so no gap shows between the apron and the stands (m). */
+const APRON_UNDER_STANDS = 1.2;
+
+/**
+ * Front edge of the stands, where the pitch-side apron ends. Without it the apron is a fixed band
+ * that shows as a dark slab wherever no stand covers it: an open end, open corners, a low stand.
+ */
+function pitchApronOutline(doc: StadiumDocument): ApronOutline {
+  if (isContinuousBowlShape(doc.shape)) {
+    const { ring } = computeStadiumRingBounds(doc);
+    return Array.from({ length: 128 }, (_, i) => {
+      const p = sampleRoundedBowlRing(ring, i / 128, APRON_UNDER_STANDS);
+      return { x: p.x, z: p.z };
+    });
+  }
+  const pitch = clampPitchToTrack(doc.pitch);
+  const track = getTrackRadialOffset(doc);
+  const front = (side: StandSide, half: number, offset: number) =>
+    half + offset + doc.stands[side].distanceToPitch + APRON_UNDER_STANDS;
+  const east = front('east', pitch.length / 2, track.endOffset);
+  const west = -front('west', pitch.length / 2, track.endOffset);
+  const south = front('south', pitch.width / 2, track.sideOffset);
+  const north = -front('north', pitch.width / 2, track.sideOffset);
+  return [
+    { x: west, z: north },
+    { x: east, z: north },
+    { x: east, z: south },
+    { x: west, z: south },
+  ];
+}
 
 /**
  * Places a roof- or stand-mounted screen from the stand's real geometry, so it stays attached
@@ -236,7 +267,8 @@ export function buildStadiumSceneGraph(
     doc.colors,
     aniso,
     doc.lighting,
-    doc.materials
+    doc.materials,
+    pitchApronOutline(doc)
   );
   const standsGroup = generateStandsGroup(
     doc,

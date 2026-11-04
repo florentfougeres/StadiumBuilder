@@ -50,7 +50,9 @@ describe('retractable roof motions', () => {
     for (const motion of MOTIONS) {
       it(`${motion} on ${presetId}: closed covers the centre, open clears the pitch`, () => {
         const closed = generateRoofGroup(retractableDoc(presetId, motion, 0));
-        expect(coveredAt(closed, 0, -1)).toBe(true);
+        // Just off the centre: with an even panel count two leaves share an edge at x = 0, where a
+        // ray hits or misses on rounding alone.
+        expect(coveredAt(closed, 1.3, -1)).toBe(true);
         expect(coveredAt(closed, -20, 5)).toBe(true);
         disposeObject3D(closed);
 

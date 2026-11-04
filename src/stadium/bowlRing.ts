@@ -73,10 +73,138 @@ function sideArc(halfChord: number, bulge: number): { radius: number; halfAngle:
   return { radius, halfAngle: Math.asin(Math.min(1, halfChord / radius)) };
 }
 
-/** Length of half a side: straight, or along its arc when bowed. */
-function halfSideLength(halfChord: number, bulge: number): number {
-  const arc = sideArc(halfChord, bulge);
-  return arc ? arc.radius * arc.halfAngle : halfChord;
+/**
+ * How a ring with bowed sides joins them to its corners, in the +x/+z quadrant. Each corner arc
+ * is tangent to the end arc and to the long-side arc (a classic multi-centre oval), so the bowl has
+ * no crease where a side meets a corner. A straight side keeps `radius` null.
+ */
+interface BowedJoint {
+  /** End arc: centre on the x axis at `endCentreX`, normal angle at the joint `endAngle` (from +x). */
+  endRadius: number | null;
+  endCentreX: number;
+  endAngle: number;
+  /** Long-side arc: centre on the z axis at `sideCentreZ`, normal angle at the joint `sideAngle` (from +z). */
+  sideRadius: number | null;
+  sideCentreZ: number;
+  sideAngle: number;
+  /** Corner arc centre. */
+  cx: number;
+  cz: number;
+  /** Lengths of half an end, of half a long side and of one corner. */
+  endHalfLen: number;
+  sideHalfLen: number;
+  cornerLen: number;
+}
+
+const jointCache = new WeakMap<RoundedBowlGeometry, BowedJoint | null>();
+
+function bowedJoint(ring: RoundedBowlGeometry): BowedJoint | null {
+  if (jointCache.has(ring)) return jointCache.get(ring)!;
+  const joint = computeBowedJoint(ring);
+  jointCache.set(ring, joint);
+  return joint;
+}
+
+function computeBowedJoint(ring: RoundedBowlGeometry): BowedJoint | null {
+  if (ring.facetedCorners) return null;
+  const hx = ring.halfStraightX;
+  const hz = ring.halfStraightZ;
+  const r = ring.cornerRadius;
+  const endArc = sideArc(hz, ring.sideBulgeZ ?? 0);
+  const longArc = sideArc(hx, ring.sideBulgeX ?? 0);
+  if (!endArc && !longArc) return null;
+
+  const endRadius = endArc?.radius ?? null;
+  const sideRadius = longArc?.radius ?? null;
+  // Arc centres keep the apex where the chord-and-bulge construction puts it.
+  const endCentreX = endRadius === null ? 0 : hx + r + (ring.sideBulgeZ ?? 0) - endRadius;
+  const sideCentreZ = sideRadius === null ? 0 : hz + r + (ring.sideBulgeX ?? 0) - sideRadius;
+
+  // Corner centre: `endRadius - r` from the end arc's centre and `sideRadius - r` from the
+  // long side's (or `r` inside a straight side).
+  const onEnd = (a: number) => ({
+    x: endCentreX + (endRadius! - r) * Math.cos(a),
+    z: (endRadius! - r) * Math.sin(a),
+  });
+  let cx: number;
+  let cz: number;
+  if (endRadius === null) {
+    cx = hx;
+    cz = sideCentreZ + Math.sqrt(Math.max(0, (sideRadius! - r) ** 2 - cx * cx));
+  } else if (sideRadius === null) {
+    cz = hz;
+    cx = endCentreX + Math.sqrt(Math.max(0, (endRadius - r) ** 2 - cz * cz));
+  } else {
+    // Walk the end arc's offset circle until it meets the long side's: distance to the side
+    // centre grows with the angle, so bisection finds the single crossing in the quadrant.
+    const miss = (a: number) => {
+      const p = onEnd(a);
+      return Math.hypot(p.x, p.z - sideCentreZ) - (sideRadius - r);
+    };
+    let lo = 0;
+    let hi = Math.PI / 2;
+    if (miss(lo) > 0 || miss(hi) < 0) return null;
+    for (let i = 0; i < 48; i++) {
+      const mid = (lo + hi) / 2;
+      if (miss(mid) < 0) lo = mid;
+      else hi = mid;
+    }
+    ({ x: cx, z: cz } = onEnd((lo + hi) / 2));
+  }
+
+  const endAngle = endRadius === null ? 0 : Math.atan2(cz, cx - endCentreX);
+  const sideAngle = sideRadius === null ? 0 : Math.atan2(cx, cz - sideCentreZ);
+  const cornerSpan = Math.PI / 2 - endAngle - sideAngle;
+  if (!(cx > 0 && cz > 0 && cornerSpan > 0)) return null;
+  return {
+    endRadius,
+    endCentreX,
+    endAngle,
+    sideRadius,
+    sideCentreZ,
+    sideAngle,
+    cx,
+    cz,
+    endHalfLen: endRadius === null ? cz : endRadius * endAngle,
+    sideHalfLen: sideRadius === null ? cx : sideRadius * sideAngle,
+    cornerLen: r * cornerSpan,
+  };
+}
+
+/**
+ * Point and outward normal of a bowed ring in the +x/+z quadrant: along the end (`s` from the
+ * axis to the corner), the corner (from the end to the long side) or the long side (from the
+ * corner to the axis).
+ */
+function bowedQuadrantPoint(
+  ring: RoundedBowlGeometry,
+  j: BowedJoint,
+  part: 'end' | 'corner' | 'side',
+  s: number
+): { bx: number; bz: number; nx: number; nz: number } {
+  if (part === 'end') {
+    if (j.endRadius === null) return { bx: ring.halfStraightX + ring.cornerRadius, bz: s * j.cz, nx: 1, nz: 0 };
+    const a = s * j.endAngle;
+    return { bx: j.endCentreX + j.endRadius * Math.cos(a), bz: j.endRadius * Math.sin(a), nx: Math.cos(a), nz: Math.sin(a) };
+  }
+  if (part === 'corner') {
+    const phi = j.endAngle + s * (Math.PI / 2 - j.endAngle - j.sideAngle);
+    const nx = Math.cos(phi);
+    const nz = Math.sin(phi);
+    return { bx: j.cx + ring.cornerRadius * nx, bz: j.cz + ring.cornerRadius * nz, nx, nz };
+  }
+  if (j.sideRadius === null) return { bx: (1 - s) * j.cx, bz: ring.halfStraightZ + ring.cornerRadius, nx: 0, nz: 1 };
+  const a = (1 - s) * j.sideAngle;
+  return { bx: j.sideRadius * Math.sin(a), bz: j.sideCentreZ + j.sideRadius * Math.cos(a), nx: Math.sin(a), nz: Math.cos(a) };
+}
+
+/**
+ * Front length of a long side (north/south) and of an end (east/west), from corner joint to
+ * corner joint, following the arc when the side is bowed, and of one corner between them.
+ */
+export function ringSideSpans(ring: RoundedBowlGeometry): { longSide: number; end: number; corner: number } {
+  const lengths = ringSegmentLengths(ring);
+  return { longSide: lengths[2], end: lengths[4], corner: lengths[1] };
 }
 
 export function computeSafeBowlCornerRadius(
@@ -118,20 +246,19 @@ export function createRoundedBowlRing(
   // Bowed sides only exist on rounded rings (the faceted octagon keeps its straight pans).
   const bulgeX = facetedCorners ? 0 : sideBulgeX;
   const bulgeZ = facetedCorners ? 0 : sideBulgeZ;
-  const straightXLen = halfSideLength(halfStraightX, bulgeX) * 2;
-  const straightZLen = halfSideLength(halfStraightZ, bulgeZ) * 2;
-  const cornerSegLen = facetedCorners ? Math.SQRT2 * r : (Math.PI / 2) * r;
-  const perimeter = 2 * straightXLen + 2 * straightZLen + 4 * cornerSegLen;
-
-  return {
+  const ring: RoundedBowlGeometry = {
     halfStraightX,
     halfStraightZ,
     cornerRadius: r,
     facetedCorners,
-    perimeter,
+    perimeter: 0,
     sideBulgeX: bulgeX,
     sideBulgeZ: bulgeZ,
   };
+  // Summed in this order so rings without bowed sides keep their exact former perimeter.
+  const [, corner, longSide, , end] = ringSegmentLengths(ring);
+  ring.perimeter = 2 * longSide + 2 * end + 4 * corner;
+  return ring;
 }
 
 /**
@@ -172,9 +299,10 @@ export function getBowlArcRange(
  */
 function ringSegmentLengths(ring: RoundedBowlGeometry): number[] {
   const r = ring.cornerRadius;
-  const corner = ring.facetedCorners ? Math.SQRT2 * r : (Math.PI / 2) * r;
-  const halfX = halfSideLength(ring.halfStraightX, ring.sideBulgeX ?? 0);
-  const halfZ = halfSideLength(ring.halfStraightZ, ring.sideBulgeZ ?? 0);
+  const joint = bowedJoint(ring);
+  const corner = joint ? joint.cornerLen : ring.facetedCorners ? Math.SQRT2 * r : (Math.PI / 2) * r;
+  const halfX = joint ? joint.sideHalfLen : ring.halfStraightX;
+  const halfZ = joint ? joint.endHalfLen : ring.halfStraightZ;
   return [halfZ, corner, halfX * 2, corner, halfZ * 2, corner, halfX * 2, corner, halfZ];
 }
 
@@ -303,34 +431,6 @@ export function sampleRoundedBowlRing(
     };
   }
 
-  const arcX = sideArc(hx, ring.sideBulgeX ?? 0);
-  const arcZ = sideArc(hz, ring.sideBulgeZ ?? 0);
-
-  // Point on a bowed side: `along` runs from -1 to 1 over the side, `sign` picks which side of
-  // the axis it sits on, and the arc's outward normal tilts toward the side's ends.
-  const bowedEnd = (along: number, sign: number) => {
-    const arc = arcZ!;
-    const theta = along * arc.halfAngle;
-    const centre = hx + r + (ring.sideBulgeZ ?? 0) - arc.radius;
-    return {
-      bx: sign * (centre + arc.radius * Math.cos(theta)),
-      bz: arc.radius * Math.sin(theta),
-      nx: sign * Math.cos(theta),
-      nz: Math.sin(theta),
-    };
-  };
-  const bowedLongSide = (along: number, sign: number) => {
-    const arc = arcX!;
-    const theta = along * arc.halfAngle;
-    const centre = hz + r + (ring.sideBulgeX ?? 0) - arc.radius;
-    return {
-      bx: arc.radius * Math.sin(theta),
-      bz: sign * (centre + arc.radius * Math.cos(theta)),
-      nx: Math.sin(theta),
-      nz: sign * Math.cos(theta),
-    };
-  };
-
   const { segIdx, f } = locateRingSegment(ring, u);
 
   let bx = 0;
@@ -338,85 +438,95 @@ export function sampleRoundedBowlRing(
   let nx = 1;
   let nz = 0;
 
-  switch (segIdx) {
-    case 0:
-      if (arcZ) ({ bx, bz, nx, nz } = bowedEnd(f, 1));
-      else {
+  const joint = bowedJoint(ring);
+  if (joint) {
+    // Each segment is a quadrant piece mirrored by (sx, sz); `s` runs as in bowedQuadrantPoint.
+    const piece: [part: 'end' | 'corner' | 'side', s: number, sx: number, sz: number] =
+      segIdx === 0
+        ? ['end', f, 1, 1]
+        : segIdx === 1
+        ? ['corner', f, 1, 1]
+        : segIdx === 2
+        ? f < 0.5 ? ['side', 2 * f, 1, 1] : ['side', 2 - 2 * f, -1, 1]
+        : segIdx === 3
+        ? ['corner', 1 - f, -1, 1]
+        : segIdx === 4
+        ? f < 0.5 ? ['end', 1 - 2 * f, -1, 1] : ['end', 2 * f - 1, -1, -1]
+        : segIdx === 5
+        ? ['corner', f, -1, -1]
+        : segIdx === 6
+        ? f < 0.5 ? ['side', 2 * f, -1, -1] : ['side', 2 - 2 * f, 1, -1]
+        : segIdx === 7
+        ? ['corner', 1 - f, 1, -1]
+        : ['end', 1 - f, 1, -1];
+    const [part, sPart, sx, sz] = piece;
+    const q = bowedQuadrantPoint(ring, joint, part, sPart);
+    bx = sx * q.bx;
+    bz = sz * q.bz;
+    nx = sx * q.nx;
+    nz = sz * q.nz;
+  } else {
+    switch (segIdx) {
+      case 0:
         bx = hx + r;
         bz = f * hz;
-        nx = 1;
-        nz = 0;
+        break;
+      case 1: {
+        const phi = f * (Math.PI / 2);
+        nx = Math.cos(phi);
+        nz = Math.sin(phi);
+        bx = hx + nx * r;
+        bz = hz + nz * r;
+        break;
       }
-      break;
-    case 1: {
-      const phi = f * (Math.PI / 2);
-      nx = Math.cos(phi);
-      nz = Math.sin(phi);
-      bx = hx + nx * r;
-      bz = hz + nz * r;
-      break;
-    }
-    case 2:
-      if (arcX) ({ bx, bz, nx, nz } = bowedLongSide(1 - 2 * f, 1));
-      else {
+      case 2:
         bx = hx - f * (hx * 2);
         bz = hz + r;
         nx = 0;
         nz = 1;
+        break;
+      case 3: {
+        const phi = Math.PI / 2 + f * (Math.PI / 2);
+        nx = Math.cos(phi);
+        nz = Math.sin(phi);
+        bx = -hx + nx * r;
+        bz = hz + nz * r;
+        break;
       }
-      break;
-    case 3: {
-      const phi = Math.PI / 2 + f * (Math.PI / 2);
-      nx = Math.cos(phi);
-      nz = Math.sin(phi);
-      bx = -hx + nx * r;
-      bz = hz + nz * r;
-      break;
-    }
-    case 4:
-      if (arcZ) ({ bx, bz, nx, nz } = bowedEnd(1 - 2 * f, -1));
-      else {
+      case 4:
         bx = -(hx + r);
         bz = hz - f * (hz * 2);
         nx = -1;
         nz = 0;
+        break;
+      case 5: {
+        const phi = Math.PI + f * (Math.PI / 2);
+        nx = Math.cos(phi);
+        nz = Math.sin(phi);
+        bx = -hx + nx * r;
+        bz = -hz + nz * r;
+        break;
       }
-      break;
-    case 5: {
-      const phi = Math.PI + f * (Math.PI / 2);
-      nx = Math.cos(phi);
-      nz = Math.sin(phi);
-      bx = -hx + nx * r;
-      bz = -hz + nz * r;
-      break;
-    }
-    case 6:
-      if (arcX) ({ bx, bz, nx, nz } = bowedLongSide(-1 + 2 * f, -1));
-      else {
+      case 6:
         bx = -hx + f * (hx * 2);
         bz = -(hz + r);
         nx = 0;
         nz = -1;
+        break;
+      case 7: {
+        const phi = Math.PI * 1.5 + f * (Math.PI / 2);
+        nx = Math.cos(phi);
+        nz = Math.sin(phi);
+        bx = hx + nx * r;
+        bz = -hz + nz * r;
+        break;
       }
-      break;
-    case 7: {
-      const phi = Math.PI * 1.5 + f * (Math.PI / 2);
-      nx = Math.cos(phi);
-      nz = Math.sin(phi);
-      bx = hx + nx * r;
-      bz = -hz + nz * r;
-      break;
-    }
-    case 8:
-    default:
-      if (arcZ) ({ bx, bz, nx, nz } = bowedEnd(-1 + f, 1));
-      else {
+      case 8:
+      default:
         bx = hx + r;
         bz = -hz + f * hz;
-        nx = 1;
-        nz = 0;
-      }
-      break;
+        break;
+    }
   }
 
   return {
@@ -445,7 +555,9 @@ export function buildShapeBowlRing(
   sideTrackOffset: number,
   hasTrack: boolean,
   /** `rounded_rectangle`: corner rounding from a tight 6 m radius (`0`) to a full bend (`1`). */
-  cornerRoundness: number = 0.5
+  cornerRoundness: number = 0.5,
+  /** Reference ring for stand-by-stand shapes: the bowl's footprint without its bowed sides. */
+  plain: boolean = false
 ): RoundedBowlGeometry {
   if (shape === 'circular_bowl') {
     // A round bowl must clear the pitch corners: ends sit close to the goals, sides far away.
@@ -552,7 +664,48 @@ export function buildShapeBowlRing(
     );
   }
 
+  if (shape === 'modern_bowl' && !plain) {
+    return createOvalBowlRing(innerHalfX, innerHalfZ, cornerR, pitchLength / 2, pitchWidth / 2);
+  }
+
   return createRoundedBowlRing(innerHalfX, innerHalfZ, cornerR, faceted);
+}
+
+/** Outward bow of the bowl's long sides and of its ends, as a share of the ring half-size. */
+const BOWL_SIDE_BOW = 0.05;
+const BOWL_END_BOW = 0.16;
+/** Clear distance kept between a corner of the pitch and the front of the bowl (m). */
+const BOWL_CORNER_CLEARANCE = 2.6;
+
+/**
+ * The continuous bowl's oval: long sides and ends bowed outward and joined tangentially to the
+ * corners, so it reads as a bowl rather than a rounded rectangle. A tangent corner sits further
+ * in than a quarter circle, so its radius is reduced until it clears the pitch corner again.
+ */
+function createOvalBowlRing(
+  innerHalfX: number,
+  innerHalfZ: number,
+  cornerRadius: number,
+  pitchHalfX: number,
+  pitchHalfZ: number
+): RoundedBowlGeometry {
+  const build = (r: number) =>
+    createRoundedBowlRing(innerHalfX, innerHalfZ, r, false, innerHalfX * BOWL_SIDE_BOW, innerHalfZ * BOWL_END_BOW);
+  for (let r = cornerRadius; r > 4; r -= 0.25) {
+    const ring = build(r);
+    if (ringCornerClearance(ring, pitchHalfX, pitchHalfZ) >= BOWL_CORNER_CLEARANCE) return ring;
+  }
+  return build(4);
+}
+
+/** Smallest distance from the pitch corner (+x, +z) to the ring's front. */
+function ringCornerClearance(ring: RoundedBowlGeometry, pitchHalfX: number, pitchHalfZ: number): number {
+  let min = Infinity;
+  for (let i = 0; i <= 64; i++) {
+    const p = sampleRoundedBowlRing(ring, (i / 64) * 0.25, 0);
+    min = Math.min(min, Math.hypot(p.x - pitchHalfX, p.z - pitchHalfZ));
+  }
+  return min;
 }
 
 export function pointVectorOnRing(

@@ -54,9 +54,12 @@ import {
   SiteSetting,
   slopeDegFromRiser,
   StadiumShape,
+  SeatPattern,
+  SeatTierStyle,
   StandSide,
   TRACK_MAX_PITCH_WIDTH_M,
 } from '../stadium/schema';
+import { resolveSeatTierStyle } from '../stadium/seatPattern';
 import {
   computeStandSightlines,
   DEFAULT_TIER_OVERHANG_M,
@@ -79,6 +82,7 @@ import {
   SelectField,
   SliderField,
   Switch,
+  TextField,
   ToggleField,
 } from './ui';
 
@@ -689,6 +693,89 @@ const ColorField: React.FC<{
   </FieldRow>
 );
 
+const SEAT_PATTERN_OPTIONS: { id: SeatPattern; label: string }[] = [
+  { id: 'solid', label: 'Uni' },
+  { id: 'mosaic', label: 'Mosaïque aléatoire' },
+  { id: 'gradient', label: 'Dégradé vers le haut' },
+  { id: 'stripes', label: 'Rayures de rangées' },
+  { id: 'lettering', label: 'Inscription' },
+];
+
+const TIER_NAMES = ['bas', 'deuxième', 'troisième', 'quatrième', 'cinquième'];
+
+/**
+ * Colour and pattern of each tier's seats. With every stand selected an edit sets that tier on all
+ * four; with one stand selected it sets that stand's tier only.
+ */
+const SeatTiersEditor: React.FC<{ editAll: boolean; side: StandSide }> = ({ editAll, side }) => {
+  const doc = useStadiumStore((s) => s.doc);
+  const target = useStadiumStore((s) => s.activeStandTab);
+  const updateStandSeatTier = useStadiumStore((s) => s.updateStandSeatTier);
+  const stand = doc.stands[side];
+  // All stands: as many tiers as the tallest stand has, shown with the displayed stand's values.
+  const tierCount = editAll
+    ? Math.max(...(Object.keys(STAND_LABELS) as StandSide[]).map((s) => (doc.stands[s].enabled ? doc.stands[s].tiers : 0)), 1)
+    : Math.max(1, stand.tiers);
+  return (
+    <>
+      {Array.from({ length: tierCount }, (_, t) => {
+        const style = resolveSeatTierStyle(doc, stand, t);
+        const custom = stand.seatTiers?.[t] !== undefined && stand.seatTiers?.[t] !== null;
+        const set = (patch: Partial<SeatTierStyle>) => updateStandSeatTier(target, t, patch);
+        return (
+          <SubGroup key={t} title={tierCount === 1 ? 'Sièges' : `Étage ${t + 1} (${TIER_NAMES[t] ?? t + 1})`}>
+            <SelectField
+              label="Motif"
+              value={style.pattern}
+              options={SEAT_PATTERN_OPTIONS}
+              onChange={(pattern) => set({ pattern })}
+            />
+            <ColorField label="Couleur" value={style.color} onChange={(color) => set({ color })} />
+            {style.pattern !== 'solid' && (
+              <ColorField
+                label={style.pattern === 'lettering' ? 'Couleur des lettres' : 'Couleur du motif'}
+                value={style.accent}
+                onChange={(accent) => set({ accent })}
+              />
+            )}
+            {style.pattern === 'mosaic' && (
+              <SliderField
+                label="Sièges de la couleur du motif"
+                value={style.share}
+                min={0.02}
+                max={0.6}
+                step={0.01}
+                scale={100}
+                display={`${Math.round(style.share * 100)} %`}
+                onChange={(share) => set({ share })}
+              />
+            )}
+            {style.pattern === 'lettering' && (
+              <TextField
+                label="Texte"
+                value={style.text}
+                placeholder="Ex. ALLEZ"
+                maxLength={24}
+                hint="Écrit avec les sièges, en capitales, au centre de la tribune"
+                onChange={(text) => set({ text })}
+              />
+            )}
+            {custom && (
+              <button
+                type="button"
+                onClick={() => updateStandSeatTier(target, t, null)}
+                className="text-2xs text-ink-faint underline underline-offset-2 hover:text-ink"
+              >
+                Revenir aux couleurs du club
+              </button>
+            )}
+          </SubGroup>
+        );
+      })}
+    </>
+  );
+};
+
 const PanelHeader: React.FC<{ title: string; meta?: React.ReactNode; action?: React.ReactNode }> = ({
   title,
   meta,
@@ -1241,10 +1328,16 @@ const StandsPanel: React.FC = () => {
           onChange={(v) => updateColors({ seatsPrimary: v })}
         />
         <ColorField
-          label="Couleur du motif"
+          label="Couleur secondaire"
           value={doc.colors.seatsSecondary}
           onChange={(v) => updateColors({ seatsSecondary: v })}
         />
+        <p className="text-2xs leading-snug text-ink-faint">
+          {editAll
+            ? 'Couleurs du club pour tout le stade. Chaque étage ci-dessous s’applique au même étage de toutes les tribunes.'
+            : `Chaque étage ci-dessous ne concerne que la tribune ${STAND_LABELS[side].toLowerCase()}.`}
+        </p>
+        <SeatTiersEditor editAll={editAll} side={side} />
       </PanelSection>
       <PanelSection title="Public">
         <ToggleField

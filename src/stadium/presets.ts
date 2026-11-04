@@ -54,7 +54,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'bowl_bowstring_60k',
     label: 'Bol Continu à Bi-Poutres',
-    subtitle: 'Bol elliptique 3 étages · Bi-poutres lenticulaires sur 4 tours · ~60 000 pl.',
+    subtitle: 'Bol elliptique 3 étages · Bi-poutres lenticulaires sur 4 tours',
     createDocument: () => ({
       id: 'proj-bowl-60k',
       name: 'Stade Bol 3 Étages',
@@ -162,7 +162,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'cauldron_cable_42k',
     label: 'Chaudron Raide & Verrière Câblée',
-    subtitle: 'Chaudron parabolique 2–3 étages + Kop · Câbles sur colonnade V · ~43 000 pl.',
+    subtitle: 'Chaudron parabolique 2–3 étages + Kop · Câbles sur colonnade V',
     createDocument: () => ({
       id: 'proj-cauldron-42k',
       name: 'Chaudron Parabolique',
@@ -260,7 +260,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'olympic_masts_80k',
     label: 'Grand Stade Haubané Multi-Sports',
-    subtitle: 'Amphithéâtre olympique 3 étages + piste · 18 mâts aiguilles · ~81 000 pl.',
+    subtitle: 'Amphithéâtre olympique 3 étages + piste · 18 mâts aiguilles',
     createDocument: () => ({
       id: 'proj-olympic-80k',
       name: 'Grand Stade Haubané',
@@ -356,7 +356,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'octagonal_cantilever_26k',
     label: 'Arène Octogonale à Fléaux',
-    subtitle: 'Arène 8 pans coupés 2 étages · Portiques fléaux externes · ~26 000 pl.',
+    subtitle: 'Arène 8 pans coupés 2 étages · Portiques fléaux externes',
     createDocument: () => ({
       id: 'proj-octagonal-26k',
       name: 'Arène Octogonale 2 Étages',
@@ -444,7 +444,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'urban_cathedral_84k',
     label: 'Cathédrale Urbaine 5 Étages',
-    subtitle: 'Enceinte urbaine fermée 5 étages (36°) · Tours d’angles & coque · ~84 000 pl.',
+    subtitle: 'Enceinte urbaine fermée 5 étages (36°) · Tours d’angles & coque',
     createDocument: () => ({
       id: 'proj-urban-84k',
       name: 'Enceinte Urbaine 5 Étages',
@@ -544,7 +544,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'mega_retractable_88k',
     label: 'Méga-Arène à Toit Rétractable',
-    subtitle: 'Bol 5 étages · Toit à panneaux coulissants épousant l’ouverture · ~88 000 pl.',
+    subtitle: 'Bol 5 étages · Toit à panneaux coulissants épousant l’ouverture',
     createDocument: () => ({
       id: 'proj-retractable-88k',
       name: 'Méga-Arène Rétractable',
@@ -644,7 +644,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'luminous_shell_75k',
     label: 'Arène à Coque Lumineuse ETFE',
-    subtitle: 'Bol 3 étages raides · Coque intégrale translucide illuminée · ~75 000 pl.',
+    subtitle: 'Bol 3 étages raides · Coque intégrale translucide illuminée',
     createDocument: () => ({
       id: 'proj-shell-75k',
       name: 'Arène Coque Lumineuse',
@@ -740,7 +740,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'asymmetric_modular_30k',
     label: 'Enceinte Modulable Asymétrique',
-    subtitle: 'Rectangulaire 2 & 3 étages différenciés · Fléaux par tribune · ~30 000 pl.',
+    subtitle: 'Rectangulaire 2 & 3 étages différenciés · Fléaux par tribune',
     createDocument: () => ({
       id: 'proj-modular-30k',
       name: 'Enceinte Modulable Asymétrique',
@@ -836,7 +836,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'traditional_four_stands_42k',
     label: '4 Tribunes Séparées Traditionnelles',
-    subtitle: 'Maçonnerie brique & coins ouverts · Treillis à frontons vitrés · ~42 500 pl.',
+    subtitle: 'Maçonnerie brique & coins ouverts · Treillis à frontons vitrés',
     createDocument: () => ({
       id: 'proj-four-stands-42k',
       name: 'Stade 4 Tribunes Séparées',
@@ -948,7 +948,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'horseshoe_amphitheatre_38k',
     label: 'Amphithéâtre Fer à Cheval (U Ouvert)',
-    subtitle: 'Enceinte en U à 3 côtés ouverte sur terrasse panoramique · ~38 000 pl.',
+    subtitle: 'Enceinte en U à 3 côtés ouverte sur terrasse panoramique',
     createDocument: () => ({
       id: 'proj-horseshoe-38k',
       name: 'Stade en Fer à Cheval',
@@ -1053,7 +1053,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'english_kop_wall_48k',
     label: 'Stade à l’Anglaise & Mur Kop Pleine Hauteur',
-    subtitle: '4 tribunes hétérogènes à coins ouverts · Mur Kop debout 1 niveau pleine hauteur · ~49 000 pl.',
+    subtitle: '4 tribunes hétérogènes à coins ouverts · Mur Kop debout 1 niveau pleine hauteur',
     createDocument: () =>
       // The kop is a single standing tier sized to reach the tallest stand's crest.
       alignKopWall(
@@ -1173,7 +1173,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'sunken_colonnade_44k',
     label: 'Amphithéâtre Semi-Enterré à Colonnade',
-    subtitle: 'Cuvette excavée (-9,5 m) · Forêt de poteaux élancés & corniche · ~43 000 pl.',
+    subtitle: 'Cuvette excavée (-9,5 m) · Forêt de poteaux élancés & corniche',
     createDocument: () => ({
       id: 'proj-sunken-44k',
       name: 'Amphithéâtre Semi-Enterré',
@@ -1267,7 +1267,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'tensile_exposed_56k',
     label: 'Arène à Résille Tendue & Béton Apparent',
-    subtitle: 'Sous-face de gradins à nu & portiques · Voile tendu sur mâts inclinés · ~56 000 pl.',
+    subtitle: 'Sous-face de gradins à nu & portiques · Voile tendu sur mâts inclinés',
     createDocument: () => ({
       id: 'proj-tensile-56k',
       name: 'Arène Résille & Béton Brut',
@@ -1360,7 +1360,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'climatic_dome_72k',
     label: 'Dôme Intégral & Gradins Télescopiques',
-    subtitle: 'Coupole fixe à oculus · Peau coussins ETFE & gradins bas rétractables · ~70 000 pl.',
+    subtitle: 'Coupole fixe à oculus · Peau coussins ETFE & gradins bas rétractables',
     createDocument: () => ({
       id: 'proj-dome-72k',
       name: 'Dôme Multisports Modulable',
@@ -1457,7 +1457,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'circular_folded_52k',
     label: 'Bol Circulaire à Toiture Plissée',
-    subtitle: 'Enceinte ronde 3 étages · Plis en dents de scie · Coursive pleine hauteur · ~49 500 pl.',
+    subtitle: 'Enceinte ronde 3 étages · Plis en dents de scie · Coursive pleine hauteur',
     createDocument: () => ({
       id: 'proj-circular-52k',
       name: 'Stade Circulaire Plissé',
@@ -1535,7 +1535,7 @@ const BASE_PRESETS: PresetDefinition[] = [
   {
     id: 'open_ends_vault_46k',
     label: 'Bol à Virages Ouverts & Couronne Voûtée',
-    subtitle: 'Toit voûté sur les seules tribunes latérales · Écrans en haut des virages · ~42 500 pl.',
+    subtitle: 'Toit voûté sur les seules tribunes latérales · Écrans en haut des virages',
     createDocument: () => ({
       id: 'proj-open-ends-46k',
       name: 'Stade aux Virages à Ciel Ouvert',
@@ -1653,7 +1653,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'bowl_bowstring_60k',
     'sliding_roof_arena_50k',
     'Arène à Toit Coulissant',
-    'Quatre panneaux sur méga-poutres · pelouse relevable en mode arène · ~50 000 pl.',
+    'Quatre panneaux sur méga-poutres · pelouse relevable en mode arène',
     'Arène Toit Coulissant',
     50000,
     (doc) => {
@@ -1671,7 +1671,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'olympic_masts_80k',
     'stayed_masts_80k',
     'Grand Stade Haubané à 18 Mâts',
-    'Toit suspendu à 18 mâts par groupes de haubans · tribune basse mobile · ~80 000 pl.',
+    'Toit suspendu à 18 mâts par groupes de haubans · tribune basse mobile',
     'Stade Haubané 18 Mâts',
     80000,
     (doc) => {
@@ -1682,7 +1682,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'bowl_bowstring_60k',
     'concrete_portals_48k',
     'Ovale à Portiques en Béton',
-    '50 portiques précontraints hors façade, crête ondulée, aucun poteau · ~48 000 pl.',
+    '50 portiques précontraints hors façade, crête ondulée, aucun poteau',
     'Ovale Portiques Béton',
     48000,
     (doc) => {
@@ -1694,7 +1694,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'bowl_bowstring_60k',
     'timber_lattice_36k',
     'Stade en Résille de Bois',
-    'Losanges de bois lamellé-collé de la façade au toit · membrane ETFE · ~36 000 pl.',
+    'Losanges de bois lamellé-collé de la façade au toit · membrane ETFE',
     'Stade Résille Bois',
     36000,
     (doc) => {
@@ -1706,7 +1706,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'bowl_bowstring_60k',
     'lace_canopy_20k',
     'Stade en Dentelle de Béton',
-    'Peau ajourée en béton fibré à hauteur ondulante, triangles vitrés · ~20 000 pl.',
+    'Peau ajourée en béton fibré à hauteur ondulante, triangles vitrés',
     'Stade Dentelle',
     20000,
     (doc) => {
@@ -1723,7 +1723,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'traditional_four_stands_42k',
     'corner_girders_38k',
     'Quatre Tribunes et Méga-Poutres',
-    'Tribunes indépendantes coiffées de 4 méga-poutres sur pylônes d’angle de 72 m · ~38 000 pl.',
+    'Tribunes indépendantes coiffées de 4 méga-poutres sur pylônes d’angle de 72 m',
     'Quatre Tribunes Méga-Poutres',
     38000,
     (doc) => {
@@ -1734,7 +1734,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'bowl_bowstring_60k',
     'space_frame_crown_67k',
     'Couronne en Treillis 3D',
-    'Résille de poutres treillis sur 4 appuis d’angle, couverture bombée en PTFE · ~67 000 pl.',
+    'Résille de poutres treillis sur 4 appuis d’angle, couverture bombée en PTFE',
     'Couronne Treillis 3D',
     67000,
     (doc) => {
@@ -1746,7 +1746,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'bowl_bowstring_60k',
     'counterweight_trusses_59k',
     'Fermes Rayonnantes à Contre-Poids',
-    '32 fermes en porte-à-faux ancrées par tirants derrière les tribunes · ~59 000 pl.',
+    '32 fermes en porte-à-faux ancrées par tirants derrière les tribunes',
     'Fermes à Contre-Poids',
     59000,
     (doc) => {
@@ -1757,7 +1757,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'traditional_four_stands_42k',
     'column_forest_42k',
     'Forêt de Poteaux et Tribunes Mixtes',
-    'Péristyle de ~600 poteaux fins · deux tribunes béton, deux tribunes acier · ~42 000 pl.',
+    'Péristyle de ~600 poteaux fins · deux tribunes béton, deux tribunes acier',
     'Forêt de Poteaux',
     42000,
     (doc) => {
@@ -1770,7 +1770,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'bowl_bowstring_60k',
     'closed_scales_arena_30k',
     'Arène Fermée à Écailles',
-    'Toit fermé sur 4 méga-poutres de 80 m · façade bombée en écailles de béton · ~30 000 pl.',
+    'Toit fermé sur 4 méga-poutres de 80 m · façade bombée en écailles de béton',
     'Arène Écailles',
     30000,
     (doc) => {
@@ -1787,7 +1787,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'olympic_masts_80k',
     'inclined_mast_56k',
     'Mât Incliné et Membrane Repliable',
-    'Membrane suspendue à un mât incliné, repliée vers un anneau central · ~56 000 pl.',
+    'Membrane suspendue à un mât incliné, repliée vers un anneau central',
     'Mât Incliné',
     56000,
     (doc) => {
@@ -1802,7 +1802,7 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     'bowl_bowstring_60k',
     'stacking_roof_50k',
     'Toit Empilable Coulissant et Pivotant',
-    'Quatre panneaux : un fixe, deux coulissants, un pivotant qui vient s’empiler · ~50 000 pl.',
+    'Quatre panneaux : un fixe, deux coulissants, un pivotant qui vient s’empiler',
     'Toit Empilable',
     50000,
     (doc) => {

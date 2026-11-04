@@ -234,6 +234,28 @@ export interface StandConfig {
   tifo?: boolean;
   /** Supporters' banners hung over the pitch wall and balcony fronts. */
   banners?: boolean;
+  /** Seat colour and pattern of each tier, front tier first; unset tiers keep the club colours. */
+  seatTiers?: (SeatTierStyle | undefined)[];
+}
+
+/**
+ * How the seats of one tier are coloured: `solid` one colour, `mosaic` seats of the accent colour
+ * scattered at random through the main one, `gradient` the accent thickening from the front rows
+ * to the back, `stripes` bands of rows alternating both colours, `lettering` a word written in
+ * the accent colour across the stand.
+ */
+export type SeatPattern = 'solid' | 'mosaic' | 'gradient' | 'stripes' | 'lettering';
+
+export interface SeatTierStyle {
+  pattern?: SeatPattern;
+  /** Main seat colour (hex). */
+  color?: string;
+  /** Second colour of the pattern (hex). */
+  accent?: string;
+  /** `mosaic`: share of accent seats (`0..1`). */
+  share?: number;
+  /** `lettering`: the word written across the stand. */
+  text?: string;
 }
 
 /** How the movable roof panels travel (typology of Mahovič, 2015). */

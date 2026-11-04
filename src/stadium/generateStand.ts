@@ -49,6 +49,7 @@ import {
   StandSide,
   resolveCrowdAttendance,
 } from './schema';
+import { createStandSeatPainter, SeatPainter } from './seatPattern';
 import {
   computeStandSection,
   StandSection,
@@ -808,6 +809,7 @@ function buildStraightStandMesh(
   group.add(bowlMesh);
 
   if (seats3d && stand.seatingType !== 'safe_standing') {
+    const standPainter = createStandSeatPainter(doc, stand);
     const seats = buildSweepSeatInstances({
       ringCount: sliceRingCount,
       activeSegments: sliceActiveSegs,
@@ -824,6 +826,8 @@ function buildStraightStandMesh(
       isHoleQuad,
       attendance: resolveCrowdAttendance(mats),
       tifo: mats.crowd === true && stand.tifo,
+      // Rows run left to right as seen from the pitch.
+      paint: (seat, out) => standPainter(seat.tier, { ...seat, u: seat.along / Math.max(1e-6, seat.rowLength) }, out),
     });
     if (seats) group.add(seats);
   }
@@ -1696,10 +1700,26 @@ function getSeatMaterial(): THREE.MeshStandardMaterial {
   return seatMaterialCache;
 }
 
+/** One seat of a swept stand, as `buildSweepSeatInstances` hands it to its painter. */
+interface SweepSeat {
+  tier: number;
+  /** Row within the tier, front row first, and the tier's row count. */
+  rowInTier: number;
+  rowsInTier: number;
+  /** Profile slice the seat stands on, and how far along it toward the next one (`0..1`). */
+  slice: number;
+  sliceFrac: number;
+  /** Distance along the row from its start (m), and the row's length. */
+  along: number;
+  rowLength: number;
+  index: number;
+}
+
 /**
  * Places individual seats on every seat tread of a swept stand, using the same profile slices and
  * world mapping as `buildMultiMaterialSweptStandGeometry`. Seats are spaced by `seatWidth`, leave
- * radial aisles and carved vomitory openings empty, fill deep treads with several rows, and alternate club colours per tier.
+ * radial aisles and carved vomitory openings empty, fill deep treads with several rows, and colour
+ * each seat through `paint` (club colours alternating per tier without it).
  */
 function buildSweepSeatInstances(opts: {
   ringCount: number;
@@ -1719,6 +1739,8 @@ function buildSweepSeatInstances(opts: {
   attendance: number;
   /** Dress every spectator in the club-colour tifo pattern. */
   tifo?: boolean;
+  /** Seat colour; without it tiers alternate the two club colours. */
+  paint?: (seat: SweepSeat, out: THREE.Color) => THREE.Color;
 }): THREE.Group | null {
   const {
     ringCount,
@@ -1736,6 +1758,7 @@ function buildSweepSeatInstances(opts: {
     isHoleQuad,
     attendance,
     tifo = false,
+    paint,
   } = opts;
   const pitch = Math.max(0.42, seatWidth);
   const nextSlice = (s: number) => (closed ? (s + 1) % ringCount : s + 1);
@@ -1756,14 +1779,26 @@ function buildSweepSeatInstances(opts: {
     tierOfSegment[p] = tier;
   });
 
-  type SeatRow = { p: number; f: number };
+  type SeatRow = { p: number; f: number; rowInTier: number };
   const rows: SeatRow[] = [];
+  const rowsPerTier: number[] = [];
   const ref = profilePtsPerSlice[0];
+  // A tread holds as many rows as fit in its depth. The bowl sweeps a fixed number of terrace
+  // steps whatever the row count, so each step's share is fractional: carrying the remainder from
+  // step to step keeps the drawn rows equal to the depth's (rounding each step lost or added rows).
+  let rowsSoFar = 0;
+  let placedRows = 0;
   isSeatSegmentMask.forEach((isSeat, p) => {
     if (!isSeat) return;
-    const treadDepth = Math.abs(ref[p + 1][0] - ref[p][0]);
-    const count = Math.max(1, Math.round(treadDepth / Math.max(0.6, rowDepth)));
-    for (let k = 0; k < count; k++) rows.push({ p, f: (k + 0.52) / count });
+    rowsSoFar += Math.abs(ref[p + 1][0] - ref[p][0]) / Math.max(0.6, rowDepth);
+    // A shallow step may hold no row at all when the stand has fewer rows than steps.
+    const count = Math.max(0, Math.round(rowsSoFar - placedRows));
+    placedRows += count;
+    const t = tierOfSegment[p];
+    for (let k = 0; k < count; k++) {
+      rows.push({ p, f: (k + 0.52) / count, rowInTier: rowsPerTier[t] ?? 0 });
+      rowsPerTier[t] = (rowsPerTier[t] ?? 0) + 1;
+    }
   });
   if (rows.length === 0) return null;
 
@@ -1776,7 +1811,7 @@ function buildSweepSeatInstances(opts: {
     return new THREE.Vector3(...sampleWorldPoint(s, d, y));
   };
 
-  const placements: { m: THREE.Matrix4; tier: number }[] = [];
+  const placements: { m: THREE.Matrix4; seat: SweepSeat }[] = [];
   // Centre of each aisle on each row, front to back, for the aisle handrails.
   const aislePoints: { pos: THREE.Vector3; tier: number }[][] = Array.from(
     { length: Math.max(0, aisleCount) },
@@ -1821,7 +1856,20 @@ function buildSweepSeatInstances(opts: {
           if (aisleAt.some((x) => Math.abs(x - at) < aisleWidth * 0.5 + pitch * 0.4)) continue;
           const pos = new THREE.Vector3().lerpVectors(a, b, along / len);
           const m = new THREE.Matrix4().makeBasis(xAxis, up, zAxis).setPosition(pos);
-          placements.push({ m, tier: tierOfSegment[row.p] });
+          const tierIdx = tierOfSegment[row.p];
+          placements.push({
+            m,
+            seat: {
+              tier: tierIdx,
+              rowInTier: row.rowInTier,
+              rowsInTier: rowsPerTier[tierIdx] ?? 1,
+              slice: s,
+              sliceFrac: along / len,
+              along: at,
+              rowLength: total,
+              index: placements.length,
+            },
+          });
         }
       }
       // Carry the spacing into the next slice so seats stay evenly spaced across slice joins.
@@ -1836,11 +1884,12 @@ function buildSweepSeatInstances(opts: {
   const primary = new THREE.Color(primaryHex);
   const secondary = new THREE.Color(secondaryHex);
   const tint = new THREE.Color();
-  placements.forEach(({ m, tier: t }, i) => {
+  placements.forEach(({ m, seat }, i) => {
     mesh.setMatrixAt(i, m);
     const jitter = 0.92 + (((Math.sin(i * 12.9898) * 43758.5453) % 1) + 1) % 1 * 0.14;
-    tint.copy(t % 2 === 0 ? primary : secondary).multiplyScalar(jitter);
-    mesh.setColorAt(i, tint);
+    if (paint) paint(seat, tint);
+    else tint.copy(seat.tier % 2 === 0 ? primary : secondary);
+    mesh.setColorAt(i, tint.multiplyScalar(jitter));
   });
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -2511,6 +2560,8 @@ function buildCornerVirageQuadrant(
   group.add(cornerMesh);
 
   if (cornerSeats3d) {
+    const painterA = createStandSeatPainter(doc, standA, { lettering: false });
+    const painterB = createStandSeatPainter(doc, standB, { lettering: false });
     const seats = buildSweepSeatInstances({
       ringCount: segs + 1,
       activeSegments: segs,
@@ -2528,6 +2579,11 @@ function buildCornerVirageQuadrant(
       primaryHex: doc.colors.seatsPrimary,
       secondaryHex: doc.colors.seatsSecondary,
       attendance: resolveCrowdAttendance(resolveStadiumMaterials(doc)),
+      // Each half of the corner carries the colours of the stand it runs into.
+      paint: (seat, out) => {
+        const u = seat.along / Math.max(1e-6, seat.rowLength);
+        return (u < 0.5 ? painterA : painterB)(seat.tier, { ...seat, u }, out);
+      },
     });
     if (seats) group.add(seats);
   }
@@ -4395,6 +4451,10 @@ function buildModernBowlSweep(
 
   if (bowlSeats3d) {
     const refStand = doc.stands.south;
+    // Quarters of the ring from t = 0: east, south, west, north.
+    const bowlPainters: SeatPainter[] = (['east', 'south', 'west', 'north'] as StandSide[]).map((side) =>
+      createStandSeatPainter(doc, doc.stands[side])
+    );
     const seats = buildSweepSeatInstances({
       ringCount,
       activeSegments,
@@ -4413,6 +4473,18 @@ function buildModernBowlSweep(
       secondaryHex: doc.colors.seatsSecondary,
       isHoleQuad: isBowlQuadHole,
       attendance: resolveCrowdAttendance(mats),
+      paint: (seat, out) => {
+        // The stand whose quarter of the ring the seat is in; t grows to a spectator's right.
+        const t = tAtSlice(seat.slice + seat.sliceFrac);
+        const quarter = ((Math.round(t * 4) % 4) + 4) % 4;
+        const offset = t - quarter / 4;
+        const local = offset - Math.round(offset);
+        return bowlPainters[quarter](
+          seat.tier,
+          { ...seat, u: local * 4 + 0.5, rowLength: seat.rowLength / 4 },
+          out
+        );
+      },
     });
     if (seats) group.add(seats);
   }
@@ -5445,7 +5517,9 @@ export function generateStandsGroup(
       avgDistZ,
       trackOffsets.endOffset,
       trackOffsets.sideOffset,
-      safePitch.hasTrack
+      safePitch.hasTrack,
+      undefined,
+      true
     );
     const maxD = Math.max(
       buildStandProfilePoints(doc.stands.south).totalDepth,

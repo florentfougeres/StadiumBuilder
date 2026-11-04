@@ -38,6 +38,7 @@ import {
   StandConfig,
   StandSide,
   StandTierConfig,
+  SeatTierStyle,
   TransformMode,
 } from '../stadium/schema';
 import { resolveStandTiers } from '../stadium/sightlines';
@@ -128,6 +129,11 @@ export interface StadiumStoreState {
     tierIndex: number,
     patch: Partial<StandTierConfig>
   ) => void;
+  /**
+   * Seat colour and pattern of one tier. On every stand at once (`all`) it sets that tier only,
+   * keeping what each stand has on its other tiers; `null` returns the tier to the club colours.
+   */
+  updateStandSeatTier: (target: StandTarget, tierIndex: number, patch: Partial<SeatTierStyle> | null) => void;
   resetStandTiersUniform: (target: StandTarget) => void;
   convertStandToKopWall: (target: StandTarget) => void;
   applyTargetCapacity: (targetCapacity: number) => void;
@@ -653,6 +659,16 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     updateStandTier: (target, tierIndex, patch) =>
       commitChange((d) => {
         for (const side of standsOf(target)) applyStandTierPatch(d, side, tierIndex, patch);
+      }),
+
+    updateStandSeatTier: (target, tierIndex, patch) =>
+      commitChange((d) => {
+        for (const side of standsOf(target)) {
+          const prev = d.stands[side];
+          const seatTiers = [...(prev.seatTiers ?? [])];
+          seatTiers[tierIndex] = patch === null ? undefined : { ...seatTiers[tierIndex], ...patch };
+          d.stands[side] = { ...prev, seatTiers };
+        }
       }),
 
     resetStandTiersUniform: (target) =>

@@ -386,6 +386,43 @@ export const IconButton: React.FC<
   </button>
 );
 
+/** Short text on one row, committed on Enter or when leaving the field rather than per keystroke. */
+export const TextField: React.FC<{
+  label: string;
+  value: string;
+  placeholder?: string;
+  maxLength?: number;
+  hint?: string;
+  onChange: (value: string) => void;
+}> = ({ label, value, placeholder, maxLength, hint, onChange }) => {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft !== null && draft !== value) onChange(draft);
+    setDraft(null);
+  };
+  return (
+    <FieldRow label={label} hint={hint}>
+      <input
+        type="text"
+        aria-label={label}
+        value={draft ?? value}
+        placeholder={placeholder}
+        maxLength={maxLength}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') {
+            setDraft(null);
+            e.currentTarget.blur();
+          }
+        }}
+        className={`w-36 h-7 px-2 text-xs text-ink ${fieldClass}`}
+      />
+    </FieldRow>
+  );
+};
+
 export const NumberField: React.FC<{
   label: string;
   value: number;
