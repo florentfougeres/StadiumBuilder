@@ -214,6 +214,10 @@ function buildSlidingRoof(group: THREE.Group, contour: Pt[], kit: PanelKit, ctx:
   const along = (d: number) =>
     axis === 'x' ? new THREE.Vector3(d, 0, 0) : new THREE.Vector3(0, 0, d);
 
+  // Parked panels stay over the canopy band at their end: a panel wider than the band leaves
+  // part of the opening covered rather than overhanging the facade. `slide_off` rolls clear.
+  const band = Math.max(4, ctx.outerOffset - ctx.innerOffset - LEAF_OVERLAP);
+  const offSite = cfg.motion === 'slide_off';
   let farthest = 0;
   for (const s of strips) {
     const rank = strips
@@ -224,8 +228,9 @@ function buildSlidingRoof(group: THREE.Group, contour: Pt[], kit: PanelKit, ctx:
     const nz = axis === 'z' ? 1 : 0;
     const poly = clipHalfPlane(clipHalfPlane(contour, -nx, -nz, -s.lo), nx, nz, s.hi);
     if (poly.length < 3 || polygonArea(poly) < 1) continue;
-    // Fully open, the panel's trailing edge clears the opening edge on its side.
-    const travel = s.dir > 0 ? uMax - s.lo : -(s.hi - uMin);
+    const clear = s.dir > 0 ? uMax - s.lo : -(s.hi - uMin);
+    const overBand = s.dir > 0 ? uMax + band - s.hi : -(s.lo - (uMin - band));
+    const travel = offSite || Math.abs(overBand) > Math.abs(clear) ? clear : overBand;
     farthest = Math.max(farthest, Math.abs(travel));
     const offset = along(travel * cfg.openRatio).setY(stackLift(rank, cfg.openRatio));
     addPanel(group, poly, kit, new THREE.Matrix4().makeTranslation(offset.x, offset.y, offset.z));
@@ -234,8 +239,7 @@ function buildSlidingRoof(group: THREE.Group, contour: Pt[], kit: PanelKit, ctx:
   // Two runway girders, parallel to the travel axis, long enough for the parked panels.
   const mid = chordAt(contour, axis, (uMin + uMax) / 2) ?? [-10, 10];
   const halfDepth = Math.min(Math.abs(mid[0]), Math.abs(mid[1]));
-  const offSite = cfg.motion === 'slide_off';
-  const parkReach = offSite ? farthest : Math.min(farthest, w);
+  const parkReach = offSite ? farthest : Math.min(farthest, w, band);
   const gLo = uMin - (strips.some((s) => s.dir < 0) ? parkReach : 0);
   const gHi = uMax + (strips.some((s) => s.dir > 0) ? parkReach : 0);
   const girderH = cfg.panelKind === 'rigid' ? 2.6 : 1.6;
@@ -323,22 +327,55 @@ function buildHingedFlapRoof(group: THREE.Group, contour: Pt[], kit: PanelKit, c
 }
 
 /**
- * `iris`: petals twist like a camera diaphragm while retreating outward along their bisector,
- * so that fully open, every petal tip sits on the rim and the pitch is clear.
+ * `iris`: spiral petals tile the opening like a camera diaphragm (each edge curls by
+ * `IRIS_CURL` toward the centre). Opening, every petal twists and slides outward along its
+ * bisector onto the fixed crown, never farther than the crown is deep, so it stays over the roof
+ * instead of overhanging the facade; alternate petals ride higher to pass over their neighbours.
  */
+const IRIS_CURL = 0.55;
+
+function irisPetal(contour: Pt[], a0: number, a1: number, curl: number): Pt[] {
+  const steps = 14;
+  const at = (f: number, a: number): Pt => {
+    const rim = rayHit(contour, a);
+    return { x: rim.x * f, z: rim.z * f };
+  };
+  const poly: Pt[] = [];
+  // Leading edge from the centre out to the rim, rim arc, trailing edge back to the centre.
+  for (let i = 0; i <= steps; i++) {
+    const f = i / steps;
+    poly.push(at(f, a0 + curl * (1 - f)));
+  }
+  for (let i = 1; i < steps; i++) {
+    poly.push(at(1, a0 + ((a1 - a0) * i) / steps));
+  }
+  for (let i = steps; i >= 1; i--) {
+    const f = i / steps;
+    poly.push(at(f, a1 + curl * (1 - f)));
+  }
+  return poly;
+}
+
 function buildIrisRoof(group: THREE.Group, contour: Pt[], kit: PanelKit, ctx: RetractableContext): void {
   const { cfg } = kit;
-  const twist = Math.PI / cfg.panelCount;
-  for (const { poly, a0, a1, k } of sectorWedges(contour, cfg.panelCount)) {
-    const p = rayHit(contour, a0);
+  const n = cfg.panelCount;
+  const twist = (0.35 * Math.PI) / n;
+  const band = Math.max(3, ctx.outerOffset - ctx.innerOffset - LEAF_OVERLAP);
+  const curl = IRIS_CURL * ((2 * Math.PI) / n);
+  for (let k = 0; k < n; k++) {
+    const a0 = ((k - 0.5) * 2 * Math.PI) / n;
+    const a1 = ((k + 0.5) * 2 * Math.PI) / n;
     const mid = (a0 + a1) / 2;
-    const reach = Math.hypot(rayHit(contour, mid).x, rayHit(contour, mid).z) * cfg.openRatio;
-    // Alternate petals step up so neighbours slide over one another.
-    const lift = (k % 2) * 0.35 * Math.min(1, cfg.openRatio * 4) + k * 0.04;
+    if (ctx.crossSectionClip && Math.sin(mid) > 0.2) continue;
+    const poly = irisPetal(contour, a0, a1, curl);
+    const rimDist = Math.hypot(rayHit(contour, mid).x, rayHit(contour, mid).z);
+    const reach = Math.min(band, rimDist) * cfg.openRatio;
+    const lift = (k % 2) * 0.6 * Math.min(1, cfg.openRatio * 4) + 0.05 * k * Math.min(1, cfg.openRatio * 4);
     const m = new THREE.Matrix4()
       .makeTranslation(Math.cos(mid) * reach, lift, Math.sin(mid) * reach)
       .multiply(rotationAboutPoint(UP, -twist * cfg.openRatio, ORIGIN));
     addPanel(group, poly, kit, m);
+    const p = rayHit(contour, a0);
     const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 2.4, 10), ctx.primaryStructMat);
     pin.position.set(p.x, kit.leafY + 0.4, p.z);
     pin.name = 'RetractableRoofIrisPin';
@@ -570,10 +607,13 @@ function buildCombinedStackRoof(group: THREE.Group, contour: Pt[], kit: PanelKit
   group.add(buildRingRail(contour, kit.leafY - 0.5, ctx.primaryStructMat));
 }
 
+/**
+ * Movable panels at the document's `openRatio`. The group's `userData.rebuildAt(ratio)` rebuilds
+ * them at another opening with the same materials, so the editor can animate the roof frame by
+ * frame without regenerating the stadium.
+ */
 export function buildRetractablePanels(doc: StadiumDocument, ctx: RetractableContext): THREE.Group {
-  const group = new THREE.Group();
-  group.name = 'RetractableRoofPanels';
-  const cfg = resolveRetractable(doc.roof);
+  const base = resolveRetractable(doc.roof);
 
   const contourSegs = 96;
   const contour: Pt[] = [];
@@ -584,42 +624,47 @@ export function buildRetractablePanels(doc: StadiumDocument, ctx: RetractableCon
   }
 
   const translucent =
-    cfg.panelMaterial === 'polycarbonate_glass' || cfg.panelMaterial === 'etfe_cushions';
+    base.panelMaterial === 'polycarbonate_glass' || base.panelMaterial === 'etfe_cushions';
   const opacity = translucent
-    ? Math.min(doc.roof.opacity, cfg.openRatio === 0 ? 0.84 : 0.65)
+    ? Math.min(doc.roof.opacity, base.openRatio === 0 ? 0.84 : 0.65)
     : doc.roof.opacity;
-  const kit: PanelKit = {
-    cfg,
-    panelMat: createRoofPbrMaterial(cfg.panelMaterial, opacity, doc.lighting, false, ctx.maxAnisotropy, 4, 4),
-    shadowMat: createRoofShadowDepthMaterial(cfg.panelMaterial, opacity, 'none', 0, 0.04, 0.04),
-    frameMat: ctx.primaryStructMat,
-    leafY: ctx.roofY + 2.15,
-  };
+  const panelMat = createRoofPbrMaterial(base.panelMaterial, opacity, doc.lighting, false, ctx.maxAnisotropy, 4, 4);
+  const shadowMat = createRoofShadowDepthMaterial(base.panelMaterial, opacity, 'none', 0, 0.04, 0.04);
 
-  switch (cfg.motion) {
-    case 'slide_longitudinal':
-    case 'slide_transverse':
-    case 'slide_off':
-      buildSlidingRoof(group, contour, kit, ctx);
-      break;
-    case 'rotate_vertical':
-      buildRotatingRoof(group, contour, kit, ctx);
-      break;
-    case 'rotate_horizontal':
-      buildHingedFlapRoof(group, contour, kit, ctx);
-      break;
-    case 'iris':
-      buildIrisRoof(group, contour, kit, ctx);
-      break;
-    case 'fold_central':
-      buildCentralFoldRoof(group, contour, kit, ctx);
-      break;
-    case 'fold_edge':
-      buildEdgeFoldRoof(group, contour, kit, ctx);
-      break;
-    case 'combined_stack':
-      buildCombinedStackRoof(group, contour, kit, ctx);
-      break;
-  }
-  return group;
+  const buildAt = (openRatio: number): THREE.Group => {
+    const group = new THREE.Group();
+    group.name = 'RetractableRoofPanels';
+    const cfg: RetractableConfig = { ...base, openRatio: Math.max(0, Math.min(1, openRatio)) };
+    const kit: PanelKit = { cfg, panelMat, shadowMat, frameMat: ctx.primaryStructMat, leafY: ctx.roofY + 2.15 };
+    switch (cfg.motion) {
+      case 'slide_longitudinal':
+      case 'slide_transverse':
+      case 'slide_off':
+        buildSlidingRoof(group, contour, kit, ctx);
+        break;
+      case 'rotate_vertical':
+        buildRotatingRoof(group, contour, kit, ctx);
+        break;
+      case 'rotate_horizontal':
+        buildHingedFlapRoof(group, contour, kit, ctx);
+        break;
+      case 'iris':
+        buildIrisRoof(group, contour, kit, ctx);
+        break;
+      case 'fold_central':
+        buildCentralFoldRoof(group, contour, kit, ctx);
+        break;
+      case 'fold_edge':
+        buildEdgeFoldRoof(group, contour, kit, ctx);
+        break;
+      case 'combined_stack':
+        buildCombinedStackRoof(group, contour, kit, ctx);
+        break;
+    }
+    // Kept out of the static mesh merge so it can be swapped while the roof moves.
+    group.userData.keepSeparate = true;
+    group.userData.rebuildAt = buildAt;
+    return group;
+  };
+  return buildAt(base.openRatio);
 }

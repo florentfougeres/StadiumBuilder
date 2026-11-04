@@ -184,6 +184,7 @@ export const LightingControl: React.FC = () => {
   const setLighting = useStadiumStore((s) => s.setLighting);
   return (
     <Segmented
+      nowrap
       label="Éclairage"
       value={lighting}
       onChange={setLighting}
@@ -245,6 +246,7 @@ export const Toolbar: React.FC = () => {
 
       <div className="flex items-center gap-2">
         <Segmented
+          nowrap
           label="Caméra"
           value={cameraMode}
           onChange={setCameraMode}
@@ -264,6 +266,7 @@ export const Toolbar: React.FC = () => {
         </div>
         {selectedObjectId && (
           <Segmented
+            nowrap
             label="Outil de transformation"
             value={transformMode}
             onChange={setTransformMode}

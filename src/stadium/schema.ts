@@ -56,6 +56,24 @@ export type RoofStyle =
  */
 export type EnvelopeProfile = 'straight' | 'bulging' | 'tent';
 
+/**
+ * Roof systems that are one shell with the facade (roof and envelope built as a single skin).
+ * The editor offers them as envelopes: choosing one replaces both the facade and the roof.
+ */
+export const INTEGRAL_SHELL_STYLES = [
+  'enveloping_shell',
+  'faceted_shell',
+  'saddle_vault',
+  'pleated_crown',
+  'timber_lattice',
+] as const satisfies readonly RoofStyle[];
+
+export type IntegralShellStyle = (typeof INTEGRAL_SHELL_STYLES)[number];
+
+export function isIntegralShell(style: RoofStyle): style is IntegralShellStyle {
+  return (INTEGRAL_SHELL_STYLES as readonly RoofStyle[]).includes(style);
+}
+
 export type EnvelopeStyle =
   | 'enveloping_skin'
   | 'exposed_structure'
@@ -617,6 +635,27 @@ export interface PlacedObject {
   color?: string;
   mount?: ObjectMount;
   mountSide?: StandSide;
+  /** `halo_screen`: long-axis diameter of the elliptical ring (m). */
+  haloDiameter?: number;
+  /** `halo_screen`: height of the LED band (m). */
+  haloBandHeight?: number;
+}
+
+export const HALO_LIMITS = {
+  diameter: { min: 16, max: 80, def: 45 },
+  bandHeight: { min: 2, max: 14, def: 4.6 },
+} as const;
+
+/** Short axis of the halo ellipse as a share of its diameter (Atlanta-style oval). */
+export const HALO_MINOR_RATIO = 0.7;
+
+export function resolveHaloSize(obj: PlacedObject): { rx: number; rz: number; bandHeight: number } {
+  const d = Math.max(HALO_LIMITS.diameter.min, Math.min(HALO_LIMITS.diameter.max, obj.haloDiameter ?? HALO_LIMITS.diameter.def));
+  const h = Math.max(
+    HALO_LIMITS.bandHeight.min,
+    Math.min(HALO_LIMITS.bandHeight.max, obj.haloBandHeight ?? HALO_LIMITS.bandHeight.def)
+  );
+  return { rx: d / 2, rz: (d / 2) * HALO_MINOR_RATIO, bandHeight: h };
 }
 
 /** Building mass wrapping the bowl behind the stands (see generateConcourse). */

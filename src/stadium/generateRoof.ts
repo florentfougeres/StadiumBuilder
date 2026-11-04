@@ -38,8 +38,10 @@ import {
   RoofStyle,
   StadiumDocument,
   StadiumShape,
+  StandConfig,
   StandSide,
 } from './schema';
+import { standTreadHeightAt } from './sightlines';
 import { buildRetractablePanels } from './generateRetractableRoof';
 import { beamGeometry, chordAt, mergedMesh } from './roofBeams';
 
@@ -2916,6 +2918,29 @@ function buildFixedDomeRoof(
 }
 
 /**
+ * Terrace surface height of a continuous bowl at a share `depthRatio` of the local stand depth,
+ * blending the four stand sections with the same weights as the ring's height and depth.
+ */
+function treadHeightAtNormal(doc: StadiumDocument, nx: number, nz: number, depthRatio: number): number {
+  const weights: [StandSide, number][] = [
+    ['east', Math.pow(Math.max(0, nx), 2.2)],
+    ['west', Math.pow(Math.max(0, -nx), 2.2)],
+    ['south', Math.pow(Math.max(0, nz), 2.2)],
+    ['north', Math.pow(Math.max(0, -nz), 2.2)],
+  ];
+  let sum = 0;
+  let acc = 0;
+  for (const [side, w] of weights) {
+    const stand = doc.stands[side];
+    if (w <= 0 || !stand.enabled || stand.rows <= 0) continue;
+    const depth = calculateStandMetrics(doc, side).totalDepth;
+    acc += w * standTreadHeightAt(stand, depthRatio * depth);
+    sum += w;
+  }
+  return sum > 0 ? acc / sum : 0;
+}
+
+/**
  * Continuous-bowl implementations of `column_supported` and `goalpost_truss`
  */
 function buildContinuousColumnOrGoalpostRoof(
@@ -3003,10 +3028,9 @@ function buildContinuousColumnOrGoalpostRoof(
       const t = tStart + frac * (tEnd - tStart);
       const s0 = sampleRoundedBowlRing(ring, t, 0);
       const d0 = standDepthAtNormal(s0.nx, s0.nz);
-      const h0 = standHeightAtNormal(s0.nx, s0.nz);
       const plantOff = Math.max(innerOff + 2.2, d0 * 0.58);
       const pStand = sampleRoundedBowlRing(ring, t, plantOff);
-      const footY = Math.max(2.0, h0 * 0.56);
+      const footY = treadHeightAtNormal(doc, s0.nx, s0.nz, plantOff / Math.max(1, d0)) - 0.1;
       group.add(
         createStrutBetween(
           new THREE.Vector3(pStand.x, footY, pStand.z),
@@ -3101,6 +3125,7 @@ function buildSingleStandRoofGroup(
   standTopY: number,
   roofHeight: number,
   doc: StadiumDocument,
+  stand: StandConfig,
   membraneMat: THREE.Material,
   shadowDepthMat: THREE.MeshDepthMaterial,
   primaryStructMat: THREE.Material,
@@ -3152,7 +3177,8 @@ function buildSingleStandRoofGroup(
 
     const colCount = Math.max(6, Math.floor(roofSpan / 13.5));
     const stanchionZ = frontZ + Math.min(3.4, roofDepth * 0.22);
-    const terraceFootY = Math.max(1.8, standTopY * 0.54);
+    // Feet stand on the tread they pierce (slightly sunk so no gap shows at the base).
+    const terraceFootY = standTreadHeightAt(stand, stanchionZ) - 0.1;
 
     for (let i = 0; i < colCount; i++) {
       const cx =
@@ -3770,8 +3796,9 @@ function buildFacetedShellRoof(
   const { ring, maxStandH, avgDepth, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
   const roofY = maxStandH + Math.max(4, doc.roof.heightOffset);
   const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
-  // An even number of facets so the alternation closes around the bowl.
-  const facets = 2 * Math.max(6, Math.round(ring.perimeter / 70));
+  // An even number of facets so the alternation closes around the bowl; ~30 m facets keep the
+  // straight chords close to the bowl outline, so the shell hugs it instead of spiking at corners.
+  const facets = 2 * Math.max(10, Math.round(ring.perimeter / 60));
   // Ring step between facet vertices, as `buildRingLoft` spaces them.
   const { tStart, tEnd } = getBowlArcRange(doc.shape, crossSectionClip);
   const span = tEnd - tStart;
@@ -3795,16 +3822,17 @@ function buildFacetedShellRoof(
       const m = radialAt(t + side * dt * 0.5, outer);
       sag = Math.max(sag, (m.x - (a.x + b.x) / 2) * m.nx + (m.z - (a.z + b.z) / 2) * m.nz);
     }
-    return outer + Math.max(0, sag) * 1.1;
+    return outer + Math.max(0, sag);
   };
   const shell: RingProfile = (t, _nx, _nz, s) => {
     const odd = s % 2 === 1;
     const outer = shellOuterAt(t);
+    // Facets fold in and out by ~1.5 m: enough to catch the light, never a spike.
     return [
-      { r: outer + (odd ? 8 : 4.5), y: 0 },
-      { r: outer + (odd ? 4.5 : 9), y: roofY * 0.55 },
-      { r: outer - 1, y: roofY + 2 + (odd ? 2.5 : 0) },
-      { r: innerOffset, y: roofY + 1 + (odd ? 0 : 2) },
+      { r: outer + (odd ? 2.5 : 1.2), y: 0 },
+      { r: outer + (odd ? 1.4 : 3), y: roofY * 0.55 },
+      { r: outer - 0.5, y: roofY + 1.5 + (odd ? 1.2 : 0) },
+      { r: innerOffset, y: roofY + 1 + (odd ? 0 : 1.2) },
     ];
   };
   const metal = createFacadePbrMaterial('black_zinc_cladding', doc.lighting, false, maxAnisotropy);
@@ -4515,6 +4543,7 @@ function buildRoofAssembly(
       standTopY,
       roofHeight,
       doc,
+      stand,
       membraneMat,
       shadowDepthMat,
       primaryStructMat,

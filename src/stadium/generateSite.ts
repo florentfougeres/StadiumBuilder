@@ -27,7 +27,8 @@ export interface SiteFootprint {
 /** Depth of the paved forecourt between the facade and the surroundings, per setting. */
 const FORECOURT_DEPTH: Record<SiteSetting, number> = {
   none: 30,
-  urban: 18,
+  // English grounds: a pavement, then the street of terraced houses right against the stands.
+  urban: 5,
   esplanade: 48,
   park: 24,
   parking: 22,
@@ -235,14 +236,11 @@ function planSite(fp: SiteFootprint, site: SiteConfig): SiteLayout {
 
   switch (site.setting) {
     case 'urban': {
-      layout.ringRoads.push({ offset: F + 9, width: 14 });
-      // Boulevard trees along both kerbs of the ring road.
-      for (const off of [F + 1.2, F + 17]) {
-        for (const { p } of sampleRing(fp, off, 11)) {
-          if (!nearGate(p, GATE_WIDTH) && insideSite(p)) tree(p.x, p.z, 0.8 + rand() * 0.3);
-        }
-      }
-      for (const { p } of sampleRing(fp, F + 17, 28)) layout.lamps.push(p);
+      // A narrow street runs round the ground; the houses' front doors open straight onto it.
+      const streetW = 9;
+      const frontage = F + streetW + 1;
+      layout.ringRoads.push({ offset: F + streetW / 2, width: streetW });
+      for (const { p } of sampleRing(fp, F + streetW + 0.5, 30)) layout.lamps.push(p);
 
       // European perimeter blocks on a street grid, cleared around the stadium.
       const pitch = 92;
@@ -263,8 +261,28 @@ function planSite(fp: SiteFootprint, site: SiteConfig): SiteLayout {
               probes.push({ x: r.x0 + (r.x1 - r.x0) * fx, z: r.z0 + (r.z1 - r.z0) * fz });
             }
           }
-          if (probes.some((p) => ringLevel(fp, p.x, p.z, F + 20) < 1)) continue;
-          layout.blocks.push({ ...r, green: rand() < 0.09 });
+          // Blocks reaching the stadium are cut back to the street rather than dropped, so the
+          // terraces line it closely. Nothing is built across a gate's approach.
+          const clear = (q: Rect) =>
+            [0, 0.25, 0.5, 0.75, 1].every((fx) =>
+              [0, 0.25, 0.5, 0.75, 1].every((fz) => {
+                const p = { x: q.x0 + (q.x1 - q.x0) * fx, z: q.z0 + (q.z1 - q.z0) * fz };
+                return ringLevel(fp, p.x, p.z, frontage) >= 1 && !inCorridor(layout, p, 3);
+              })
+            );
+          const cut = { ...r };
+          for (let k = 0; k < 16 && !clear(cut); k++) {
+            const cx = (cut.x0 + cut.x1) / 2;
+            const cz = (cut.z0 + cut.z1) / 2;
+            // Trim the face that looks at the stadium, along the axis the block is closer on.
+            if (Math.abs(cx) / (fp.halfX + frontage) >= Math.abs(cz) / (fp.halfZ + frontage)) {
+              if (cx > 0) cut.x0 += 6;
+              else cut.x1 -= 6;
+            } else if (cz > 0) cut.z0 += 6;
+            else cut.z1 -= 6;
+          }
+          if (!clear(cut) || cut.x1 - cut.x0 < 26 || cut.z1 - cut.z0 < 26) continue;
+          layout.blocks.push({ ...cut, green: rand() < 0.09 });
         }
       }
 
@@ -278,7 +296,7 @@ function planSite(fp: SiteFootprint, site: SiteConfig): SiteLayout {
               [{ x: t, z: line + side * 6.2 }, Math.PI / 2],
             ];
             for (const [p, yaw] of spots) {
-              if (ringLevel(fp, p.x, p.z, F + 22) < 1) continue;
+              if (ringLevel(fp, p.x, p.z, F + 12) < 1) continue;
               if (i % 2 === 0 && rand() < 0.85) tree(p.x, p.z, 0.75 + rand() * 0.25);
               const lane = { x: p.x - (yaw === 0 ? side * 2.4 : 0), z: p.z - (yaw === 0 ? 0 : side * 2.4) };
               if (rand() < 0.35) layout.cars.push({ x: lane.x, z: lane.z, yaw: yaw + (rand() < 0.5 ? 0 : Math.PI) });

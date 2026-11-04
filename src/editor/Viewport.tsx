@@ -6,11 +6,13 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { registerPathTraceHandler, registerViewportCaptureHandler } from '../export/exportPng';
 import { createRenderPipeline, createSkyEnvironments, getSunDirection } from './renderPipeline';
 import { buildStadiumSceneGraph, disposeObject3D } from '../stadium/buildStadiumScene';
+import { generatePlacedObjectGroup } from '../stadium/generateLights';
 import { calculateStandMetrics, getTrackRadialOffset } from '../stadium/capacity';
 import {
   CameraPresetMode,
   LightingMode,
   resolveFloodlightRig,
+  resolveRetractable,
   StadiumDocument,
 } from '../stadium/schema';
 import { computeStandSightlines } from '../stadium/sightlines';
@@ -191,6 +193,8 @@ export const Viewport: React.FC = () => {
   const transformMode = useStadiumStore((s) => s.transformMode);
 
   const selectObject = useStadiumStore((s) => s.selectObject);
+  const placingType = useStadiumStore((s) => s.placingType);
+  const roofMotion = useStadiumStore((s) => s.roofMotion);
   const updateObjectTransform = useStadiumStore((s) => s.updateObjectTransform);
   const recordSnapshotBeforeGizmoDrag = useStadiumStore(
     (s) => s.recordSnapshotBeforeGizmoDrag
@@ -226,6 +230,10 @@ export const Viewport: React.FC = () => {
     stadiumRoot: THREE.Group | null;
     placedMap: Map<string, THREE.Group>;
     requestRender: () => void;
+    /** Flags the next frames as motion frames (cheaper pipeline, full quality once settled). */
+    markMotion: () => void;
+    /** Preview of the equipment being placed, following the cursor on the ground. */
+    ghost: THREE.Group | null;
     startCameraTransition: (pos: THREE.Vector3, look: THREE.Vector3, fov: number) => void;
     maxAnisotropy: number;
   } | null>(null);
@@ -531,45 +539,128 @@ export const Viewport: React.FC = () => {
       requestRender();
     });
 
-    // Raycasting click selection for placed objects
+    // Click selection, click-to-place and drag-on-ground for placed objects
     const raycaster = new THREE.Raycaster();
     const pointerDownPos = new THREE.Vector2();
     const ndc = new THREE.Vector2();
+    const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const planeHit = new THREE.Vector3();
+    const dragOffset = new THREE.Vector3();
+    let surfaceDrag: { id: string; group: THREE.Group; moved: boolean } | null = null;
+
+    const setRay = (e: PointerEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(ndc, camera);
+    };
+    /** Point under the cursor on the horizontal plane at `y`, or null when looking above it. */
+    const groundAt = (e: PointerEvent, y: number): THREE.Vector3 | null => {
+      setRay(e);
+      dragPlane.constant = -y;
+      return raycaster.ray.intersectPlane(dragPlane, planeHit);
+    };
+    const pickPlaced = (e: PointerEvent): string | null => {
+      const currentEngine = engineRef.current;
+      if (!currentEngine) return null;
+      setRay(e);
+      const hits = raycaster.intersectObjects(Array.from(currentEngine.placedMap.values()), true);
+      let cur: THREE.Object3D | null = hits[0]?.object ?? null;
+      while (cur && !cur.userData?.placedObjectId) cur = cur.parent;
+      return (cur?.userData?.placedObjectId as string | undefined) ?? null;
+    };
+    /** Halo screens hang centred and mounted screens follow their stand: they are not dragged. */
+    const isDraggable = (id: string): boolean => {
+      const o = useStadiumStore.getState().doc.objects.find((x) => x.id === id);
+      return Boolean(o) && o!.type !== 'halo_screen' && !(o!.type === 'screen' && (o!.mount ?? 'free') !== 'free');
+    };
 
     const onPointerDown = (e: PointerEvent) => {
       pointerDownPos.set(e.clientX, e.clientY);
+      if (isDraggingGizmo || e.button !== 0 || useStadiumStore.getState().placingType) return;
+      const selected = useStadiumStore.getState().selectedObjectId;
+      const currentEngine = engineRef.current;
+      if (!selected || !currentEngine || pickPlaced(e) !== selected || !isDraggable(selected)) return;
+      const group = currentEngine.placedMap.get(selected);
+      const hit = group && groundAt(e, group.position.y);
+      if (!group || !hit) return;
+      dragOffset.copy(group.position).sub(hit);
+      surfaceDrag = { id: selected, group, moved: false };
+      orbit.enabled = false;
+      renderer.domElement.setPointerCapture(e.pointerId);
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      const currentEngine = engineRef.current;
+      if (!currentEngine) return;
+      if (surfaceDrag) {
+        const hit = groundAt(e, surfaceDrag.group.position.y);
+        if (!hit) return;
+        if (!surfaceDrag.moved) {
+          if (Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y) < 4) return;
+          surfaceDrag.moved = true;
+          callbacksRef.current.recordSnapshotBeforeGizmoDrag();
+        }
+        surfaceDrag.group.position.x = hit.x + dragOffset.x;
+        surfaceDrag.group.position.z = hit.z + dragOffset.z;
+        renderer.shadowMap.needsUpdate = true;
+        markMotion();
+        requestRender();
+        return;
+      }
+      const ghost = currentEngine.ghost;
+      if (ghost) {
+        const hit = groundAt(e, 0);
+        ghost.visible = Boolean(hit);
+        if (hit) ghost.position.set(hit.x, ghost.position.y, hit.z);
+        requestRender();
+      }
     };
 
     const onPointerUp = (e: PointerEvent) => {
+      if (surfaceDrag) {
+        const { id, group, moved } = surfaceDrag;
+        surfaceDrag = null;
+        orbit.enabled = true;
+        if (renderer.domElement.hasPointerCapture(e.pointerId)) {
+          renderer.domElement.releasePointerCapture(e.pointerId);
+        }
+        if (moved) {
+          callbacksRef.current.updateObjectTransform(
+            id,
+            {
+              position: [
+                Number(group.position.x.toFixed(2)),
+                Number(group.position.y.toFixed(2)),
+                Number(group.position.z.toFixed(2)),
+              ],
+            },
+            false
+          );
+          return;
+        }
+      }
       if (isDraggingGizmo) return;
       if (Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y) > 5) {
         return; // Orbit drag, not a selection click
       }
 
-      const rect = renderer.domElement.getBoundingClientRect();
-      ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-      raycaster.setFromCamera(ndc, camera);
-      const currentEngine = engineRef.current;
-      if (!currentEngine) return;
-
-      const candidateGroups = Array.from(currentEngine.placedMap.values());
-      const hits = raycaster.intersectObjects(candidateGroups, true);
-      if (hits.length > 0) {
-        let cur: THREE.Object3D | null = hits[0].object;
-        while (cur && !cur.userData?.placedObjectId) {
-          cur = cur.parent;
+      const placing = useStadiumStore.getState().placingType;
+      if (placing) {
+        const hit = groundAt(e, 0);
+        if (hit) {
+          useStadiumStore
+            .getState()
+            .addObject(placing, [Number(hit.x.toFixed(1)), Number(hit.z.toFixed(1))]);
         }
-        if (cur?.userData?.placedObjectId) {
-          callbacksRef.current.selectObject(cur.userData.placedObjectId as string);
-          return;
-        }
+        return;
       }
-      callbacksRef.current.selectObject(null);
+
+      callbacksRef.current.selectObject(pickPlaced(e));
     };
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
 
     // WebGL Context Loss Safety
@@ -660,6 +751,8 @@ export const Viewport: React.FC = () => {
       stadiumRoot: null,
       placedMap: new Map(),
       requestRender,
+      markMotion,
+      ghost: null,
       startCameraTransition,
       maxAnisotropy: renderer.capabilities.getMaxAnisotropy(),
     };
@@ -677,6 +770,7 @@ export const Viewport: React.FC = () => {
       clearTimeout(frameId);
       clearTimeout(settleTimer);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);
       renderer.domElement.removeEventListener('webglcontextrestored', handleContextRestored);
@@ -793,6 +887,95 @@ export const Viewport: React.FC = () => {
     engine.renderer.shadowMap.needsUpdate = true;
     engine.requestRender();
   }, [doc, selectedObjectId, cameraMode]);
+
+  // Placement preview: the chosen equipment follows the cursor until a click drops it.
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (engine.ghost) {
+      engine.scene.remove(engine.ghost);
+      disposeObject3D(engine.ghost);
+      engine.ghost = null;
+    }
+    engine.renderer.domElement.style.cursor = placingType ? 'crosshair' : '';
+    if (placingType) {
+      const ghost = generatePlacedObjectGroup(
+        {
+          id: 'placement-ghost',
+          type: placingType,
+          name: '',
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+        doc.lighting,
+        false,
+        doc.materials,
+        engine.maxAnisotropy
+      );
+      ghost.visible = false;
+      ghost.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        // A see-through copy reads as "not placed yet"; it never casts shadows or catches clicks.
+        const seeThrough = (m: THREE.Material) => {
+          const c = m.clone();
+          c.transparent = true;
+          c.opacity = 0.55;
+          c.depthWrite = false;
+          return c;
+        };
+        mesh.material = Array.isArray(mesh.material)
+          ? mesh.material.map(seeThrough)
+          : seeThrough(mesh.material);
+        mesh.castShadow = false;
+        mesh.raycast = () => {};
+      });
+      engine.scene.add(ghost);
+      engine.ghost = ghost;
+    }
+    engine.requestRender();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placingType]);
+
+  // Open / close animation of a movable roof: only its panels are rebuilt, frame by frame.
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine || !roofMotion) return;
+    let panels: THREE.Object3D | null = null;
+    engine.stadiumRoot?.traverse((o) => {
+      if (!panels && typeof o.userData.rebuildAt === 'function') panels = o;
+    });
+    const finish = () => useStadiumStore.getState().finishRoofMotion();
+    if (!panels) {
+      finish();
+      return;
+    }
+    const from = resolveRetractable(useStadiumStore.getState().doc.roof).openRatio;
+    const duration = 400 + 1100 * Math.abs(roofMotion.to - from);
+    const start = performance.now();
+    let raf = 0;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      const current = panels!;
+      const next = (current.userData.rebuildAt as (r: number) => THREE.Object3D)(
+        from + (roofMotion.to - from) * eased
+      );
+      current.parent?.add(next);
+      current.removeFromParent();
+      // Materials are shared between frames; only the per-frame geometry is freed.
+      current.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+      panels = next;
+      // Shadows are redrawn once the roof stops (the final rebuild); moving frames render cheap.
+      engine.markMotion();
+      engine.requestRender();
+      if (t < 1) raf = requestAnimationFrame(step);
+      else finish();
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [roofMotion]);
 
   // 3. Update TransformControls mode immediately when user toggles G / R / S
   useEffect(() => {

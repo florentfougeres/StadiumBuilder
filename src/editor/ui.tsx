@@ -221,6 +221,7 @@ export function Segmented<T extends string | number>({
   label,
   disabled,
   size = 'md',
+  nowrap = false,
 }: {
   value: T;
   options: { id: T; label: React.ReactNode; title?: string }[];
@@ -228,6 +229,8 @@ export function Segmented<T extends string | number>({
   label: string;
   disabled?: boolean;
   size?: 'sm' | 'md';
+  /** Keeps every label on one line (toolbar); panel controls wrap long labels inside the button. */
+  nowrap?: boolean;
 }) {
   return (
     <div
@@ -245,8 +248,8 @@ export function Segmented<T extends string | number>({
             aria-checked={active}
             title={o.title}
             onClick={() => onChange(o.id)}
-            className={`flex-1 flex items-center justify-center gap-1.5 rounded whitespace-nowrap transition-colors duration-100 ${
-              size === 'sm' ? 'h-6 px-2 text-2xs' : 'h-7 px-2.5 text-xs'
+            className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 rounded text-center leading-tight transition-colors duration-100 ${nowrap ? 'whitespace-nowrap' : ''} ${
+              size === 'sm' ? 'min-h-6 py-0.5 px-1.5 text-2xs' : 'min-h-7 py-1 px-2 text-xs'
             } ${
               active ? 'bg-raised text-ink font-medium shadow-thumb' : 'text-ink-muted hover:text-ink hover:bg-hover'
             }`}

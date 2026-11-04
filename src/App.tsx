@@ -228,7 +228,8 @@ export default function App() {
           togglePanels();
           break;
         case 'escape':
-          selectObject(null);
+          if (useStadiumStore.getState().placingType) useStadiumStore.getState().setPlacingType(null);
+          else selectObject(null);
           break;
         case 'delete':
         case 'backspace':

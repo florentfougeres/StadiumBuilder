@@ -18,7 +18,7 @@ import {
   Trees,
   Users,
 } from 'lucide-react';
-import { ObjectMount, PlacedObjectType, StandSide } from '../stadium/schema';
+import { HALO_LIMITS, ObjectMount, PlacedObjectType, resolveHaloSize, StandSide } from '../stadium/schema';
 import { useStadiumStore } from '../state/useStadiumStore';
 import { IconButton, NumberField, PanelSection, Segmented, SelectField, SliderField, choiceClass } from './ui';
 
@@ -40,6 +40,16 @@ const ADDABLE_ASSETS: {
   { type: 'esplanade', label: 'Esplanade', icon: <Trees className="w-3.5 h-3.5" /> },
   { type: 'fence', label: 'Clôture', icon: <Fence className="w-3.5 h-3.5" /> },
   { type: 'custom_roof', label: 'Toit libre', icon: <Tent className="w-3.5 h-3.5" /> },
+];
+
+/** Equipment that sets itself up (centred halo, stand-mounted screen) instead of being dropped by click. */
+const SELF_PLACED: PlacedObjectType[] = ['halo_screen', 'screen'];
+
+/** Position fields in the order people read them: X and Y across the ground, Z up. */
+const POSITION_AXES: { label: string; idx: 0 | 1 | 2 }[] = [
+  { label: 'X', idx: 0 },
+  { label: 'Y', idx: 2 },
+  { label: 'Z ↑', idx: 1 },
 ];
 
 const MOUNT_OPTIONS: { id: ObjectMount; label: string; title: string }[] = [
@@ -126,13 +136,14 @@ const SelectedObjectInspector: React.FC = () => {
           )}
         </PanelSection>
       )}
-      {mount === 'free' && (
+      {obj.type === 'halo_screen' && <HaloControls />}
+      {mount === 'free' && obj.type !== 'halo_screen' && (
         <PanelSection title="Position">
           <div className="grid grid-cols-3 gap-2">
-            {(['X', 'Y', 'Z'] as const).map((axis, idx) => (
+            {POSITION_AXES.map(({ label, idx }) => (
               <NumberField
-                key={axis}
-                label={axis}
+                key={label}
+                label={label}
                 value={obj.position[idx]}
                 onChange={(val) => {
                   const next: [number, number, number] = [...obj.position];
@@ -142,9 +153,12 @@ const SelectedObjectInspector: React.FC = () => {
               />
             ))}
           </div>
-          <p className="text-2xs text-ink-faint">En mètres depuis le centre du terrain.</p>
+          <p className="text-2xs text-ink-faint">
+            En mètres depuis le centre du terrain ; Z est la hauteur. Tu peux aussi glisser l’objet dans la scène.
+          </p>
         </PanelSection>
       )}
+      {obj.type !== 'halo_screen' && (
       <PanelSection title={mount === 'free' ? 'Orientation et taille' : 'Taille'}>
         <div className="grid grid-cols-2 gap-2">
           {mount === 'free' && (
@@ -171,7 +185,50 @@ const SelectedObjectInspector: React.FC = () => {
           />
         </div>
       </PanelSection>
+      )}
     </>
+  );
+};
+
+/** Halo screen: hangs centred over the pitch; only its height and size are set by hand. */
+const HaloControls: React.FC = () => {
+  const obj = useStadiumStore((s) => s.doc.objects.find((o) => o.id === s.selectedObjectId));
+  const updateObjectTransform = useStadiumStore((s) => s.updateObjectTransform);
+  if (!obj) return null;
+  const { rx, bandHeight } = resolveHaloSize(obj);
+  return (
+    <PanelSection title="Écran halo">
+      <SliderField
+        label="Hauteur au-dessus du terrain"
+        min={10}
+        max={70}
+        step={0.5}
+        value={obj.position[1]}
+        display={`${obj.position[1].toFixed(1)} m`}
+        onChange={(v) => updateObjectTransform(obj.id, { position: [obj.position[0], v, obj.position[2]] })}
+      />
+      <SliderField
+        label="Diamètre"
+        min={HALO_LIMITS.diameter.min}
+        max={HALO_LIMITS.diameter.max}
+        step={1}
+        value={rx * 2}
+        display={`${Math.round(rx * 2)} m`}
+        onChange={(v) => updateObjectTransform(obj.id, { haloDiameter: v })}
+      />
+      <SliderField
+        label="Hauteur de l’écran"
+        min={HALO_LIMITS.bandHeight.min}
+        max={HALO_LIMITS.bandHeight.max}
+        step={0.1}
+        value={bandHeight}
+        display={`${bandHeight.toFixed(1)} m`}
+        onChange={(v) => updateObjectTransform(obj.id, { haloBandHeight: v })}
+      />
+      <p className="text-2xs text-ink-faint">
+        Centré sur le terrain, il est suspendu par des câbles à la structure au-dessus : toit, arche ou crête des tribunes.
+      </p>
+    </PanelSection>
   );
 };
 
@@ -180,6 +237,8 @@ export const ObjectList: React.FC<{ footer?: React.ReactNode }> = ({ footer }) =
   const objects = useStadiumStore((s) => s.doc.objects);
   const selectedObjectId = useStadiumStore((s) => s.selectedObjectId);
   const addObject = useStadiumStore((s) => s.addObject);
+  const placingType = useStadiumStore((s) => s.placingType);
+  const setPlacingType = useStadiumStore((s) => s.setPlacingType);
   const selectObject = useStadiumStore((s) => s.selectObject);
   const removeObject = useStadiumStore((s) => s.removeObject);
 
@@ -227,8 +286,13 @@ export const ObjectList: React.FC<{ footer?: React.ReactNode }> = ({ footer }) =
             <button
               key={item.type}
               type="button"
-              onClick={() => addObject(item.type)}
-              className={`group flex items-center gap-2 min-h-8 px-2 py-1.5 text-left text-xs leading-snug ${choiceClass(false)}`}
+              aria-pressed={placingType === item.type}
+              onClick={() =>
+                SELF_PLACED.includes(item.type)
+                  ? addObject(item.type)
+                  : setPlacingType(placingType === item.type ? null : item.type)
+              }
+              className={`group flex items-center gap-2 min-h-8 px-2 py-1.5 text-left text-xs leading-snug ${choiceClass(placingType === item.type)}`}
             >
               <span className="text-ink-faint group-hover:text-ink">{item.icon}</span>
               <span className="flex-1 min-w-0">{item.label}</span>
@@ -237,7 +301,9 @@ export const ObjectList: React.FC<{ footer?: React.ReactNode }> = ({ footer }) =
           ))}
         </div>
         <p className="text-2xs text-ink-faint">
-          L’équipement apparaît près du terrain. Clique-le dans la scène ou dans la liste pour le régler.
+          {placingType
+            ? 'Clique dans la scène à l’endroit voulu pour le poser · Échap pour annuler.'
+            : 'Choisis un équipement puis clique dans la scène pour le poser. Glisse ensuite un objet sélectionné pour le déplacer.'}
         </p>
       </PanelSection>
       {footer}

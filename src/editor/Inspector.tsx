@@ -29,6 +29,8 @@ import {
   EnvelopeProfile,
   EnvelopeStyle,
   getEffectiveSunkenDepth,
+  IntegralShellStyle,
+  isIntegralShell,
   getMaxPitchLengthForTrack,
   isContinuousBowlShape,
   CORNER_PYLON_MAX_HEIGHT,
@@ -689,19 +691,28 @@ const SHAPE_GALLERY: GalleryOption<StadiumShape>[] = SHAPE_OPTIONS.map((o) => ({
   image: thumbnailUrl('shapes', o.id),
 }));
 
-const ROOF_GALLERY: GalleryOption<RoofStyle>[] = ROOF_OPTIONS.map((o) => ({
+// Integral shells are both roof and facade: they are offered with the envelopes (Façade tab).
+const ROOF_GALLERY: GalleryOption<RoofStyle>[] = ROOF_OPTIONS.filter((o) => !isIntegralShell(o.id)).map((o) => ({
   id: o.id,
   label: o.label,
   detail: o.desc,
   image: thumbnailUrl('roofs', o.id),
 }));
 
-const ENVELOPE_GALLERY: GalleryOption<EnvelopeStyle>[] = ENVELOPE_STYLE_CATALOG.map((o) => ({
-  id: o.id,
-  label: o.label,
-  detail: o.subtitle,
-  image: thumbnailUrl('envelopes', o.id),
-}));
+const ENVELOPE_GALLERY: GalleryOption<EnvelopeStyle | IntegralShellStyle>[] = [
+  ...ENVELOPE_STYLE_CATALOG.map((o) => ({
+    id: o.id,
+    label: o.label,
+    detail: o.subtitle,
+    image: thumbnailUrl('envelopes', o.id),
+  })),
+  ...ROOF_OPTIONS.filter((o) => isIntegralShell(o.id)).map((o) => ({
+    id: o.id as IntegralShellStyle,
+    label: o.label,
+    detail: `${o.desc} · remplace le toit`,
+    image: thumbnailUrl('roofs', o.id),
+  })),
+];
 
 /** A material catalog as gallery tiles, each pictured by its rendered texture. */
 function materialGallery<T extends string>(
@@ -1563,6 +1574,12 @@ const RoofPanel: React.FC = () => {
     <>
       <PanelHeader title="Toit" meta={ROOF_OPTIONS.find((o) => o.id === roof.style)?.label} />
       <PanelSection title="Système de toiture">
+        {isIntegralShell(roof.style) && (
+          <p className="text-2xs text-ink-muted">
+            Le toit fait partie de l’enveloppe « {ROOF_OPTIONS.find((o) => o.id === roof.style)?.label} » (onglet Façade).
+            Choisir un toit ci-dessous la remplace par une façade classique.
+          </p>
+        )}
         <GalleryPicker
           label="Système de toiture"
           value={roof.style}
@@ -1706,7 +1723,7 @@ const RoofPanel: React.FC = () => {
                   type="button"
                   aria-pressed={on}
                   onClick={() => toggleSide(side)}
-                  className={`h-7 text-xs ${choiceClass(on)} ${on ? 'font-medium' : ''}`}
+                  className={`min-h-7 py-1 text-xs leading-tight ${choiceClass(on)} ${on ? 'font-medium' : ''}`}
                 >
                   {STAND_LABELS[side]}
                 </button>
@@ -1746,7 +1763,7 @@ const RoofPanel: React.FC = () => {
               updateMaterials({ roof: 'polycarbonate_glass' });
               updateRoof({ opacity: 0.35 });
             }}
-            className={`h-7 px-1.5 text-2xs ${choiceClass(
+            className={`min-h-7 py-1 px-1.5 text-2xs leading-tight ${choiceClass(
               mats.roof === 'polycarbonate_glass' && roof.opacity <= 0.45
             )} disabled:opacity-40`}
           >
@@ -1759,7 +1776,7 @@ const RoofPanel: React.FC = () => {
               updateMaterials({ roof: 'etfe_cushions' });
               updateRoof({ opacity: 0.55 });
             }}
-            className={`h-7 px-1.5 text-2xs ${choiceClass(
+            className={`min-h-7 py-1 px-1.5 text-2xs leading-tight ${choiceClass(
               mats.roof === 'etfe_cushions' && roof.opacity <= 0.65
             )} disabled:opacity-40`}
           >
@@ -1772,7 +1789,7 @@ const RoofPanel: React.FC = () => {
               updateMaterials({ roof: 'ptfe_membrane' });
               updateRoof({ opacity: 0.92 });
             }}
-            className={`h-7 px-1.5 text-2xs ${choiceClass(
+            className={`min-h-7 py-1 px-1.5 text-2xs leading-tight ${choiceClass(
               mats.roof === 'ptfe_membrane' && roof.opacity >= 0.85
             )} disabled:opacity-40`}
           >
@@ -1937,6 +1954,24 @@ const PARK_END_OPTIONS: { id: RetractableConfig['parkEnd']; label: string }[] = 
   { id: 'west', label: 'Ouest' },
 ];
 
+/** One-click open / close of the movable roof, animated in the viewport. */
+function RoofMotionButton({ openRatio, disabled }: { openRatio: number; disabled?: boolean }) {
+  const motion = useStadiumStore((s) => s.roofMotion);
+  const animateRoof = useStadiumStore((s) => s.animateRoof);
+  const target = motion ? motion.to : openRatio >= 0.5 ? 0 : 1;
+  const moving = motion !== null;
+  return (
+    <button
+      type="button"
+      disabled={disabled || moving}
+      onClick={() => animateRoof(target)}
+      className={`h-8 w-full text-xs font-medium ${choiceClass(false)} disabled:opacity-60`}
+    >
+      {moving ? (motion.to === 0 ? 'Fermeture…' : 'Ouverture…') : target === 0 ? 'Fermer le toit' : 'Ouvrir le toit'}
+    </button>
+  );
+}
+
 function RetractableRoofSection({
   retractable,
   iris,
@@ -1980,22 +2015,7 @@ function RetractableRoofSection({
         scale={100}
         onChange={(v) => onChange({ openRatio: v })}
       />
-      <div className="grid grid-cols-2 gap-1" role="group" aria-label="Ouverture rapide">
-        <button
-          type="button"
-          onClick={() => onChange({ openRatio: 0 })}
-          className={`h-7 text-xs ${choiceClass(openRatio === 0)}`}
-        >
-          Fermé
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange({ openRatio: 1 })}
-          className={`h-7 text-xs ${choiceClass(openRatio === 1)}`}
-        >
-          Ouvert
-        </button>
-      </div>
+      <RoofMotionButton openRatio={openRatio} disabled={horseshoe} />
       {limits.min < limits.max && (
         <SliderField
           label={countLabel}
@@ -2045,18 +2065,25 @@ const FacadePanel: React.FC = () => {
   const pattern = mats.facadePattern ?? 'none';
   const density = mats.facadeDensity ?? 1.0;
   const depth = mats.facadeDepth ?? 0.85;
-  const envelope = mats.envelopeStyle ?? 'enveloping_skin';
+  const setEnvelope = useStadiumStore((s) => s.setEnvelope);
+  const shell = isIntegralShell(doc.roof.style) ? doc.roof.style : null;
+  const envelope = shell ?? mats.envelopeStyle ?? 'enveloping_skin';
 
   return (
     <>
-      <PanelHeader title="Façade" meta={ENVELOPE_STYLE_CATALOG.find((o) => o.id === envelope)?.label} />
+      <PanelHeader title="Façade" meta={ENVELOPE_GALLERY.find((o) => o.id === envelope)?.label} />
       <PanelSection title="Enveloppe">
         <GalleryPicker
           label="Enveloppe extérieure"
           value={envelope}
-          onChange={(envelopeStyle) => updateMaterials({ envelopeStyle })}
+          onChange={setEnvelope}
           options={ENVELOPE_GALLERY}
         />
+        {shell && (
+          <p className="text-2xs text-ink-faint">
+            Coque intégrale : elle forme à la fois la façade et le toit. Choisis une autre enveloppe pour retrouver un toit séparé.
+          </p>
+        )}
         {envelope === 'colonnade_forest' && (
           <SliderField
             label="Densité des poteaux"
@@ -2145,7 +2172,7 @@ const FacadePanel: React.FC = () => {
 
 export const SITE_OPTIONS: { id: SiteSetting; label: string; detail: string }[] = [
   { id: 'none', label: 'Aucun', detail: 'Sol d’origine, sans décor urbain ni paysager autour du stade' },
-  { id: 'urban', label: 'Quartier urbain', detail: 'Îlots d’immeubles à toits de tuiles, rues arborées et boulevard circulaire' },
+  { id: 'urban', label: 'Quartier urbain', detail: 'Maisons mitoyennes au ras du stade, à l’anglaise, le long d’une rue étroite' },
   { id: 'esplanade', label: 'Esplanade', detail: 'Grand parvis minéral planté, allées axiales et pelouses' },
   { id: 'park', label: 'Parc arboré', detail: 'Bosquets, chemins sinueux, étang et promenade sous les arbres' },
   { id: 'parking', label: 'Parkings', detail: 'Nappes de stationnement plantées, voie de ceinture et allées piétonnes' },

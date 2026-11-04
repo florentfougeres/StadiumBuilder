@@ -25,6 +25,7 @@ import {
   isCornerConfigured,
   resolveAllCorners,
   resolveFloodlightRig,
+  resolveHaloSize,
   StadiumDocument,
   StadiumMaterialsConfig,
 } from './schema';
@@ -202,9 +203,8 @@ export function generatePlacedObjectGroup(
       scoreTex.wrapS = THREE.RepeatWrapping;
       scoreTex.repeat.set(4, 1);
 
-      const rx = 22.5;
-      const rz = 15.8;
-      const ringH = 4.6;
+      // Cables up to the roof are added by the scene builder, which knows the roof geometry.
+      const { rx, rz, bandHeight: ringH } = resolveHaloSize(obj);
       const segs = 64;
 
       const buildEllipticalBand = (
@@ -274,19 +274,10 @@ export function generatePlacedObjectGroup(
         group.add(trussRing);
       }
 
-      const cableMat = new THREE.MeshStandardMaterial({
-        color: 0x94a3b8,
-        roughness: 0.25,
-        metalness: 0.88,
-      });
       for (let c = 0; c < 12; c++) {
         const th = (c / 12) * Math.PI * 2;
         const cx = Math.cos(th) * (rx - 0.5);
         const cz = Math.sin(th) * (rz - 0.5);
-        const hanger = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 11, 5), cableMat);
-        hanger.position.set(cx, ringH * 0.5 + 5.6, cz);
-        group.add(hanger);
-
         if (c % 2 === 0) {
           const speaker = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.8, 0.85), darkSteel);
           speaker.position.set(cx * 0.94, -ringH * 0.5 - 1.1, cz * 0.94);

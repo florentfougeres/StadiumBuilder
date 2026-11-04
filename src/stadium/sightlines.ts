@@ -244,6 +244,22 @@ export function computeStandSection(stand: StandConfig): StandSection {
 }
 
 /**
+ * Height of the terrace surface at `d` metres behind the stand's front wall: the highest tread
+ * covering `d` (an upper-tier balcony wins over the rows it shelters), the rear deck behind the
+ * last row, the pitch-side apron in front of the first one. Columns planted in the seating land here.
+ */
+export function standTreadHeightAt(stand: StandConfig, d: number): number {
+  const section = computeStandSection(stand);
+  if (section.rows.length === 0) return 0;
+  if (d >= section.endD) return section.endY;
+  let best = -Infinity;
+  for (const row of section.rows) {
+    if (d >= row.d && d < row.d + stand.rowDepth) best = Math.max(best, row.y);
+  }
+  return Number.isFinite(best) ? best : stand.elevationStart;
+}
+
+/**
  * Green Guide / FIFA standard C-value formula:
  * C = D * (N + R) / (D + T) - R
  * with D the horizontal eye-to-focal-point distance, N the riser height, R the eye height above

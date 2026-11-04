@@ -18,7 +18,10 @@ import {
   CornerId,
   CornerMode,
   DEFAULT_STADIUM_MATERIALS,
+  EnvelopeStyle,
   FloodlightRigMode,
+  IntegralShellStyle,
+  isIntegralShell,
   LightingMode,
   PitchConfig,
   PlacedObject,
@@ -26,6 +29,7 @@ import {
   resolveAllCorners,
   riserFromSlopeDeg,
   RoofConfig,
+  RoofStyle,
   SiteConfig,
   StadiumColors,
   StadiumDocument,
@@ -37,6 +41,7 @@ import {
   TransformMode,
 } from '../stadium/schema';
 import { resolveStandTiers } from '../stadium/sightlines';
+import { defaultHaloHeight } from '../stadium/buildStadiumScene';
 import {
   deleteProjectFromDb,
   listProjectsFromDb,
@@ -126,18 +131,34 @@ export interface StadiumStoreState {
   convertStandToKopWall: (target: StandTarget) => void;
   applyTargetCapacity: (targetCapacity: number) => void;
   updateRoof: (patch: Partial<RoofConfig>) => void;
+  /** Movable roof travelling toward `to` (0 closed, 1 open); the viewport animates it, then commits. */
+  roofMotion: { to: number; nonce: number } | null;
+  animateRoof: (to: number) => void;
+  finishRoofMotion: () => void;
   updateConcourse: (patch: Partial<ConcourseConfig>) => void;
   updateSite: (patch: Partial<SiteConfig>) => void;
   updateColors: (patch: Partial<StadiumColors>) => void;
   updateMaterials: (patch: Partial<StadiumMaterialsConfig>) => void;
+  /**
+   * Picks the outer envelope: a facade style keeps the current roof (an integral shell gives way
+   * to the roof used before it), an integral shell replaces facade and roof at once.
+   */
+  setEnvelope: (id: EnvelopeStyle | IntegralShellStyle) => void;
 
   // Objects & Gizmos
-  addObject: (type: PlacedObjectType) => void;
+  /** Adds an equipment at its default spot, or at `at` (x, z on the ground) when placed by click. */
+  addObject: (type: PlacedObjectType, at?: [number, number]) => void;
+  /** Equipment waiting for a click in the viewport to be dropped there (`null` when not placing). */
+  placingType: PlacedObjectType | null;
+  setPlacingType: (type: PlacedObjectType | null) => void;
   selectObject: (id: string | null) => void;
   updateObjectTransform: (
     id: string,
     patch: Partial<
-      Pick<PlacedObject, 'position' | 'rotation' | 'scale' | 'name' | 'color' | 'mount' | 'mountSide'>
+      Pick<
+        PlacedObject,
+        'position' | 'rotation' | 'scale' | 'name' | 'color' | 'mount' | 'mountSide' | 'haloDiameter' | 'haloBandHeight'
+      >
     >,
     recordHistory?: boolean
   ) => void;
@@ -442,6 +463,8 @@ function applyStandTierPatch(
 export const useStadiumStore = create<StadiumStoreState>((set, get) => {
   const initialDoc = createPresetDocument('bowl_bowstring_60k');
 
+  // Roof to restore when an integral shell is swapped back for a classic facade (this session).
+  let roofBeforeShell: RoofStyle = 'cantilever';
   const commitChange = (mutator: (draft: StadiumDocument) => void) => {
     const { doc, history } = get();
     const nextHistory = pushHistorySnapshot(history, doc);
@@ -628,6 +651,16 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
         d.roof = { ...d.roof, ...patch };
       }),
 
+    roofMotion: null,
+    animateRoof: (to) => set({ roofMotion: { to, nonce: Date.now() } }),
+    finishRoofMotion: () => {
+      const motion = get().roofMotion;
+      if (!motion) return;
+      set({ roofMotion: null });
+      const roof = get().doc.roof;
+      get().updateRoof({ retractable: { ...roof.retractable, openRatio: motion.to } });
+    },
+
     updateConcourse: (patch) =>
       commitChange((d) => {
         d.concourse = { width: 0, heightRatio: 0.5, ...d.concourse, ...patch };
@@ -641,6 +674,17 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     updateColors: (patch) =>
       commitChange((d) => {
         d.colors = { ...d.colors, ...patch };
+      }),
+
+    setEnvelope: (id) =>
+      commitChange((d) => {
+        if (isIntegralShell(id as RoofStyle)) {
+          if (!isIntegralShell(d.roof.style)) roofBeforeShell = d.roof.style;
+          d.roof = { ...d.roof, style: id as IntegralShellStyle };
+          return;
+        }
+        d.materials = { ...DEFAULT_STADIUM_MATERIALS, ...(d.materials ?? {}), envelopeStyle: id as EnvelopeStyle };
+        if (isIntegralShell(d.roof.style)) d.roof = { ...d.roof, style: roofBeforeShell };
       }),
 
     updateMaterials: (patch) =>
@@ -671,7 +715,10 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
         }
       }),
 
-    addObject: (type) => {
+    placingType: null,
+    setPlacingType: (type) => set({ placingType: type }),
+
+    addObject: (type, at) => {
       const { doc, history } = get();
       const nextHistory = pushHistorySnapshot(history, doc);
       const nextDoc = cloneDocument(doc);
@@ -685,10 +732,15 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
         id: newId,
         type,
         name: `${OBJECT_TYPE_LABELS[type]} ${countOfType + 1}`,
-        position: [basePos[0] + jitterOffset, basePos[1], basePos[2]],
+        position: at
+          ? [at[0], basePos[1], at[1]]
+          : [basePos[0] + jitterOffset, basePos[1], basePos[2]],
         rotation: [0, 0, 0],
         scale: [1, 1, 1],
       };
+      if (type === 'halo_screen') {
+        created.position = [0, Number(defaultHaloHeight(nextDoc).toFixed(1)), 0];
+      }
       if (type === 'screen') {
         // New screens start fixed to an end stand rather than floating in mid-air.
         created.mount = nextDoc.roof.style === 'none' ? 'stand' : 'roof';
@@ -702,6 +754,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
         doc: nextDoc,
         history: nextHistory,
         selectedObjectId: newId,
+        placingType: null,
       });
       scheduleAutosave(nextDoc, async (ts) => {
         const list = await listProjectsFromDb();
@@ -730,6 +783,8 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
       if (patch.color !== undefined) target.color = patch.color;
       if (patch.mount !== undefined) target.mount = patch.mount;
       if (patch.mountSide !== undefined) target.mountSide = patch.mountSide;
+      if (patch.haloDiameter !== undefined) target.haloDiameter = patch.haloDiameter;
+      if (patch.haloBandHeight !== undefined) target.haloBandHeight = patch.haloBandHeight;
 
       nextDoc.updatedAt = Date.now();
       set({ doc: nextDoc, history: nextHistory });
@@ -817,3 +872,4 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     },
   };
 });
+

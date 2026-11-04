@@ -20,6 +20,7 @@ import {
   clampPitchToTrack,
   isContinuousBowlShape,
   PlacedObject,
+  resolveHaloSize,
   StadiumDocument,
   StandSide,
 } from './schema';
@@ -109,6 +110,87 @@ function applyScreenMount(doc: StadiumDocument, obj: PlacedObject, group: THREE.
   }
 }
 
+/** Hanging height of a new halo: level with the upper rows, below every roof's front edge. */
+export function defaultHaloHeight(doc: StadiumDocument): number {
+  const bounds = computeStadiumRingBounds(doc);
+  return Math.max(18, bounds.maxStandH * 0.8);
+}
+
+const HALO_CABLES = 12;
+/**
+ * Angles from vertical tried in turn when nothing is straight above an anchor; past 90° the
+ * cable runs slightly down to a roof edge or stand crest lower than the halo.
+ */
+const HALO_CABLE_TILTS = [0, 0.3, 0.55, 0.8, 1.0, 1.2, 1.35, 1.48, 1.6, 1.72];
+const HALO_CABLE_YAWS = [0, 0.3, -0.3, 0.6, -0.6];
+const UP = new THREE.Vector3(0, 1, 0);
+
+/**
+ * Suspends a halo screen from whatever structure is above it: each of the anchors on its top
+ * chord casts rays, first straight up (domes, closed or sliding roofs, girders, arches), then
+ * tilting outward toward the canopy's front edge (ring roofs) and finally the stand crests when
+ * there is no roof. The cable runs to the first solid surface hit, so it follows any roof type.
+ */
+function hangHaloFromStructure(obj: PlacedObject, group: THREE.Group, supports: THREE.Object3D[]): void {
+  const { rx, rz, bandHeight } = resolveHaloSize(obj);
+  group.updateMatrixWorld(true);
+  for (const s of supports) s.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster();
+  raycaster.far = 260;
+  const solid = (hit: THREE.Intersection): boolean => {
+    const mat = (hit.object as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+    const m = Array.isArray(mat) ? mat[0] : mat;
+    // Light cones and glows are see-through decoration, not something a cable can hang from.
+    return Boolean(m) && m!.depthWrite !== false && !(m as THREE.MeshBasicMaterial).isMeshBasicMaterial;
+  };
+
+  const center = new THREE.Vector3();
+  group.getWorldPosition(center);
+  const segments: [THREE.Vector3, THREE.Vector3][] = [];
+  const topY = bandHeight * 0.5 + 0.18;
+  for (let c = 0; c < HALO_CABLES; c++) {
+    const th = ((c + 0.5) / HALO_CABLES) * Math.PI * 2;
+    const local = new THREE.Vector3(Math.cos(th) * (rx - 0.55), topY, Math.sin(th) * (rz - 0.55));
+    const anchor = group.localToWorld(local.clone());
+    const outward = new THREE.Vector3(anchor.x - center.x, 0, anchor.z - center.z).normalize();
+    let end: THREE.Vector3 | null = null;
+    // Open corners leave nothing on the diagonal: swing the cable toward the nearest stand roof.
+    search: for (const yaw of HALO_CABLE_YAWS) {
+      const across = outward.clone().applyAxisAngle(UP, yaw);
+      for (const tilt of HALO_CABLE_TILTS) {
+        const dir = new THREE.Vector3(0, Math.cos(tilt), 0).addScaledVector(across, Math.sin(tilt)).normalize();
+        raycaster.set(anchor, dir);
+        const hit = raycaster.intersectObjects(supports, true).find(solid);
+        if (hit) {
+          end = hit.point;
+          break search;
+        }
+      }
+    }
+    if (end) segments.push([local, group.worldToLocal(end.clone())]);
+  }
+  if (segments.length === 0) return;
+
+  const parts = segments.map(([a, b]) => {
+    const len = a.distanceTo(b);
+    const geo = new THREE.CylinderGeometry(0.12, 0.12, len, 5, 1, true);
+    geo.translate(0, len / 2, 0);
+    const q = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      b.clone().sub(a).normalize()
+    );
+    geo.applyMatrix4(new THREE.Matrix4().compose(a, q, new THREE.Vector3(1, 1, 1)));
+    return geo;
+  });
+  const cables = new THREE.Mesh(
+    mergeGeometries(parts),
+    new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.25, metalness: 0.88 })
+  );
+  cables.name = 'HaloSuspensionCables';
+  group.add(cables);
+}
+
 export interface BuiltStadiumScene {
   rootGroup: THREE.Group;
   placedObjectMap: Map<string, THREE.Group>;
@@ -180,9 +262,9 @@ export function buildStadiumSceneGraph(
       doc.materials,
       aniso
     );
-    if (obj.type === 'halo_screen' && obj.position[1] <= 5) {
-      const bounds = computeStadiumRingBounds(doc);
-      objGroup.position.y = bounds.maxStandH + Math.max(2.5, doc.roof.heightOffset * 0.58);
+    if (obj.type === 'halo_screen') {
+      if (obj.position[1] <= 5) objGroup.position.y = defaultHaloHeight(doc);
+      hangHaloFromStructure(obj, objGroup, [roofGroup, standsGroup]);
     }
     applyScreenMount(doc, obj, objGroup);
     objectsContainer.add(objGroup);
@@ -273,15 +355,19 @@ export function mergeStaticMeshes(root: THREE.Object3D): void {
   root.updateMatrixWorld(true);
   const toRoot = root.matrixWorld.clone().invert();
   const buckets = new Map<string, THREE.Mesh[]>();
-  root.traverseVisible((obj) => {
+  // Subtrees flagged `keepSeparate` (moving roof panels) are left whole so they can be swapped.
+  const collect = (obj: THREE.Object3D) => {
+    if (!obj.visible || obj.userData.keepSeparate) return;
     const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    const key = mergeKey(mesh);
-    if (!key) return;
-    const bucket = buckets.get(key);
-    if (bucket) bucket.push(mesh);
-    else buckets.set(key, [mesh]);
-  });
+    const key = mesh.isMesh ? mergeKey(mesh) : null;
+    if (key) {
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(mesh);
+      else buckets.set(key, [mesh]);
+    }
+    for (const child of obj.children) collect(child);
+  };
+  collect(root);
 
   const local = new THREE.Matrix4();
   for (const meshes of buckets.values()) {
