@@ -387,6 +387,13 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
         const followed = join === 'end' ? 'Stand_EAST' : 'Stand_SOUTH';
         expect(topOf(group, 'CornerVirage_SE')).toBeCloseTo(topOf(group, followed), 1);
         expect(group.getObjectByName('CornerVirage_SE')!.getObjectByName('CornerStepWall')).toBeDefined();
+        // The corner's roof follows it: no seats come through it.
+        doc.roof.style = 'cantilever';
+        const roof = generateRoofGroup(doc);
+        roof.updateMatrixWorld(true);
+        const canopy = roof.getObjectByName('CornerRoof_SE')!.getObjectByName('RoofCanopySurface')!;
+        expect(new THREE.Box3().setFromObject(canopy).min.y).toBeGreaterThan(topOf(group, 'CornerVirage_SE'));
+        disposeObject3D(roof);
         disposeObject3D(group);
       }
     });

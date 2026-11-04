@@ -2290,7 +2290,7 @@ const CORNER_STANDS: Record<CornerQuadrantId, { end: StandSide; side: StandSide 
  * Corners that keep one stand's section (`cornerJoin` `end` or `side`): only where the two
  * stands' sections differ, since identical ones already meet flush through the corner.
  */
-function resolveCornerFollow(doc: StadiumDocument): Partial<Record<CornerQuadrantId, StandSide>> {
+export function resolveCornerFollow(doc: StadiumDocument): Partial<Record<CornerQuadrantId, StandSide>> {
   const join = doc.cornerJoin ?? 'blend';
   if (join === 'blend') return {};
   const mats = resolveStadiumMaterials(doc);

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { resolveCornerFollow } from './generateStand';
 import {
   bowlSideWeights,
   buildShapeBowlRing,
@@ -4996,6 +4997,7 @@ function buildRoofAssembly(
       east: doc.stands.east,
       west: doc.stands.west,
     },
+    cornerFollow: resolveCornerFollow(doc),
   });
 
   const standRoofBounds: Partial<
@@ -5100,8 +5102,9 @@ function buildRoofAssembly(
       continue;
     }
 
-    const bA = standRoofBounds[corner.sideA];
-    const bB = standRoofBounds[corner.sideB];
+    // A corner keeping one stand's section is as tall as that stand all along: so is its roof.
+    const bA = standRoofBounds[corner.follow ?? corner.sideA];
+    const bB = standRoofBounds[corner.follow ?? corner.sideB];
     if (!bA && !bB) continue;
 
       const boundA = bA ?? bB!;
