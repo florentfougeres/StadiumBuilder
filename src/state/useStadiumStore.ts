@@ -123,6 +123,7 @@ export interface StadiumStoreState {
   setAllCorners: (mode: CornerMode) => void;
   setCornerJoin: (join: CornerJoin) => void;
   setCornerAccess: (corner: CornerId, on: boolean) => void;
+  setFrontFence: (patch: { frontFence?: 'glass' | 'mesh'; frontFenceHeight?: number }) => void;
   setFloodlightRig: (mode: FloodlightRigMode) => void;
   setLighting: (lighting: LightingMode) => void;
   updatePitch: (patch: Partial<PitchConfig>) => void;
@@ -642,6 +643,12 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     setCornerJoin: (join) =>
       commitChange((d) => {
         d.cornerJoin = join;
+      }),
+
+    setFrontFence: (patch) =>
+      commitChange((d) => {
+        if (patch.frontFence !== undefined) d.frontFence = patch.frontFence === 'glass' ? undefined : patch.frontFence;
+        if (patch.frontFenceHeight !== undefined) d.frontFenceHeight = patch.frontFenceHeight;
       }),
 
     setCornerAccess: (corner, on) =>

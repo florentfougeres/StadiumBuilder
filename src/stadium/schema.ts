@@ -239,6 +239,33 @@ export interface StandConfig {
   banners?: boolean;
   /** Seat colour and pattern of each tier, front tier first; unset tiers keep the club colours. */
   seatTiers?: (SeatTierStyle | undefined)[];
+  /**
+   * Rake of each tier: `constant` risers, or `progressive` ones, flatter at the front and steeper
+   * at the back (the parabolic rake that keeps every row's view), for the same overall height.
+   */
+  rakeProfile?: 'constant' | 'progressive';
+  /** Cross aisle splitting the lowest tier, the rows behind it raised over a low wall. */
+  crossAisle?: boolean;
+  /** Where the cross aisle runs, as a share of the lowest tier's rows (`0.25..0.75`). */
+  crossAisleRatio?: number;
+  /** Width of the cross aisle walkway (m, `1.2..3`). */
+  crossAisleWidth?: number;
+  /** Team dugouts set into the front wall, either side of the halfway line. */
+  dugouts?: boolean;
+  /** Press seats with desks and screens in the centre of the stand. */
+  pressBox?: boolean;
+}
+
+/** Height of the wall at the back of a cross aisle, raising the rows behind it (m). */
+export const CROSS_AISLE_WALL_M = 1.0;
+
+/** Resolved cross aisle of a stand, or `null`. */
+export function resolveCrossAisle(stand: StandConfig): { ratio: number; width: number } | null {
+  if (!stand.crossAisle) return null;
+  return {
+    ratio: Math.max(0.25, Math.min(0.75, stand.crossAisleRatio ?? 0.5)),
+    width: Math.max(1.2, Math.min(3, stand.crossAisleWidth ?? 1.8)),
+  };
 }
 
 /**
@@ -756,6 +783,13 @@ export interface StadiumDocument {
    * opening under the corner terraces.
    */
   cornerAccess?: Partial<Record<CornerId, boolean>>;
+  /**
+   * Barrier on top of the pitch-side front wall: `glass` the low glazed balustrade, `mesh` a tall
+   * anti-intrusion wire fence. Absent means `glass`.
+   */
+  frontFence?: 'glass' | 'mesh';
+  /** Height of the `mesh` front fence above the parapet (m, `1.5..4`). */
+  frontFenceHeight?: number;
   sunkenDepth?: number;
   /** `rounded_rectangle`: corner rounding, `0` tight to `1` a full bend (default `0.5`). */
   cornerRoundness?: number;

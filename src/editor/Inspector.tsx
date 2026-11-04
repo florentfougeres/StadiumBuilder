@@ -1058,6 +1058,7 @@ const ShapePanel: React.FC = () => {
 const PitchPanel: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const updatePitch = useStadiumStore((s) => s.updatePitch);
+  const setFrontFence = useStadiumStore((s) => s.setFrontFence);
   const updateMaterials = useStadiumStore((s) => s.updateMaterials);
   const mats = useMemo(() => resolveStadiumMaterials(doc), [doc]);
   const maxPitchWidth = doc.pitch.hasTrack ? TRACK_MAX_PITCH_WIDTH_M : 75;
@@ -1168,6 +1169,32 @@ const PitchPanel: React.FC = () => {
             checked={doc.pitch.adBoards}
             onChange={(v) => updatePitch({ adBoards: v })}
           />
+          <FieldRow
+            label="Barrière devant les tribunes"
+            hint="Vitre basse moderne, ou grillage anti-envahissement des stades des années 80-90"
+          >
+            <Segmented
+              label="Barrière devant les tribunes"
+              size="sm"
+              value={doc.frontFence ?? 'glass'}
+              onChange={(frontFence) => setFrontFence({ frontFence })}
+              options={[
+                { id: 'glass', label: 'Vitre' },
+                { id: 'mesh', label: 'Grillage' },
+              ]}
+            />
+          </FieldRow>
+          {doc.frontFence === 'mesh' && (
+            <SliderField
+              label="Hauteur du grillage"
+              min={1.5}
+              max={4}
+              step={0.1}
+              value={doc.frontFenceHeight ?? 2.5}
+              display={`${fr1(doc.frontFenceHeight ?? 2.5)} m`}
+              onChange={(frontFenceHeight) => setFrontFence({ frontFenceHeight })}
+            />
+          )}
           <GalleryPicker
             label="Piste et abords"
             value={mats.trackSurface}
@@ -1351,6 +1378,70 @@ const StandsPanel: React.FC = () => {
           value={stand.elevationStart}
           display={`${fr1(stand.elevationStart)} m`}
           onChange={(v) => updateStand(target, { elevationStart: v })}
+        />
+        <FieldRow
+          label="Pente des gradins"
+          hint="Progressive : rangs bas plus plats, rangs hauts plus raides, même hauteur totale. Garde une bonne visibilité à chaque rang"
+        >
+          <Segmented
+            label="Pente des gradins"
+            size="sm"
+            disabled={off}
+            value={stand.rakeProfile ?? 'constant'}
+            onChange={(rakeProfile) => updateStand(target, { rakeProfile })}
+            options={[
+              { id: 'constant', label: 'Constante' },
+              { id: 'progressive', label: 'Progressive' },
+            ]}
+          />
+        </FieldRow>
+        <ToggleField
+          label="Coursive transversale"
+          hint="Allée horizontale qui coupe le premier niveau ; les rangs derrière sont surélevés par un muret"
+          disabled={off}
+          checked={stand.crossAisle === true}
+          onChange={(crossAisle) => updateStand(target, { crossAisle })}
+        />
+        {stand.crossAisle && (
+          <>
+            <SliderField
+              label="Position de la coursive"
+              hint="Part des rangs du premier niveau devant la coursive"
+              min={0.25}
+              max={0.75}
+              step={0.05}
+              disabled={off}
+              value={stand.crossAisleRatio ?? 0.5}
+              display={`${Math.round((stand.crossAisleRatio ?? 0.5) * 100)} %`}
+              onChange={(crossAisleRatio) => updateStand(target, { crossAisleRatio })}
+            />
+            <SliderField
+              label="Largeur de la coursive"
+              min={1.2}
+              max={3}
+              step={0.1}
+              disabled={off}
+              value={stand.crossAisleWidth ?? 1.8}
+              display={`${fr1(stand.crossAisleWidth ?? 1.8)} m`}
+              onChange={(crossAisleWidth) => updateStand(target, { crossAisleWidth })}
+            />
+          </>
+        )}
+      </PanelSection>
+      <PanelSection title="Équipements">
+        <ToggleField
+          label="Bancs de touche intégrés"
+          hint="Abris des équipes encastrés dans le mur de front, de part et d’autre de la ligne médiane"
+          disabled={off}
+          checked={stand.dugouts === true}
+          onChange={(dugouts) => updateStand(target, { dugouts })}
+        />
+        <ToggleField
+          label="Tribune de presse"
+          hint="Rangs centraux équipés de pupitres et d’écrans pour les journalistes"
+          disabled={off}
+          checked={stand.pressBox === true}
+          onChange={(pressBox) => updateStand(target, { pressBox })}
         />
       </PanelSection>
       <PanelSection title="Places">

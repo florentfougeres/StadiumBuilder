@@ -45,7 +45,11 @@ export function usesBowlSectionModel(shape: StadiumDocument['shape']): boolean {
 interface TierSpec {
   rows: number;
   riser: number;
+  /** Rise after each row (constant, or growing with a progressive rake). */
+  risers: number[];
   overhang: number;
+  /** Row with a cross aisle in front of it, its walkway width and wall height. */
+  aisle?: { row: number; width: number; wall: number };
 }
 
 interface StandSpec {
@@ -75,6 +79,8 @@ export interface BowlSectionModel {
   absent: Partial<Record<StandSide, true>>;
   /** Per corner, whether its two stands have different sections. */
   cornerDiffers: Record<CornerId, boolean>;
+  /** `tier:row` of the rows a cross aisle slot is laid in front of. */
+  aisleSlots: Set<string>;
   join: 'blend' | 'end' | 'side';
   tilted: boolean;
 }
@@ -89,7 +95,20 @@ function standSpec(stand: StandConfig): StandSpec {
   const section = computeStandSection(stand);
   const hasVip = section.tiers.length >= 2 && stand.vipLoges !== false;
   return {
-    tiers: section.tiers.map((t) => ({ rows: t.rows, riser: t.riserHeight, overhang: t.overhang })),
+    tiers: section.tiers.map((t) => {
+      const rows = section.rows.filter((r) => r.tierIdx === t.tierIndex);
+      const aisleRow = rows.findIndex((r) => r.crossAisle);
+      return {
+        rows: t.rows,
+        riser: t.riserHeight,
+        risers: rows.map((r) => r.riser),
+        overhang: t.overhang,
+        aisle:
+          aisleRow >= 0
+            ? { row: aisleRow, width: rows[aisleRow].crossAisle!.width, wall: rows[aisleRow].crossAisle!.wall }
+            : undefined,
+      };
+    }),
     rowDepth: stand.rowDepth,
     elevation: stand.elevationStart,
     recess: hasVip ? 1.45 : 0.75,
@@ -105,7 +124,13 @@ function sameSpec(a: StandSpec, b: StandSpec): boolean {
   return (
     a.tiers.length === b.tiers.length &&
     a.tiers.every(
-      (t, i) => t.rows === b.tiers[i].rows && near(t.riser, b.tiers[i].riser) && near(t.overhang, b.tiers[i].overhang)
+      (t, i) =>
+        t.rows === b.tiers[i].rows &&
+        near(t.riser, b.tiers[i].riser) &&
+        near(t.overhang, b.tiers[i].overhang) &&
+        t.risers.every((r, k) => near(r, b.tiers[i].risers[k] ?? r)) &&
+        t.aisle?.row === b.tiers[i].aisle?.row &&
+        near(t.aisle?.width ?? 0, b.tiers[i].aisle?.width ?? 0)
     ) &&
     near(a.rowDepth, b.rowDepth) &&
     near(a.elevation, b.elevation) &&
@@ -134,6 +159,7 @@ export function buildBowlSectionModel(doc: StadiumDocument, hollow: boolean): Bo
   const isSeatSegmentMask: boolean[] = [false, false, false];
   const breakStart: number[] = [];
   const treadSeg: number[][] = [];
+  const aisleSlots = new Set<string>();
   let pointIdx = 3; // last point of the parapet
   for (let t = 0; t < tierCount; t++) {
     if (t > 0) {
@@ -143,6 +169,12 @@ export function buildBowlSectionModel(doc: StadiumDocument, hollow: boolean): Bo
     }
     const rows: number[] = [];
     for (let r = 0; r < tierRows[t]; r++) {
+      // A slot for a cross aisle wherever one stand has it (zero size on the others).
+      if (present.some((side) => specs[side].tiers[t]?.aisle?.row === r)) {
+        isSeatSegmentMask.push(false, false);
+        pointIdx += 2;
+        aisleSlots.add(`${t}:${r}`);
+      }
       rows.push(isSeatSegmentMask.length);
       isSeatSegmentMask.push(true, false);
       pointIdx += 2;
@@ -170,6 +202,7 @@ export function buildBowlSectionModel(doc: StadiumDocument, hollow: boolean): Bo
     specs,
     absent,
     cornerDiffers,
+    aisleSlots,
     join: doc.cornerJoin ?? 'blend',
     tilted: doc.shape === 'tilted_bowl',
   };
@@ -306,7 +339,7 @@ export function bowlSectionAt(model: BowlSectionModel, mix: BowlMix): BowlSectio
     : scheduledTierRows(model, A, B, f);
 
   // Value of a tier parameter: blended where both stands have the tier, else the one that has it.
-  const tierParam = (t: number, key: keyof TierSpec) => {
+  const tierParam = (t: number, key: 'rows' | 'riser' | 'overhang') => {
     const ta = A.tiers[t];
     const tb = B.tiers[t];
     if (ta && tb) return lerp(ta[key], tb[key], s);
@@ -357,11 +390,30 @@ export function bowlSectionAt(model: BowlSectionModel, mix: BowlMix): BowlSectio
         pts.push([curD, curY], [curD, curY], [curD, curY], [curD, curY]);
       }
     }
-    const riser = tierParam(t, 'riser');
     const full = Math.floor(n);
+    // Rise after row `r`: blended where both stands have the row, else the one that has it.
+    const riserAt = (r: number) => {
+      const ra = A.tiers[t]?.risers[r];
+      const rb = B.tiers[t]?.risers[r];
+      if (ra !== undefined && rb !== undefined) return lerp(ra, rb, s);
+      return ra ?? rb ?? tierParam(t, 'riser');
+    };
+    // Cross aisle size in front of row `r` (zero for a stand without one there).
+    const aisleAt = (r: number, key: 'width' | 'wall') => {
+      const of = (spec: StandSpec) => (spec.tiers[t]?.aisle?.row === r ? spec.tiers[t]!.aisle![key] : 0);
+      return lerp(of(A), of(B), s);
+    };
     for (let r = 0; r < rowsLaid; r++) {
       // The row being dropped tapers to nothing: rows end one by one along the corner.
       const k = r < full ? 1 : r === full ? n - full : 0;
+      if (model.aisleSlots.has(`${t}:${r}`)) {
+        const w = aisleAt(r, 'width') * k;
+        const h = aisleAt(r, 'wall') * k;
+        pts.push([curD + w, curY], [curD + w, curY + h]);
+        curD += w;
+        curY += h;
+      }
+      const riser = riserAt(r);
       const dd = rowDepth * k;
       if (k > 0) placed.push({ d: curD, y: curY, depth: dd });
       pts.push([curD + dd, curY], [curD + dd, curY + riser * k]);

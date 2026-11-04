@@ -30,6 +30,17 @@ import {
   SweptStand,
 } from './generateCornerAccess';
 import {
+  buildDugout,
+  buildPressDesks,
+  buildWireFence,
+  DUGOUT_OFFSET,
+  PRESS_PITCH,
+  PressPlace,
+  pressBoxLength,
+  pressRowRange,
+  resolveFenceHeight,
+} from './generateStandFittings';
+import {
   computeTelescopicProjection,
   getTrackRadialOffset,
 } from './capacity';
@@ -261,6 +272,11 @@ function buildStandProfilePoints(
     if (tierRows.length === 0) continue;
     const treadSegIndices: number[] = [];
     for (const row of tierRows) {
+      if (row.crossAisle) {
+        // Cross aisle walkway, then the wall up to the rows behind it.
+        pushSeg(row.d, row.y - row.crossAisle.wall, false);
+        pushSeg(row.d, row.y, false);
+      }
       const treadIdx = pushSeg(row.d + stand.rowDepth, row.y, true);
       treadSegIndices.push(treadIdx);
       rowPositions.push({
@@ -825,6 +841,24 @@ function buildStraightStandMesh(
   bowlMesh.receiveShadow = true;
   group.add(bowlMesh);
 
+  // Press box: the back rows of the lowest tier, in the middle of the stand.
+  const pressSegs = new Set<number>();
+  const pressPlaces: PressPlace[] = [];
+  const pressHalf = pressBoxLength(spanLength) / 2;
+  if (stand.pressBox && stand.seatingType !== 'safe_standing') {
+    const tier0 = rowPositions.filter((r) => r.tierIdx === 0);
+    const [r0, r1] = pressRowRange(tier0.length, stand.tiers);
+    for (const row of tier0.slice(r0, r1)) {
+      pressSegs.add(row.treadSegIdx);
+      const front = profilePts[row.treadSegIdx];
+      for (let x = -pressHalf + PRESS_PITCH / 2; x < pressHalf; x += PRESS_PITCH) {
+        pressPlaces.push({ x, y: front[1], z: front[0], yaw: 0 });
+      }
+    }
+    const desks = buildPressDesks(pressPlaces, isNight);
+    if (desks) group.add(desks);
+  }
+
   if (seats3d && stand.seatingType !== 'safe_standing') {
     const standPainter = createStandSeatPainter(doc, stand);
     const seats = buildSweepSeatInstances({
@@ -841,6 +875,7 @@ function buildStraightStandMesh(
       primaryHex: doc.colors.seatsPrimary,
       secondaryHex: doc.colors.seatsSecondary,
       isHoleQuad,
+      skipSeat: (pos, p) => pressSegs.has(p) && Math.abs(pos.x) < pressHalf,
       attendance: resolveCrowdAttendance(mats),
       tifo: mats.crowd === true && stand.tifo,
       // Rows run left to right as seen from the pitch.
@@ -924,12 +959,26 @@ function buildStraightStandMesh(
     opacity: 0.52,
     side: THREE.DoubleSide,
   });
-  const frontGlassRail = new THREE.Mesh(
-    new THREE.BoxGeometry(spanLength - 0.06, 0.68, 0.06),
-    glassRailMat
-  );
-  frontGlassRail.position.set(0, stand.elevationStart + 0.92, 0.17);
-  group.add(frontGlassRail);
+  if (doc.frontFence === 'mesh') {
+    const steps = Math.max(2, Math.ceil(spanLength / 1.5));
+    const points: THREE.Vector3[] = [];
+    for (let i = 0; i <= steps; i++) {
+      points.push(new THREE.Vector3(spanLength * (0.5 - i / steps), stand.elevationStart + 0.58, 0.12));
+    }
+    group.add(
+      buildWireFence(
+        [{ points, inward: points.map(() => new THREE.Vector3(0, 0, -1)) }],
+        resolveFenceHeight(doc.frontFenceHeight)
+      )
+    );
+  } else {
+    const frontGlassRail = new THREE.Mesh(
+      new THREE.BoxGeometry(spanLength - 0.06, 0.68, 0.06),
+      glassRailMat
+    );
+    frontGlassRail.position.set(0, stand.elevationStart + 0.92, 0.17);
+    group.add(frontGlassRail);
+  }
 
   // 4. Continuous backrest strips stand in for seats on the lighter painted terrace
   if (!seats3d && rowPositions.length > 0) {
@@ -1239,6 +1288,13 @@ function buildStraightStandMesh(
 
   if (stand.id === 'south') {
     group.add(createPlayersTunnelPortal());
+  }
+  if (stand.dugouts && spanLength > 2 * (DUGOUT_OFFSET + 4)) {
+    for (const sx of [-1, 1]) {
+      const dugout = buildDugout(isNight);
+      dugout.position.x = sx * DUGOUT_OFFSET;
+      group.add(dugout);
+    }
   }
 
   // Exterior Envelope Architecture (above `gradeY`)
@@ -1752,6 +1808,8 @@ function buildSweepSeatInstances(opts: {
   primaryHex: string;
   secondaryHex: string;
   isHoleQuad?: (sliceIdx: number, profileSegIdx: number) => boolean;
+  /** Seats left out (press desks take their place), by position and profile segment. */
+  skipSeat?: (pos: THREE.Vector3, profileSegIdx: number) => boolean;
   /** Share of seats with a spectator sitting in them (`0..1`). */
   attendance: number;
   /** Dress every spectator in the club-colour tifo pattern. */
@@ -1778,6 +1836,7 @@ function buildSweepSeatInstances(opts: {
     primaryHex,
     secondaryHex,
     isHoleQuad,
+    skipSeat,
     attendance,
     tifo = false,
     paint,
@@ -1786,14 +1845,15 @@ function buildSweepSeatInstances(opts: {
   const pitch = Math.max(0.42, seatWidth);
   const nextSlice = (s: number) => (closed ? (s + 1) % ringCount : s + 1);
 
-  // Tier index per seat tread: a run of three or more non-seat segments is a balcony break.
+  // Tier index per seat tread: a run of four or more non-seat segments is a balcony break (a
+  // cross aisle makes three: riser, walkway, wall).
   const tierOfSegment: number[] = [];
   let tier = 0;
   let gap = 0;
   let seenSeat = false;
   isSeatSegmentMask.forEach((isSeat, p) => {
     if (isSeat) {
-      if (seenSeat && gap >= 3) tier++;
+      if (seenSeat && gap >= 4) tier++;
       seenSeat = true;
       gap = 0;
     } else {
@@ -1882,6 +1942,7 @@ function buildSweepSeatInstances(opts: {
           const at = run + along;
           if (aisleAt.some((x) => Math.abs(x - at) < aisleWidth * 0.5 + pitch * 0.4)) continue;
           const pos = new THREE.Vector3().lerpVectors(a, b, along / len);
+          if (skipSeat?.(pos, row.p)) continue;
           const m = new THREE.Matrix4().makeBasis(xAxis, up, zAxis).setPosition(pos);
           const tierIdx = tierOfSegment[row.p];
           placements.push({
@@ -2875,8 +2936,8 @@ function buildCornerVirageQuadrant(
     glassRailPos[b + 5] = pt.z;
   }
   for (let s = 0; s < segs; s++) {
-    // The tunnel deck carries its own parapet.
-    if (tunnel && isTunnelBay(tunnel, s)) continue;
+    // The tunnel deck carries its own parapet; a wire fence replaces the glass.
+    if ((tunnel && isTunnelBay(tunnel, s)) || doc.frontFence === 'mesh') continue;
     const a = s * 2;
     const b = (s + 1) * 2;
     const c = b + 1;
@@ -2897,6 +2958,29 @@ function buildCornerVirageQuadrant(
     side: THREE.DoubleSide,
   });
   group.add(new THREE.Mesh(glassRailGeo, cornerGlassMat));
+
+  if (doc.frontFence === 'mesh') {
+    const runs: { points: THREE.Vector3[]; inward: THREE.Vector3[] }[] = [];
+    let cur: { points: THREE.Vector3[]; inward: THREE.Vector3[] } | null = null;
+    const pushSlice = (sl: number) => {
+      const pt = sampleCornerQuadrantPoint(corner, sl / segs, 0.12);
+      cur!.points.push(new THREE.Vector3(pt.x, crestPerSlice[sl].elev + 0.58, pt.z));
+      cur!.inward.push(new THREE.Vector3(-pt.nx, 0, -pt.nz));
+    };
+    for (let sl = 0; sl < segs; sl++) {
+      if (tunnel && isTunnelBay(tunnel, sl)) {
+        cur = null;
+        continue;
+      }
+      if (!cur) {
+        cur = { points: [], inward: [] };
+        runs.push(cur);
+        pushSlice(sl);
+      }
+      pushSlice(sl + 1);
+    }
+    group.add(buildWireFence(runs, resolveFenceHeight(doc.frontFenceHeight)));
+  }
 
   // 5. 3D Precast Corner Vomitory Portals at the 45° Corner Bisector
   const vomPortalMat = new THREE.MeshStandardMaterial({
@@ -4679,6 +4763,70 @@ function buildModernBowlSweep(
   }
   const isTunnelSlice = (s: number) => bowlTunnels.some((plan) => isTunnelBay(plan, s));
 
+  // Dugouts and press boxes at the middle of each stand's side of the ring.
+  const sideCentreT: Record<StandSide, number> = { east: 0, south: 0.25, west: 0.5, north: 0.75 };
+  const sideNormal: Record<StandSide, [number, number]> = {
+    east: [1, 0],
+    south: [0, 1],
+    west: [-1, 0],
+    north: [0, -1],
+  };
+  const bowlPresses: { side: StandSide; segs: Set<number>; half: number }[] = [];
+  const bowlPressPlaces: PressPlace[] = [];
+  for (const side of ['east', 'south', 'west', 'north'] as StandSide[]) {
+    const st = doc.stands[side];
+    if (!st.enabled || st.rows <= 0) continue;
+    if (doc.shape === 'horseshoe' && side === 'east') continue;
+    if (crossSectionClip && side === 'south') continue;
+    const tc = sideCentreT[side];
+    if (st.dugouts && bowlRing.perimeter > 0) {
+      for (const sx of [-1, 1]) {
+        const pt = sampleRoundedBowlRing(bowlRing, tc + (sx * DUGOUT_OFFSET) / bowlRing.perimeter, 0);
+        const dugout = buildDugout(doc.lighting !== 'day');
+        dugout.position.set(pt.x, 0, pt.z);
+        dugout.rotation.y = Math.atan2(pt.nx, pt.nz);
+        group.add(dugout);
+      }
+    }
+    if (st.pressBox && sectionModel && st.seatingType !== 'safe_standing' && bowlRing.perimeter > 0) {
+      const sideLen = side === 'east' || side === 'west' ? safePitch.width : safePitch.length;
+      const half = pressBoxLength(sideLen * 0.9) / 2;
+      const tierRows = sectionModel.specs[side].tiers[0]?.rows ?? 0;
+      const [r0, r1] = pressRowRange(tierRows, sectionModel.specs[side].tiers.length);
+      const segs = new Set<number>();
+      const dt = half / bowlRing.perimeter;
+      const count = Math.max(2, Math.round((2 * half) / PRESS_PITCH));
+      for (let r = r0; r < r1; r++) {
+        const p = sectionModel.treadSeg[0][r];
+        if (p === undefined) continue;
+        segs.add(p);
+        const section = bowlSectionAt(
+          sectionModel,
+          bowlMixAtT(sectionModel, bowlRing, tc, sideNormal[side][1])
+        );
+        const [d, y] = section.pts[p];
+        for (let k = 0; k < count; k++) {
+          const t = tc - dt + ((k + 0.5) / count) * 2 * dt;
+          const pt = sampleRoundedBowlRing(bowlRing, t, d);
+          bowlPressPlaces.push({ x: pt.x, y, z: pt.z, yaw: Math.atan2(pt.nx, pt.nz) });
+        }
+      }
+      bowlPresses.push({ side, segs, half });
+    }
+  }
+  {
+    const desks = buildPressDesks(bowlPressPlaces, doc.lighting !== 'day');
+    if (desks) group.add(desks);
+  }
+  const skipBowlSeat = (pos: THREE.Vector3, p: number) =>
+    bowlPresses.some(({ side, segs, half }) => {
+      if (!segs.has(p)) return false;
+      const [nx, nz] = sideNormal[side];
+      const outward = pos.x * nx + pos.z * nz;
+      const along = Math.abs(pos.x * nz - pos.z * nx);
+      return outward > 0 && along < half;
+    });
+
   const isBowlQuadHole = (s: number, p: number): boolean => {
     const nextS = closed ? (s + 1) % ringCount : s + 1;
     if (isSliceInOpenCorner(s) || isSliceInOpenCorner(nextS)) {
@@ -4742,6 +4890,7 @@ function buildModernBowlSweep(
       primaryHex: doc.colors.seatsPrimary,
       secondaryHex: doc.colors.seatsSecondary,
       isHoleQuad: isBowlQuadHole,
+      skipSeat: bowlPresses.length > 0 ? skipBowlSeat : undefined,
       rowPerTread: sectionModel !== null,
       attendance: resolveCrowdAttendance(mats),
       paint: (seat, out) => {
@@ -4831,6 +4980,30 @@ function buildModernBowlSweep(
   }
 
   // Continuous Pitch-Side Laminated Glass Safety Balustrade around the swept bowl front parapet
+  if (doc.frontFence === 'mesh') {
+    // Wire fence on the front wall, broken where a tunnel deck interrupts it.
+    const runs: { points: THREE.Vector3[]; inward: THREE.Vector3[] }[] = [];
+    let cur: { points: THREE.Vector3[]; inward: THREE.Vector3[] } | null = null;
+    const pushSlice = (sl: number) => {
+      const gp = sampleRoundedBowlRing(bowlRing, tAtSlice(sl), 0.12);
+      cur!.points.push(new THREE.Vector3(gp.x, profilePtsPerSlice[sl][1][1], gp.z));
+      cur!.inward.push(new THREE.Vector3(-gp.nx, 0, -gp.nz));
+    };
+    for (let sl = 0; sl < activeSegments; sl++) {
+      if (isTunnelSlice(sl)) {
+        cur = null;
+        continue;
+      }
+      const nxt = closed ? (sl + 1) % ringCount : sl + 1;
+      if (!cur) {
+        cur = { points: [], inward: [] };
+        runs.push(cur);
+        pushSlice(sl);
+      }
+      pushSlice(nxt);
+    }
+    group.add(buildWireFence(runs, resolveFenceHeight(doc.frontFenceHeight)));
+  }
   const bowlGlassPos = new Float32Array(ringCount * 2 * 3);
   const bowlGlassIdx: number[] = [];
   for (let s = 0; s < ringCount; s++) {
@@ -4846,8 +5019,8 @@ function buildModernBowlSweep(
     bowlGlassPos[b + 5] = gp.z;
   }
   for (let s = 0; s < activeSegments; s++) {
-    // The tunnel deck carries its own parapet.
-    if (isTunnelSlice(s)) continue;
+    // The tunnel deck carries its own parapet; a wire fence replaces the glass.
+    if (isTunnelSlice(s) || doc.frontFence === 'mesh') continue;
     const nxt = closed ? (s + 1) % ringCount : s + 1;
     const a = s * 2;
     const b = nxt * 2;

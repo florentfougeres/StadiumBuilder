@@ -18,6 +18,11 @@ la capacité, les lignes de vue et une estimation de coût se recalculent en tem
   recul se mesure depuis la piste et peut descendre à 0 m.
 - **Hauteur du premier rang** par tribune : la tribune peut démarrer au-dessus du terrain, derrière
   un mur de front plus haut.
+- **Gradins réalistes** par tribune : pente constante ou progressive (rangs bas plus plats, rangs
+  hauts plus raides, même hauteur), coursive transversale dans le premier niveau (position et
+  largeur réglables), bancs de touche encastrés dans le mur de front, tribune de presse avec
+  pupitres et écrans.
+- **Barrière de bord de terrain** : vitre basse, ou grillage anti-envahissement de hauteur réglable.
 - **Accès véhicule dans les coins** : ouverture sous les gradins d'un coin fermé (rangs bas
   retirés, dalle-pont au-dessus, gabarit 4,6 m) ; la capacité retire les places perdues.
 - **Coursive extérieure** réglable (profondeur et hauteur) : socle bas ou façade continue autour des

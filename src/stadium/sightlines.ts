@@ -1,4 +1,6 @@
 import {
+  CROSS_AISLE_WALL_M,
+  resolveCrossAisle,
   riserFromSlopeDeg,
   RoofStyle,
   slopeDegFromRiser,
@@ -148,7 +150,10 @@ export interface StandSectionRow {
   /** Tread level (m). */
   y: number;
   tierIdx: number;
+  /** Rise from this row's tread to the next one's. */
   riser: number;
+  /** A cross aisle runs in front of this row: walkway width, and the wall up to the row. */
+  crossAisle?: { width: number; wall: number };
 }
 
 export interface StandSectionBreak {
@@ -182,6 +187,43 @@ export interface StandSection {
   topHeight: number;
 }
 
+/** C-value a progressive rake is drawn for (m): the "good" grade of the Green Guide. */
+const PROGRESSIVE_RAKE_C_M = 0.09;
+
+/**
+ * Risers of a tier's rows. `constant` repeats the tier's riser; `progressive` follows the riser
+ * each row needs to keep the same C-value over the row in front (larger as rows get higher and
+ * further back, the parabolic rake), scaled so the tier keeps its height.
+ */
+export function tierRowRisers(
+  stand: StandConfig,
+  tier: ResolvedTierSpec,
+  startD: number,
+  startY: number
+): number[] {
+  const flat = Array<number>(tier.rows).fill(tier.riserHeight);
+  if (stand.rakeProfile !== 'progressive' || tier.rows < 4) return flat;
+  const eye = 1.15;
+  const t = stand.rowDepth;
+  const ideal: number[] = [];
+  let d = startD;
+  let y = startY;
+  for (let r = 0; r < tier.rows; r++) {
+    const dist = Math.max(2, stand.distanceToPitch + d);
+    const h = y + eye;
+    const n = ((PROGRESSIVE_RAKE_C_M + h) * (dist + t)) / dist - h;
+    ideal.push(n);
+    d += t;
+    y += tier.riserHeight;
+  }
+  // Keep the tier's height, with no row flatter than half or steeper than twice the mean.
+  const mean = tier.riserHeight;
+  const scale = (mean * tier.rows) / Math.max(1e-6, ideal.reduce((a, b) => a + b, 0));
+  const clamped = ideal.map((n) => Math.max(mean * 0.5, Math.min(mean * 2, n * scale)));
+  const rescale = (mean * tier.rows) / clamped.reduce((a, b) => a + b, 0);
+  return clamped.map((n) => n * rescale);
+}
+
 /**
  * Cross-section of a stand, the single source for the 3D profile, the capacity metrics and the
  * sightlines. Rows climb from the front wall; at each tier change the upper tier steps up over a
@@ -190,6 +232,7 @@ export interface StandSection {
  */
 export function computeStandSection(stand: StandConfig): StandSection {
   const tiers = resolveStandTiers(stand);
+  const crossAisle = resolveCrossAisle(stand);
   const hasVip = tiers.length >= 2 && stand.vipLoges !== false;
   const recess = hasVip ? 1.45 : 0.75;
   const baseLoggiaH = hasVip ? 1.95 : 0.95;
@@ -224,10 +267,22 @@ export function computeStandSection(stand: StandConfig): StandSection {
       curD = frontD;
       curY = soffitY + fasciaH;
     }
+    const risers = tierRowRisers(stand, tier, curD, curY);
+    const aisleRow =
+      crossAisle && tier.tierIndex === 0 && tier.rows >= 6
+        ? Math.max(3, Math.min(tier.rows - 3, Math.round(tier.rows * crossAisle.ratio)))
+        : -1;
     for (let r = 0; r < tier.rows; r++) {
-      rows.push({ d: curD, y: curY, tierIdx: tier.tierIndex, riser: tier.riserHeight });
+      let aisle: StandSectionRow['crossAisle'];
+      if (r === aisleRow && crossAisle) {
+        // The walkway at the level of the next tread, then a wall up to the rows behind it.
+        aisle = { width: crossAisle.width, wall: CROSS_AISLE_WALL_M };
+        curD += aisle.width;
+        curY += aisle.wall;
+      }
+      rows.push({ d: curD, y: curY, tierIdx: tier.tierIndex, riser: risers[r], crossAisle: aisle });
       curD += stand.rowDepth;
-      curY += tier.riserHeight;
+      curY += risers[r];
       maxD = Math.max(maxD, curD);
     }
   }
@@ -333,9 +388,11 @@ export function computeStandSightlines(
     const tierEyeOffset = isStandingKop && row.tierIdx === 0 ? 1.52 : eyeOffsetBase;
     const eyeHeight = row.y + tierEyeOffset;
 
+    // Rise and depth over the row in front: a cross aisle sets the row back and raises it.
+    const front = section.rows[globalRow - 1];
     const rawCVal = isTierFirstRow
       ? 145
-      : computeRowCValueMm(curD, eyeHeight, row.riser, stand.rowDepth);
+      : computeRowCValueMm(curD, eyeHeight, row.y - front.y, row.d - front.d);
 
     // Roof columns planted in upper third of stands obstruct rear rows
     const colPenalty =
