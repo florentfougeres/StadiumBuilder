@@ -25,6 +25,7 @@ import {
 } from '../stadium/materials';
 import {
   CornerId,
+  CornerJoin,
   CornerMode,
   EnvelopeProfile,
   EnvelopeStyle,
@@ -870,6 +871,24 @@ function materialGallery<T extends string>(
 
 const CORNER_IDS: CornerId[] = ['nw', 'ne', 'sw', 'se'];
 
+const CORNER_JOIN_OPTIONS: { id: CornerJoin; label: string; detail: string }[] = [
+  {
+    id: 'blend',
+    label: 'Transition progressive',
+    detail: 'Le coin passe d’une tribune à l’autre en changeant de hauteur',
+  },
+  {
+    id: 'end',
+    label: 'Au niveau des virages',
+    detail: 'Le coin garde la hauteur de la tribune derrière le but, les latérales s’arrêtent en pignon',
+  },
+  {
+    id: 'side',
+    label: 'Au niveau des tribunes latérales',
+    detail: 'Le coin garde la hauteur des latérales et s’arrête en pignon contre le virage',
+  },
+];
+
 const ShapePanel: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const setShape = useStadiumStore((s) => s.setShape);
@@ -877,6 +896,7 @@ const ShapePanel: React.FC = () => {
   const setCornerRoundness = useStadiumStore((s) => s.setCornerRoundness);
   const setCornerMode = useStadiumStore((s) => s.setCornerMode);
   const setAllCorners = useStadiumStore((s) => s.setAllCorners);
+  const setCornerJoin = useStadiumStore((s) => s.setCornerJoin);
   const applyTargetCapacity = useStadiumStore((s) => s.applyTargetCapacity);
   const updateConcourse = useStadiumStore((s) => s.updateConcourse);
   const metrics = useMemo(() => calculateStadiumMetrics(doc), [doc]);
@@ -944,6 +964,14 @@ const ShapePanel: React.FC = () => {
               : cornerOptions
           }
         />
+        {!isContinuousBowlShape(doc.shape) && editable.some((id) => resolvedCorners[id] === 'filled') && (
+          <OptionList<CornerJoin>
+            label="Raccord entre tribunes de hauteurs différentes"
+            value={doc.cornerJoin ?? 'blend'}
+            onChange={setCornerJoin}
+            options={CORNER_JOIN_OPTIONS}
+          />
+        )}
       </PanelSection>
       <AdvancedSection tab="shape">
         <SubGroup title="Coins un par un">

@@ -56,7 +56,7 @@ import {
   OVERHANG_HEADROOM_M,
   resolveStandTiers,
 } from '../sightlines';
-import { normalizeStadiumDocument } from '../../state/useStadiumStore';
+import { applyShape, normalizeStadiumDocument } from '../../state/useStadiumStore';
 
 function ensureCanvasMock() {
   if (typeof document === 'undefined') {
@@ -333,6 +333,63 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
     });
     expect(domeIntrusions).toBe(0);
     disposeObject3D(domeStands);
+  });
+
+  describe('corners between separate stands', () => {
+    const rectDoc = (shape: 'compact_urban' | 'english_rectangular') => {
+      const doc = createPresetDocument('traditional_four_stands_42k');
+      applyShape(doc, shape);
+      doc.cornerFill = true;
+      for (const side of ['north', 'east', 'west'] as const) {
+        doc.stands[side] = { ...structuredClone(doc.stands.south), name: doc.stands[side].name };
+      }
+      return doc;
+    };
+    // The corner's terraces, not the access tower some corners carry.
+    const topOf = (group: THREE.Object3D, name: string) => {
+      const part = group.getObjectByName(name)!;
+      return new THREE.Box3().setFromObject(part.getObjectByName('CornerTerrace') ?? part).max.y;
+    };
+    const seatHeights = (group: THREE.Object3D, name: string) => {
+      const ys = new Set<number>();
+      group.getObjectByName(name)!.traverse((o) => {
+        const mesh = o as THREE.InstancedMesh;
+        if (!mesh.isInstancedMesh || mesh.name !== 'Seats') return;
+        const m = new THREE.Matrix4();
+        for (let i = 0; i < mesh.count; i++) {
+          mesh.getMatrixAt(i, m);
+          ys.add(Math.round(m.elements[13] * 10) / 10);
+        }
+      });
+      return [...ys].sort((a, b) => a - b);
+    };
+
+    for (const shape of ['compact_urban', 'english_rectangular'] as const) {
+      it(`joins identical stands level and row for row (${shape})`, () => {
+        ensureCanvasMock();
+        const group = generateStandsGroup(rectDoc(shape), false);
+        group.updateMatrixWorld(true);
+        expect(topOf(group, 'CornerVirage_SE')).toBeCloseTo(topOf(group, 'Stand_SOUTH'), 1);
+        expect(seatHeights(group, 'CornerVirage_SE')).toEqual(seatHeights(group, 'Stand_SOUTH'));
+        expect(group.getObjectByName('CornerStepWall')).toBeUndefined();
+        disposeObject3D(group);
+      });
+    }
+
+    it('keeps the chosen stand\'s section in a stepped corner, with a wall against the other', () => {
+      ensureCanvasMock();
+      for (const join of ['end', 'side'] as const) {
+        const doc = rectDoc('english_rectangular');
+        doc.cornerJoin = join;
+        for (const side of ['north', 'south'] as const) Object.assign(doc.stands[side], { rows: 60, tiers: 3, tierConfigs: undefined });
+        const group = generateStandsGroup(doc, false);
+        group.updateMatrixWorld(true);
+        const followed = join === 'end' ? 'Stand_EAST' : 'Stand_SOUTH';
+        expect(topOf(group, 'CornerVirage_SE')).toBeCloseTo(topOf(group, followed), 1);
+        expect(group.getObjectByName('CornerVirage_SE')!.getObjectByName('CornerStepWall')).toBeDefined();
+        disposeObject3D(group);
+      }
+    });
   });
 
   it(

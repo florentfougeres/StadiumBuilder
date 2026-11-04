@@ -158,6 +158,8 @@ export type CornerMode =
   | 'spiral_tower'
   | 'pavilion';
 
+export type CornerJoin = 'blend' | 'end' | 'side';
+
 export type StandCrestProfile = 'flat' | 'arch_crest' | 'saddle_dip';
 
 export type StandFasciaStyle = 'concrete' | 'led_ribbon' | 'criss_cross';
@@ -740,6 +742,12 @@ export interface StadiumDocument {
   cornerFill: boolean;
   /** Per-corner architectural mode (`nw`, `ne`, `sw`, `se`). */
   corners?: Partial<Record<CornerId, CornerMode>>;
+  /**
+   * Separate stands with seated corners: how a corner joins two stands whose sections differ.
+   * `blend` morphs one section into the other; `end` keeps the corner at the level of the stand
+   * behind the goal, `side` at the level of the side stand, with a step where the other is taller.
+   */
+  cornerJoin?: CornerJoin;
   sunkenDepth?: number;
   /** `rounded_rectangle`: corner rounding, `0` tight to `1` a full bend (default `0.5`). */
   cornerRoundness?: number;

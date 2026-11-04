@@ -2278,6 +2278,58 @@ function buildAisleHandrails(aisles: { pos: THREE.Vector3; tier: number }[][]): 
   return mesh;
 }
 
+/** The stand behind the goal and the side stand each corner joins. */
+const CORNER_STANDS: Record<CornerQuadrantId, { end: StandSide; side: StandSide }> = {
+  se: { end: 'east', side: 'south' },
+  sw: { end: 'west', side: 'south' },
+  nw: { end: 'west', side: 'north' },
+  ne: { end: 'east', side: 'north' },
+};
+
+/**
+ * Corners that keep one stand's section (`cornerJoin` `end` or `side`): only where the two
+ * stands' sections differ, since identical ones already meet flush through the corner.
+ */
+function resolveCornerFollow(doc: StadiumDocument): Partial<Record<CornerQuadrantId, StandSide>> {
+  const join = doc.cornerJoin ?? 'blend';
+  if (join === 'blend') return {};
+  const mats = resolveStadiumMaterials(doc);
+  const envelope: EnvelopeStyle = mats.envelopeStyle ?? 'enveloping_skin';
+  const isHollow =
+    doc.roof.style !== 'enveloping_shell' &&
+    (envelope === 'exposed_structure' || envelope === 'colonnade_forest');
+  const sections = new Map<StandSide, StandProfile>();
+  const section = (side: StandSide) => {
+    if (!sections.has(side)) sections.set(side, buildStandProfilePoints(doc.stands[side], isHollow));
+    return sections.get(side)!;
+  };
+  const follow: Partial<Record<CornerQuadrantId, StandSide>> = {};
+  for (const [cid, { end, side }] of Object.entries(CORNER_STANDS) as [CornerQuadrantId, { end: StandSide; side: StandSide }][]) {
+    if (!haveSameSection(section(end), section(side))) follow[cid] = join === 'end' ? end : side;
+  }
+  return follow;
+}
+
+/** Same layout and the same points to the centimetre. */
+function haveSameSection(a: StandProfile, b: StandProfile): boolean {
+  return (
+    haveSameSectionLayout(a, b) &&
+    a.profilePts.every(([d, y], i) => Math.abs(d - b.profilePts[i][0]) < 0.01 && Math.abs(y - b.profilePts[i][1]) < 0.01)
+  );
+}
+
+/** Whether two stand sections have the same points, seat treads and balconies, in the same order. */
+function haveSameSectionLayout(a: StandProfile, b: StandProfile): boolean {
+  return (
+    a.profilePts.length === b.profilePts.length &&
+    a.rowPositions.length === b.rowPositions.length &&
+    a.balconies.length === b.balconies.length &&
+    a.isSeatSegmentMask.length === b.isSeatSegmentMask.length &&
+    a.isSeatSegmentMask.every((v, i) => v === b.isSeatSegmentMask[i]) &&
+    a.rowPositions.every((r, i) => r.tierIdx === b.rowPositions[i].tierIdx)
+  );
+}
+
 /**
  * Builds a high-realism, C1-tangent-lofted 90° corner virage quadrant in World Space:
  * - `compact_urban` (`!corner.facetedThreeBay`): smooth curved UEFA urban cauldron corner + glazed spiral core tower
@@ -2298,8 +2350,9 @@ function buildCornerVirageQuadrant(
   const group = new THREE.Group();
   group.name = `CornerVirage_${corner.id.toUpperCase()}`;
 
-  const standA = doc.stands[corner.sideA];
-  const standB = doc.stands[corner.sideB];
+  // A corner that keeps one stand's section is built from that stand alone, at both ends.
+  const standA = doc.stands[corner.follow ?? corner.sideA];
+  const standB = doc.stands[corner.follow ?? corner.sideB];
 
   const mats = resolveStadiumMaterials(doc);
   const envelope: EnvelopeStyle = mats.envelopeStyle ?? 'enveloping_skin';
@@ -2317,7 +2370,12 @@ function buildCornerVirageQuadrant(
 
   // 18 smooth slices for curved `compact_urban`, 15 slices (3 planar bays x 5 sub-slices) for `english_rectangular`
   const segs = corner.facetedThreeBay ? 15 : 18;
-  const nSteps = Math.max(16, Math.min(76, Math.max(standA.rows, standB.rows)));
+  // Stands laid out alike (same rows, tiers and balconies) are joined by their own sections, point
+  // for point, so the corner meets each one flush and stays level between two identical stands.
+  const exact = haveSameSectionLayout(profA, profB);
+  const nSteps = exact
+    ? profA.rowPositions.length
+    : Math.max(16, Math.min(76, Math.max(standA.rows, standB.rows)));
   const maxTiers = Math.max(standA.tiers, standB.tiers) as 1 | 2 | 3 | 4 | 5;
   // Tier changes follow the neighbouring stands' row split (averaged, as the corner morphs from
   // one to the other); the automatic split fills in for a stand with fewer tiers.
@@ -2327,7 +2385,10 @@ function buildCornerVirageQuadrant(
     return tiers.slice(0, b).reduce((acc, t) => acc + t.rows, 0) / total;
   };
   const autoBreaks = maxTiers >= 2 ? getTierStartRows(nSteps, maxTiers).slice(1) : [];
-  const breakRows = autoBreaks.map((auto, i) => {
+  const exactBreaks = profA.rowPositions.flatMap((r, k) =>
+    k > 0 && r.tierIdx !== profA.rowPositions[k - 1].tierIdx ? [k] : []
+  );
+  const breakRows = exact ? exactBreaks : autoBreaks.map((auto, i) => {
     const shares = [cumulativeShare(tiersA, i + 1), cumulativeShare(tiersB, i + 1)].filter(
       (v): v is number => v !== undefined
     );
@@ -2341,18 +2402,20 @@ function buildCornerVirageQuadrant(
   const breakRowSet = new Set(breakRows);
 
   // Build exact canonical `isSeatSegmentMask` shared by all `segs + 1` slices
-  const isSeatMask: boolean[] = [false, false, false];
-  for (let k = 0; k < nSteps; k++) {
+  const isSeatMask: boolean[] = exact ? [...profA.isSeatSegmentMask] : [false, false, false];
+  for (let k = 0; k < (exact ? 0 : nSteps); k++) {
     if (breakRowSet.has(k)) {
       isSeatMask.push(false, false, false, false);
     }
     isSeatMask.push(true, false);
   }
-  isSeatMask.push(false, false); // crest parapet & top deck
-  if (isHollow) {
-    isSeatMask.push(false, false, false);
-  } else {
-    isSeatMask.push(false);
+  if (!exact) {
+    isSeatMask.push(false, false); // crest parapet & top deck
+    if (isHollow) {
+      isSeatMask.push(false, false, false);
+    } else {
+      isSeatMask.push(false);
+    }
   }
 
   interface CornerBalconySample {
@@ -2370,7 +2433,48 @@ function buildCornerVirageQuadrant(
   const balconiesPerSlice: CornerBalconySample[][] = [];
   const crestPerSlice: { outerD: number; topH: number; elev: number; gradeY: number }[] = [];
 
-  for (let s = 0; s <= segs; s++) {
+  if (exact) {
+    for (let s = 0; s <= segs; s++) {
+      const u = s / segs;
+      const w = u * u * (3 - 2 * u);
+      const mix = (a: number, b: number) => a + (b - a) * w;
+      profilePtsPerSlice.push(
+        profA.profilePts.map(([d, y], i): [number, number] => [mix(d, profB.profilePts[i][0]), mix(y, profB.profilePts[i][1])])
+      );
+      rowSamplesPerSlice.push(
+        profA.rowPositions.map((r, k) => ({
+          d: mix(r.d, profB.rowPositions[k].d),
+          y: mix(r.y, profB.rowPositions[k].y),
+          stepD: mix(standA.rowDepth, standB.rowDepth),
+        }))
+      );
+      balconiesPerSlice.push(
+        profA.balconies.map((a, k) => {
+          const b = profB.balconies[k];
+          // The section keeps the loggia's mid-height; its floor is as far below as its soffit is above.
+          const floor = (bal: BalconySample) => 2 * bal.loggiaY - bal.soffitY;
+          return {
+            d: mix(a.d, b.d),
+            y: mix(a.y, b.y),
+            loggiaD: mix(a.loggiaD, b.loggiaD),
+            loggiaBottomY: mix(floor(a), floor(b)) + 0.06,
+            loggiaTopY: mix(a.soffitY, b.soffitY) - 0.06,
+            weight: 1,
+            hasVipGlass: a.hasVipGlass || b.hasVipGlass,
+          };
+        })
+      );
+      const topH = mix(profA.topHeight, profB.topHeight);
+      crestPerSlice.push({
+        outerD: mix(profA.totalDepth, profB.totalDepth),
+        topH,
+        elev: mix(standA.elevationStart, standB.elevationStart),
+        gradeY: Math.min(sunkenDepth, Math.max(0, topH * 0.68)),
+      });
+    }
+  }
+
+  for (let s = 0; s <= (exact ? -1 : segs); s++) {
     const u = s / segs;
     const w = u * u * (3 - 2 * u); // Hermite C1 smoothstep (`w(0)=0, w(1)=1, w'(0)=w'(1)=0`)
 
@@ -2555,9 +2659,34 @@ function buildCornerVirageQuadrant(
 
   const cornerSeats3d = resolveStadiumMaterials(doc).seats3d !== false;
   const cornerMesh = new THREE.Mesh(cornerGeo, [concreteMat, cornerSeats3d ? concreteMat : seatMat]);
+  cornerMesh.name = 'CornerTerrace';
   cornerMesh.castShadow = true;
   cornerMesh.receiveShadow = true;
   group.add(cornerMesh);
+
+  // Keeping one stand's section, the corner ends with a wall against the other stand: whichever is
+  // taller there shows a clean step instead of a morph.
+  if (corner.follow) {
+    const uEnd = corner.follow === corner.sideA ? 1 : 0;
+    const capGeo = new THREE.ShapeGeometry(profA.shape);
+    const pos = capGeo.attributes.position;
+    const uv = capGeo.attributes.uv;
+    for (let i = 0; i < pos.count; i++) {
+      const d = pos.getX(i);
+      const y = pos.getY(i);
+      const pt = sampleCornerQuadrantPoint(corner, uEnd, d);
+      pos.setXYZ(i, pt.x, y, pt.z);
+      if (uv) uv.setXY(i, d * 0.08, y * 0.08);
+    }
+    capGeo.computeVertexNormals();
+    const capMat = concreteMat.clone();
+    capMat.side = THREE.DoubleSide;
+    const cap = new THREE.Mesh(capGeo, capMat);
+    cap.name = 'CornerStepWall';
+    cap.castShadow = true;
+    cap.receiveShadow = true;
+    group.add(cap);
+  }
 
   if (cornerSeats3d) {
     const painterA = createStandSeatPainter(doc, standA, { lettering: false });
@@ -2649,11 +2778,14 @@ function buildCornerVirageQuadrant(
       roughness: 0.35,
       metalness: 0.65,
     });
-    for (const uSeam of [1 / 3, 2 / 3]) {
+    // One rib per tier, from its first row to its last: a single rib would cut through balconies.
+    const tierStarts = [0, ...breakRows];
+    const tierRuns = tierStarts.map((k0, i) => [k0, (tierStarts[i + 1] ?? nSteps) - 1] as const);
+    for (const uSeam of [1 / 3, 2 / 3]) for (const [kBot, kTop] of tierRuns) {
       const sIdx = Math.round(uSeam * segs);
-      const rBot = rowSamplesPerSlice[sIdx][0];
-      const rTop = rowSamplesPerSlice[sIdx][nSteps - 1];
-      if (rBot && rTop) {
+      const rBot = rowSamplesPerSlice[sIdx][kBot];
+      const rTop = rowSamplesPerSlice[sIdx][kTop];
+      if (rBot && rTop && kTop > kBot) {
         const pBot = sampleCornerQuadrantPoint(corner, uSeam, rBot.d);
         const pTop = sampleCornerQuadrantPoint(corner, uSeam, rTop.d);
         group.add(
@@ -5398,6 +5530,7 @@ export function generateStandsGroup(
       east: doc.stands.east,
       west: doc.stands.west,
     },
+    cornerFollow: resolveCornerFollow(doc),
   });
 
   const sides: StandSide[] = ['north', 'south', 'east', 'west'];

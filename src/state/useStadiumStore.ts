@@ -39,6 +39,7 @@ import {
   StandSide,
   StandTierConfig,
   SeatTierStyle,
+  CornerJoin,
   TransformMode,
 } from '../stadium/schema';
 import { resolveStandTiers } from '../stadium/sightlines';
@@ -120,6 +121,7 @@ export interface StadiumStoreState {
   setCornerFill: (fill: boolean) => void;
   setCornerMode: (corner: CornerId, mode: CornerMode) => void;
   setAllCorners: (mode: CornerMode) => void;
+  setCornerJoin: (join: CornerJoin) => void;
   setFloodlightRig: (mode: FloodlightRigMode) => void;
   setLighting: (lighting: LightingMode) => void;
   updatePitch: (patch: Partial<PitchConfig>) => void;
@@ -634,6 +636,11 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
       commitChange((d) => {
         d.corners = { nw: mode, ne: mode, sw: mode, se: mode };
         d.cornerFill = mode !== 'open';
+      }),
+
+    setCornerJoin: (join) =>
+      commitChange((d) => {
+        d.cornerJoin = join;
       }),
 
     setFloodlightRig: (mode) =>

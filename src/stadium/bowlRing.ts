@@ -741,6 +741,8 @@ export interface RectangularCornerSpec {
   facetedThreeBay: boolean;
   sideA: RectangularSideId;
   sideB: RectangularSideId;
+  /** Stand whose section the corner keeps; unset, it joins both (exactly, or morphing). */
+  follow?: RectangularSideId;
 }
 
 export interface RectangularCornerLayout {
@@ -771,6 +773,11 @@ export function computeRectangularCornerLayout(params: {
     RectangularSideId,
     { enabled: boolean; rows: number; distanceToPitch: number }
   >;
+  /**
+   * Seated corners that keep one stand's section instead of morphing: the other stand ends
+   * with a capped wall at that corner.
+   */
+  cornerFollow?: Partial<Record<CornerQuadrantId, RectangularSideId>>;
 }): RectangularCornerLayout {
   const {
     shape,
@@ -782,6 +789,7 @@ export function computeRectangularCornerLayout(params: {
     endTrackOffset,
     sideTrackOffset,
     stands,
+    cornerFollow = {},
   } = params;
 
   const pitchHalfX = pitchLength * 0.5;
@@ -871,6 +879,10 @@ export function computeRectangularCornerLayout(params: {
 
   const openOverhang = shape === 'four_stands' ? 4.0 : 2.0;
 
+  // A stand meets a corner flush unless the corner keeps the other stand's section.
+  const joinsFlush = (state: { seamlessVirage: boolean }, cid: CornerQuadrantId, side: RectangularSideId) =>
+    state.seamlessVirage && (cornerFollow[cid] === undefined || cornerFollow[cid] === side);
+
   // South stand (+Z, rotY = 0: local +X -> world +X)
   const southMinX = swState.trimsStand ? westX + rSW : -(pitchHalfX + openOverhang);
   const southMaxX = seState.trimsStand ? eastX - rSE : pitchHalfX + openOverhang;
@@ -898,35 +910,36 @@ export function computeRectangularCornerLayout(params: {
         span: Math.max(8, southMaxX - southMinX),
         centerCoord: (southMinX + southMaxX) * 0.5,
         frontDist: southDist,
-        capNegLocalX: !swState.seamlessVirage,
-        capPosLocalX: !seState.seamlessVirage,
+        capNegLocalX: !joinsFlush(swState, 'sw', 'south'),
+        capPosLocalX: !joinsFlush(seState, 'se', 'south'),
       },
       north: {
         span: Math.max(8, northMaxX - northMinX),
         centerCoord: (northMinX + northMaxX) * 0.5,
         frontDist: northDist,
-        capNegLocalX: !neState.seamlessVirage,
-        capPosLocalX: !nwState.seamlessVirage,
+        capNegLocalX: !joinsFlush(neState, 'ne', 'north'),
+        capPosLocalX: !joinsFlush(nwState, 'nw', 'north'),
       },
       east: {
         span: Math.max(8, eastMaxZ - eastMinZ),
         centerCoord: (eastMinZ + eastMaxZ) * 0.5,
         frontDist: eastDist,
-        capNegLocalX: !seState.seamlessVirage,
-        capPosLocalX: !neState.seamlessVirage,
+        capNegLocalX: !joinsFlush(seState, 'se', 'east'),
+        capPosLocalX: !joinsFlush(neState, 'ne', 'east'),
       },
       west: {
         span: Math.max(8, westMaxZ - westMinZ),
         centerCoord: (westMinZ + westMaxZ) * 0.5,
         frontDist: westDist,
-        capNegLocalX: !nwState.seamlessVirage,
-        capPosLocalX: !swState.seamlessVirage,
+        capNegLocalX: !joinsFlush(nwState, 'nw', 'west'),
+        capPosLocalX: !joinsFlush(swState, 'sw', 'west'),
       },
     },
     corners: {
       se: {
         id: 'se',
         active: seState.active,
+        follow: seState.seamlessVirage ? cornerFollow.se : undefined,
         mode: modeSE,
         cx: eastX - rSE,
         cz: southZ - rSE,
@@ -940,6 +953,7 @@ export function computeRectangularCornerLayout(params: {
       sw: {
         id: 'sw',
         active: swState.active,
+        follow: swState.seamlessVirage ? cornerFollow.sw : undefined,
         mode: modeSW,
         cx: westX + rSW,
         cz: southZ - rSW,
@@ -953,6 +967,7 @@ export function computeRectangularCornerLayout(params: {
       nw: {
         id: 'nw',
         active: nwState.active,
+        follow: nwState.seamlessVirage ? cornerFollow.nw : undefined,
         mode: modeNW,
         cx: westX + rNW,
         cz: northZ + rNW,
@@ -966,6 +981,7 @@ export function computeRectangularCornerLayout(params: {
       ne: {
         id: 'ne',
         active: neState.active,
+        follow: neState.seamlessVirage ? cornerFollow.ne : undefined,
         mode: modeNE,
         cx: eastX - rNE,
         cz: northZ + rNE,
