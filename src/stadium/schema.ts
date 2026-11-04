@@ -743,9 +743,11 @@ export interface StadiumDocument {
   /** Per-corner architectural mode (`nw`, `ne`, `sw`, `se`). */
   corners?: Partial<Record<CornerId, CornerMode>>;
   /**
-   * Separate stands with seated corners: how a corner joins two stands whose sections differ.
-   * `blend` morphs one section into the other; `end` keeps the corner at the level of the stand
-   * behind the goal, `side` at the level of the side stand, with a step where the other is taller.
+   * How a corner joins two stands whose sections differ. `blend` morphs one section into the
+   * other between separate stands; on a continuous bowl (see bowlSection) rows keep their level
+   * and the extra ones end one by one across the corner, upper tier first. `end` keeps the corner
+   * at the level of the stand behind the goal, `side` at the level of the side stand, with a gable
+   * wall where the other is taller.
    */
   cornerJoin?: CornerJoin;
   sunkenDepth?: number;

@@ -321,6 +321,35 @@ function locateRingSegment(ring: RoundedBowlGeometry, u: number): { segIdx: numb
   return { segIdx, f: Math.min(1, Math.max(0, s / Math.max(1e-6, lengths[segIdx]))) };
 }
 
+/**
+ * Segment of the ring at position `t` (any real number, wrapped into [0, 1)) and the fraction
+ * along it, segments numbered as in `ringSegmentLengths` (odd indices are the corners).
+ */
+export function ringSegmentAt(ring: RoundedBowlGeometry, t: number): { segIdx: number; f: number } {
+  return locateRingSegment(ring, ((t % 1) + 1) % 1);
+}
+
+/** Ring position `t` of the start of each of the nine segments, then 1 (ten values). */
+export function ringSegmentStarts(ring: RoundedBowlGeometry): number[] {
+  const lengths = ringSegmentLengths(ring);
+  const total = lengths.reduce((a, b) => a + b, 0) || 1;
+  const starts = [0];
+  for (const len of lengths) starts.push(starts[starts.length - 1] + len / total);
+  starts[starts.length - 1] = 1;
+  return starts;
+}
+
+/**
+ * Normal angle (from the end axis toward the long side's) where the corner arc starts and ends
+ * in each quadrant: bowed sides already turn their normal along their own length, so the corner
+ * only covers what is left of the quarter turn.
+ */
+export function ringCornerNormalWindow(ring: RoundedBowlGeometry): { from: number; to: number } {
+  const joint = bowedJoint(ring);
+  if (!joint) return { from: 0, to: Math.PI / 2 };
+  return { from: joint.endAngle, to: Math.PI / 2 - joint.sideAngle };
+}
+
 /** Whether ring position `t` lies on one of the four corner arcs (or chamfers). */
 export function isOnRingCorner(ring: RoundedBowlGeometry, t: number): boolean {
   return locateRingSegment(ring, ((t % 1) + 1) % 1).segIdx % 2 === 1;

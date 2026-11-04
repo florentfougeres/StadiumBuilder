@@ -13,6 +13,13 @@ import {
   sampleRoundedBowlRing,
 } from './bowlRing';
 import {
+  bowlMixAtT,
+  bowlSectionAt,
+  bowlStepJunctions,
+  buildBowlSectionModel,
+  usesBowlSectionModel,
+} from './bowlSection';
+import {
   computeTelescopicProjection,
   getTrackRadialOffset,
 } from './capacity';
@@ -1741,6 +1748,11 @@ function buildSweepSeatInstances(opts: {
   tifo?: boolean;
   /** Seat colour; without it tiers alternate the two club colours. */
   paint?: (seat: SweepSeat, out: THREE.Color) => THREE.Color;
+  /**
+   * Each seat tread is one row, possibly ending along the ring (its tread shrinking to nothing):
+   * seats stop where the tread gets too shallow to sit on.
+   */
+  rowPerTread?: boolean;
 }): THREE.Group | null {
   const {
     ringCount,
@@ -1759,6 +1771,7 @@ function buildSweepSeatInstances(opts: {
     attendance,
     tifo = false,
     paint,
+    rowPerTread = false,
   } = opts;
   const pitch = Math.max(0.42, seatWidth);
   const nextSlice = (s: number) => (closed ? (s + 1) % ringCount : s + 1);
@@ -1792,7 +1805,7 @@ function buildSweepSeatInstances(opts: {
     if (!isSeat) return;
     rowsSoFar += Math.abs(ref[p + 1][0] - ref[p][0]) / Math.max(0.6, rowDepth);
     // A shallow step may hold no row at all when the stand has fewer rows than steps.
-    const count = Math.max(0, Math.round(rowsSoFar - placedRows));
+    const count = rowPerTread ? 1 : Math.max(0, Math.round(rowsSoFar - placedRows));
     placedRows += count;
     const t = tierOfSegment[p];
     for (let k = 0; k < count; k++) {
@@ -1836,7 +1849,11 @@ function buildSweepSeatInstances(opts: {
     let carry = pitch * 0.5;
     for (let s = 0; s < activeSegments; s++) {
       const len = segLens[s];
-      const holeHere = isHoleQuad ? isHoleQuad(s, row.p) : false;
+      const treadDepth = (slice: number) =>
+        profilePtsPerSlice[slice][row.p + 1][0] - profilePtsPerSlice[slice][row.p][0];
+      const holeHere =
+        (isHoleQuad ? isHoleQuad(s, row.p) : false) ||
+        (rowPerTread && Math.min(treadDepth(s), treadDepth(nextSlice(s))) < rowDepth * 0.55);
       aisleAt.forEach((x, k) => {
         if (!holeHere && len > 1e-4 && x >= run && x < run + len) {
           aislePoints[k].push({
@@ -4165,10 +4182,38 @@ function buildModernBowlSweep(
 
   const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
   const arcFraction = Math.max(0.25, tEnd - tStart);
-  const activeSegments = Math.max(36, Math.round(segments * arcFraction));
-  const ringCount = closed ? activeSegments : activeSegments + 1;
+  const baseSegments = Math.max(36, Math.round(segments * arcFraction));
 
-  const tAtSlice = (s: number) => tStart + (s / activeSegments) * (tEnd - tStart);
+  // Stands keep their own rows; corners end the extra rows one by one (see bowlSection).
+  const sectionModel = usesBowlSectionModel(doc.shape) ? buildBowlSectionModel(doc, isHollow) : null;
+
+  const sliceT: number[] = [];
+  for (let s = 0; s < baseSegments + (closed ? 0 : 1); s++) {
+    sliceT.push(tStart + (s / baseSegments) * (tEnd - tStart));
+  }
+  if (sectionModel) {
+    // A corner kept at one stand's section meets the other stand at a gable wall: two slices a
+    // hair apart, one with each section.
+    const STEP_GAP = 1e-5;
+    const arcEnd = closed ? tStart + 1 : tEnd;
+    for (const junction of bowlStepJunctions(sectionModel, bowlRing)) {
+      const t = [junction, junction + 1, junction - 1].find(
+        (c) => c - STEP_GAP > tStart && c + STEP_GAP < arcEnd
+      );
+      if (t !== undefined) sliceT.push(t - STEP_GAP, t + STEP_GAP);
+    }
+    sliceT.sort((a, b) => a - b);
+  }
+  const ringCount = sliceT.length;
+  const activeSegments = closed ? ringCount : ringCount - 1;
+
+  /** Ring position of slice `s`; fractional slices interpolate to the next one. */
+  const tAtSlice = (s: number) => {
+    const i = Math.floor(s);
+    const frac = s - i;
+    const tOf = (k: number) => (closed ? sliceT[((k % ringCount) + ringCount) % ringCount] + Math.floor(k / ringCount) : sliceT[Math.min(ringCount - 1, Math.max(0, k))]);
+    return frac > 0 ? tOf(i) + (tOf(i + 1) - tOf(i)) * frac : tOf(i);
+  };
 
   const sectorWeightsAt = (nx: number, nz: number) => {
     const w = bowlSideWeights(doc.shape, nx, nz);
@@ -4257,17 +4302,21 @@ function buildModernBowlSweep(
 
   const N_TERRACE_STEPS = 30;
   const isSeatSegmentMask: boolean[] = [];
-  isSeatSegmentMask.push(false, false, false);
-  for (let k = 0; k < N_TERRACE_STEPS; k++) {
-    if (k === 6 || k === 12 || k === 18 || k === 24) {
-      isSeatSegmentMask.push(false, false, false, false);
-    }
-    isSeatSegmentMask.push(true, false);
-  }
-  if (isHollow) {
-    isSeatSegmentMask.push(false, false, false, false);
+  if (sectionModel) {
+    isSeatSegmentMask.push(...sectionModel.isSeatSegmentMask);
   } else {
-    isSeatSegmentMask.push(false, false);
+    isSeatSegmentMask.push(false, false, false);
+    for (let k = 0; k < N_TERRACE_STEPS; k++) {
+      if (k === 6 || k === 12 || k === 18 || k === 24) {
+        isSeatSegmentMask.push(false, false, false, false);
+      }
+      isSeatSegmentMask.push(true, false);
+    }
+    if (isHollow) {
+      isSeatSegmentMask.push(false, false, false, false);
+    } else {
+      isSeatSegmentMask.push(false, false);
+    }
   }
 
   const profilePtsPerSlice: [number, number][][] = [];
@@ -4292,6 +4341,13 @@ function buildModernBowlSweep(
       else cQuad = 'ne';
     }
     sliceCornerId.push(cQuad);
+
+    if (sectionModel) {
+      const section = bowlSectionAt(sectionModel, bowlMixAtT(sectionModel, bowlRing, t, baseSample.nz));
+      topCrestPerSlice.push([section.outerD, section.topHeight]);
+      profilePtsPerSlice.push(section.pts);
+      continue;
+    }
 
     const env = evalStandEnvelopeAt(baseSample.nx, baseSample.nz);
     const tierBlend = blendTierParamsAt(baseSample.nx, baseSample.nz);
@@ -4468,19 +4524,29 @@ function buildModernBowlSweep(
     const vomSpec = resolveStandVomitories(st);
     if (vomSpec.count <= 0) continue;
 
-    // Pick step range on lower/primary tier (`kStart .. kStart + 2`) avoiding break slots `6, 12, 18, 24`
-    const maxStep = st.tiers >= 2 ? 10 : N_TERRACE_STEPS - 4;
-    let kStart = Math.max(
-      2,
-      Math.min(maxStep, Math.round(maxStep * vomSpec.rowRatio))
-    );
-    if (kStart === 5 || kStart === 6) kStart = 7;
+    // Three treads (and their risers) of the lower tier carved out for the vomitory mouth.
+    const vomTreads: number[] = [];
+    if (sectionModel) {
+      const rowsHere = sectionModel.specs[sec.side].tiers[0]?.rows ?? 0;
+      const lastStart = rowsHere - 4;
+      if (lastStart < 1) continue;
+      const rStart = Math.max(1, Math.min(lastStart, Math.round(lastStart * vomSpec.rowRatio)));
+      for (let dr = 0; dr < 3; dr++) vomTreads.push(sectionModel.treadSeg[0][rStart + dr]);
+    } else {
+      // Pick step range on lower/primary tier (`kStart .. kStart + 2`) avoiding break slots `6, 12, 18, 24`
+      const maxStep = st.tiers >= 2 ? 10 : N_TERRACE_STEPS - 4;
+      let kStart = Math.max(
+        2,
+        Math.min(maxStep, Math.round(maxStep * vomSpec.rowRatio))
+      );
+      if (kStart === 5 || kStart === 6) kStart = 7;
+      for (let dk = 0; dk < 3 && kStart + dk < N_TERRACE_STEPS; dk++) vomTreads.push(stepSegPairs[kStart + dk][0]);
+    }
 
     const segSet = new Set<number>();
-    for (let dk = 0; dk < 3 && kStart + dk < N_TERRACE_STEPS; dk++) {
-      const [tSeg, rSeg] = stepSegPairs[kStart + dk];
+    for (const tSeg of vomTreads) {
       segSet.add(tSeg);
-      segSet.add(rSeg);
+      segSet.add(tSeg + 1);
     }
 
     for (let v = 0; v < vomSpec.count; v++) {
@@ -4513,11 +4579,9 @@ function buildModernBowlSweep(
       // Place 3D recessed vomitory portal centered on slice `bestS` -> `nextS`
       const nextS = closed ? (bestS + 1) % ringCount : Math.min(ringCount - 1, bestS + 1);
       const tMid = 0.5 * (tAtSlice(bestS) + tAtSlice(nextS));
-      const pStart = profilePtsPerSlice[bestS][stepSegPairs[kStart][0]];
-      const pEnd =
-        profilePtsPerSlice[bestS][
-          stepSegPairs[Math.min(N_TERRACE_STEPS - 1, kStart + 2)][1] + 1
-        ];
+      // Foot of the first tread, top of the last riser.
+      const pStart = profilePtsPerSlice[bestS][vomTreads[0]];
+      const pEnd = profilePtsPerSlice[bestS][vomTreads[vomTreads.length - 1] + 2];
       if (pStart && pEnd) {
         const ptA = sampleRoundedBowlRing(bowlRing, tAtSlice(bestS), pStart[0]);
         const ptB = sampleRoundedBowlRing(bowlRing, tAtSlice(nextS), pStart[0]);
@@ -4604,6 +4668,7 @@ function buildModernBowlSweep(
       primaryHex: doc.colors.seatsPrimary,
       secondaryHex: doc.colors.seatsSecondary,
       isHoleQuad: isBowlQuadHole,
+      rowPerTread: sectionModel !== null,
       attendance: resolveCrowdAttendance(mats),
       paint: (seat, out) => {
         // The stand whose quarter of the ring the seat is in; t grows to a spectator's right.
@@ -4737,7 +4802,11 @@ function buildModernBowlSweep(
     roughness: 0.28,
     metalness: 0.85,
   });
-  for (const stepIdx of [8, 14, 22, 30, 38, 46, 56, 66]) {
+  // Crush barriers every few rows of the lower tier (profile point at the foot of a tread).
+  const railPointIdx = sectionModel
+    ? sectionModel.treadSeg[0].filter((_, r) => r % 6 === 5)
+    : [8, 14, 22, 30, 38, 46, 56, 66];
+  for (const stepIdx of railPointIdx) {
     let runPts: THREE.Vector3[] = [];
     const flushRail = () => {
       if (runPts.length >= 3) {
@@ -4759,8 +4828,11 @@ function buildModernBowlSweep(
       const inStandingZone =
         st.enabled &&
         st.seatingType === 'safe_standing' &&
-        (st.tiers === 1 || stepIdx <= 24);
-      if (inStandingZone && stepIdx < profilePtsPerSlice[s].length - 5) {
+        (sectionModel ? true : st.tiers === 1 || stepIdx <= 24);
+      // A row that has ended in the corner carries no barrier.
+      const rowHere =
+        !sectionModel || profilePtsPerSlice[s][stepIdx + 1][0] - profilePtsPerSlice[s][stepIdx][0] > 0.3;
+      if (inStandingZone && rowHere && stepIdx < profilePtsPerSlice[s].length - 5) {
         const [rd, ry] = profilePtsPerSlice[s][stepIdx];
         const wp = sampleRoundedBowlRing(bowlRing, t, rd - 0.12);
         runPts.push(new THREE.Vector3(wp.x, ry + 0.55, wp.z));
@@ -4884,7 +4956,10 @@ function buildModernBowlSweep(
     side: THREE.DoubleSide,
   });
 
-  const slotStartIndices = [16, 32, 48, 64];
+  // First point of each balcony break (loggia foot); its fascia top is three points on.
+  const slotStartIndices = sectionModel
+    ? sectionModel.breakStart.filter((i) => i !== undefined)
+    : [16, 32, 48, 64];
 
   for (const baseIdx of slotStartIndices) {
     let runFascia: THREE.Vector3[] = [];

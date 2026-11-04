@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { resolveCornerFollow } from './generateStand';
+import { bowlCrestAtNormal, buildBowlSectionModel, usesBowlSectionModel } from './bowlSection';
 import {
   bowlSideWeights,
   buildShapeBowlRing,
@@ -154,7 +155,14 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     18
   );
 
+  // Continuous bowls: the crest of the bowl's own section there (stands keep their rows and the
+  // corners end the extra ones), so roofs and facades follow the stands exactly.
+  const sectionModel = usesBowlSectionModel(doc.shape) ? buildBowlSectionModel(doc, false) : null;
+  // Only called once `ring` below is built.
+  const bowlCrest = (nx: number, nz: number) => bowlCrestAtNormal(sectionModel!, ring, nx, nz);
+
   const standHeightAtNormal = (nx: number, nz: number): number => {
+    if (sectionModel) return bowlCrest(nx, nz).height;
     const { east: wE, west: wW, south: wS, north: wN } = bowlSideWeights(doc.shape, nx, nz);
     const hE = eastMetrics.enabled ? eastMetrics.maxHeight : maxStandH * 0.5;
     const hW = westMetrics.enabled ? westMetrics.maxHeight : maxStandH * 0.5;
@@ -164,6 +172,7 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
   };
 
   const standDepthAtNormal = (nx: number, nz: number): number => {
+    if (sectionModel) return bowlCrest(nx, nz).depth;
     const { east: wE, west: wW, south: wS, north: wN } = bowlSideWeights(doc.shape, nx, nz);
     const dE = eastMetrics.enabled ? eastMetrics.totalDepth : avgDepth * 0.6;
     const dW = westMetrics.enabled ? westMetrics.totalDepth : avgDepth * 0.6;

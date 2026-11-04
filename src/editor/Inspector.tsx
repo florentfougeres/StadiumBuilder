@@ -889,6 +889,13 @@ const CORNER_JOIN_OPTIONS: { id: CornerJoin; label: string; detail: string }[] =
   },
 ];
 
+/** On a bowl the rows keep their level: the progressive join ends the extra rows one by one. */
+const BOWL_CORNER_JOIN_OPTIONS = CORNER_JOIN_OPTIONS.map((o) =>
+  o.id === 'blend'
+    ? { ...o, detail: 'Les rangs en trop s’arrêtent un à un dans le coin, anneau supérieur d’abord' }
+    : o
+);
+
 const ShapePanel: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const setShape = useStadiumStore((s) => s.setShape);
@@ -964,12 +971,14 @@ const ShapePanel: React.FC = () => {
               : cornerOptions
           }
         />
-        {!isContinuousBowlShape(doc.shape) && editable.some((id) => resolvedCorners[id] === 'filled') && (
+        {(isContinuousBowlShape(doc.shape)
+          ? doc.shape !== 'saddle_bowl' && doc.shape !== 'tilted_bowl'
+          : editable.some((id) => resolvedCorners[id] === 'filled')) && (
           <OptionList<CornerJoin>
             label="Raccord entre tribunes de hauteurs différentes"
             value={doc.cornerJoin ?? 'blend'}
             onChange={setCornerJoin}
-            options={CORNER_JOIN_OPTIONS}
+            options={isContinuousBowlShape(doc.shape) ? BOWL_CORNER_JOIN_OPTIONS : CORNER_JOIN_OPTIONS}
           />
         )}
       </PanelSection>
