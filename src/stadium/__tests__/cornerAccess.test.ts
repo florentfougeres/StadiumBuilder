@@ -58,23 +58,18 @@ describe('corner vehicle access', () => {
     expect(count(group, 'CornerVehicleTunnel')).toBe(4);
   });
 
-  it.each<StadiumShape>(['four_stands', 'english_rectangular', 'arc_stands'])(
-    'lays a driveway through the open corners of %s',
-    (shape) => {
-      const doc = createPresetDocument('traditional_four_stands_42k');
-      doc.shape = shape;
-      doc.corners = Object.fromEntries(ALL.map((c) => [c, 'open'])) as StadiumDocument['corners'];
-      const group = generateStandsGroup(withAccess(doc));
-      expect(count(group, 'CornerVehicleDriveway')).toBe(4);
-      expect(count(group, 'CornerVehicleTunnel')).toBe(0);
-    }
-  );
+  it('adds nothing to open corners', () => {
+    const doc = createPresetDocument('traditional_four_stands_42k');
+    doc.shape = 'four_stands';
+    doc.corners = Object.fromEntries(ALL.map((c) => [c, 'open'])) as StadiumDocument['corners'];
+    const group = generateStandsGroup(withAccess(doc));
+    expect(count(group, 'CornerVehicleTunnel')).toBe(0);
+  });
 
   it('leaves corners alone without the option', () => {
     const doc = createPresetDocument('bowl_bowstring_60k');
     const group = generateStandsGroup(doc);
     expect(count(group, 'CornerVehicleTunnel')).toBe(0);
-    expect(count(group, 'CornerVehicleDriveway')).toBe(0);
   });
 });
 

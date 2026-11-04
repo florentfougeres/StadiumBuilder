@@ -18,9 +18,8 @@ la capacité, les lignes de vue et une estimation de coût se recalculent en tem
   recul se mesure depuis la piste et peut descendre à 0 m.
 - **Hauteur du premier rang** par tribune : la tribune peut démarrer au-dessus du terrain, derrière
   un mur de front plus haut.
-- **Accès véhicule dans les coins** : tunnel sous les gradins d'un coin fermé (rangs bas retirés,
-  dalle-pont au-dessus, gabarit 4,6 m), ou voie et portail dans un coin ouvert ; la capacité
-  retire les places perdues.
+- **Accès véhicule dans les coins** : ouverture sous les gradins d'un coin fermé (rangs bas
+  retirés, dalle-pont au-dessus, gabarit 4,6 m) ; la capacité retire les places perdues.
 - **Coursive extérieure** réglable (profondeur et hauteur) : socle bas ou façade continue autour des
   gradins.
 - **15 systèmes de toiture** : porte-à-faux, poteaux, poutre-portique, charpente treillis,

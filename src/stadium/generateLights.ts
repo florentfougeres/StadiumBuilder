@@ -929,7 +929,7 @@ export function generateFloodlightRigGroup(
     }
 
     // A corner crossed by a vehicle access keeps its mast beside the drive, not on it.
-    if (doc.cornerAccess?.[item.id] && (cMode === 'open' || cMode === 'filled')) {
+    if (doc.cornerAccess?.[item.id] && cMode === 'filled') {
       const len = Math.hypot(wx, wz) || 1;
       const side = CORNER_ACCESS_WIDTH / 2 + 4.5;
       const [ux, uz] = [-wz / len, wx / len];

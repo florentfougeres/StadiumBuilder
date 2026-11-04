@@ -752,8 +752,8 @@ export interface StadiumDocument {
    */
   cornerJoin?: CornerJoin;
   /**
-   * Corners crossed by a vehicle access (emergency services, event trucks): a tunnel under the
-   * corner terraces when the corner is seated, a driveway with a gate when it is open.
+   * Seated corners crossed by a vehicle access (emergency services, event trucks): a tunnel
+   * opening under the corner terraces.
    */
   cornerAccess?: Partial<Record<CornerId, boolean>>;
   sunkenDepth?: number;

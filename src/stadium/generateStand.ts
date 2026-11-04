@@ -21,7 +21,6 @@ import {
   usesBowlSectionModel,
 } from './bowlSection';
 import {
-  buildCornerDriveway,
   buildCornerTunnel,
   CORNER_ACCESS_DECK_Y,
   CornerTunnelPlan,
@@ -4648,7 +4647,7 @@ function buildModernBowlSweep(
     }
   }
 
-  // Vehicle accesses: a tunnel under a seated corner, a driveway through an open one.
+  // Vehicle accesses: a tunnel under each seated corner given one.
   const bowlSwept: SweptStand = {
     sliceCount: ringCount,
     closed,
@@ -4675,18 +4674,6 @@ function buildModernBowlSweep(
           bowlTunnels.push(plan);
           group.add(buildCornerTunnel(bowlSwept, plan, concreteMat, doc.lighting !== 'day'));
         }
-      } else if (mode === 'open') {
-        const depth = Math.max(...topCrestPerSlice.map(([d]) => d));
-        group.add(
-          buildCornerDriveway(
-            { x: front.x - front.nx * 4, z: front.z - front.nz * 4 },
-            { x: front.nx, z: front.nz },
-            depth + 22,
-            depth + 6,
-            concreteMat,
-            doc.lighting !== 'day'
-          )
-        );
       }
     }
   }
@@ -5801,41 +5788,6 @@ export function generateStandsGroup(
         buildCornerScreenStructure(cornerSpec, doc, concreteMat, structureMat)
       );
     }
-  }
-
-  // Driveways through the open corners given a vehicle access, from the pitch corner outward
-  // between the two stand ends to a gate on the line of their rear walls.
-  const cornerSigns: Record<CornerQuadrantId, { sx: number; sz: number; ends: StandSide[] }> = {
-    se: { sx: 1, sz: 1, ends: ['east', 'south'] },
-    sw: { sx: -1, sz: 1, ends: ['west', 'south'] },
-    nw: { sx: -1, sz: -1, ends: ['west', 'north'] },
-    ne: { sx: 1, sz: -1, ends: ['east', 'north'] },
-  };
-  for (const cId of cornerOrder) {
-    if (!doc.cornerAccess?.[cId] || cornerModes[cId] !== 'open') continue;
-    if (crossSectionClip && (cId === 'se' || cId === 'sw')) continue;
-    const { sx, sz, ends } = cornerSigns[cId];
-    const halfX = safePitch.length / 2 + trackOffsets.endOffset;
-    const halfZ = safePitch.width / 2 + trackOffsets.sideOffset;
-    const reach = Math.max(
-      12,
-      ...ends.map((side) => {
-        const st = doc.stands[side];
-        if (!st.enabled || st.rows <= 0) return 0;
-        return st.distanceToPitch + computeStandSection(st).totalDepth;
-      })
-    );
-    const gateAt = Math.SQRT2 * reach + 2;
-    root.add(
-      buildCornerDriveway(
-        { x: sx * (halfX - 1), z: sz * (halfZ - 1) },
-        { x: sx * Math.SQRT1_2, z: sz * Math.SQRT1_2 },
-        gateAt + 16,
-        gateAt,
-        concreteMat,
-        doc.lighting !== 'day'
-      )
-    );
   }
 
   // Sunken berm on rectangular / 4-stand stadiums if user explicitly sets `sunkenDepth > 0.5`

@@ -984,18 +984,17 @@ const ShapePanel: React.FC = () => {
         )}
         <SubGroup title="Accès véhicule">
           <p className="text-2xs text-ink-faint">
-            Tunnel sous les gradins d’un coin fermé, voie et portail dans un coin ouvert.
+            Ouverture sous les gradins du coin, pour les secours et les camions.
           </p>
           {CORNER_COMPASS_GRID.map((corner) => {
-            const mode = lockedCorner(corner.id) ? 'open' : resolvedCorners[corner.id];
-            const usable = mode === 'open' || mode === 'filled';
+            const seated = !lockedCorner(corner.id) && resolvedCorners[corner.id] === 'filled';
             return (
               <ToggleField
                 key={corner.id}
                 label={corner.label}
-                hint={usable ? undefined : 'Coin occupé par un bâtiment ou un écran'}
-                disabled={!usable}
-                checked={usable && Boolean(doc.cornerAccess?.[corner.id])}
+                hint={seated ? undefined : 'Seulement pour un coin en gradins'}
+                disabled={!seated}
+                checked={seated && Boolean(doc.cornerAccess?.[corner.id])}
                 onChange={(on) => setCornerAccess(corner.id, on)}
               />
             );

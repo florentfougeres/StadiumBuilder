@@ -1,9 +1,8 @@
 import * as THREE from 'three';
 
 /**
- * Vehicle access through a stadium corner (fire engines, ambulances, event trucks): under seated
- * corners a tunnel carved through the lower rows, a bridge deck carrying the rows above it; in an
- * open corner a driveway from the pitch apron out to a gate.
+ * Vehicle access through a seated stadium corner (fire engines, ambulances, event trucks): a
+ * tunnel carved through the lower rows, a bridge deck carrying the rows above it.
  */
 
 /** Clear width of the access (m). */
@@ -100,56 +99,17 @@ export function isTunnelBay(plan: CornerTunnelPlan, s: number): boolean {
 interface AccessMaterials {
   concrete: THREE.Material;
   bore: THREE.Material;
-  asphalt: THREE.Material;
-  marking: THREE.Material;
   shutter: THREE.Material;
-  steel: THREE.Material;
-  hazard: THREE.Material;
   light: THREE.Material;
-}
-
-let hazardTexture: THREE.CanvasTexture | null = null;
-function getHazardTexture(): THREE.CanvasTexture {
-  if (hazardTexture) return hazardTexture;
-  const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 16;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.fillStyle = '#facc15';
-    ctx.fillRect(0, 0, 128, 16);
-    ctx.fillStyle = '#111827';
-    for (let x = -16; x < 128; x += 16) {
-      ctx.beginPath();
-      ctx.moveTo(x, 16);
-      ctx.lineTo(x + 8, 0);
-      ctx.lineTo(x + 16, 0);
-      ctx.lineTo(x + 8, 16);
-      ctx.closePath();
-      ctx.fill();
-    }
-  }
-  hazardTexture = new THREE.CanvasTexture(canvas);
-  hazardTexture.wrapS = THREE.RepeatWrapping;
-  hazardTexture.colorSpace = THREE.SRGBColorSpace;
-  hazardTexture.repeat.set(4, 1);
-  return hazardTexture;
 }
 
 function accessMaterials(concrete: THREE.Material, isNight: boolean): AccessMaterials {
   const twoSided = concrete.clone();
   twoSided.side = THREE.DoubleSide;
-  const hasDocument = typeof document !== 'undefined';
   return {
     concrete: twoSided,
     bore: new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.92, side: THREE.DoubleSide }),
-    asphalt: new THREE.MeshStandardMaterial({ color: 0x2b2d31, roughness: 0.96 }),
-    marking: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.7 }),
     shutter: new THREE.MeshStandardMaterial({ color: 0x9aa3ad, roughness: 0.55, metalness: 0.6 }),
-    steel: new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.4, metalness: 0.75 }),
-    hazard: hasDocument
-      ? new THREE.MeshStandardMaterial({ map: getHazardTexture(), roughness: 0.6 })
-      : new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.6 }),
     light: isNight
       ? new THREE.MeshBasicMaterial({ color: 0xfff3c4 })
       : new THREE.MeshStandardMaterial({ color: 0xe5e7eb, roughness: 0.4 }),
@@ -165,46 +125,9 @@ function box(w: number, h: number, d: number, mat: THREE.Material, x: number, y:
 }
 
 /**
- * Road with a dashed centre line in a local frame (`x` across, `z` along the drive, `y` up),
- * from `z0` to `z1`.
- */
-function addRoad(group: THREE.Group, mats: AccessMaterials, width: number, z0: number, z1: number): void {
-  const len = z1 - z0;
-  const road = box(width, 0.06, len, mats.asphalt, 0, 0.03, (z0 + z1) / 2);
-  road.castShadow = false;
-  group.add(road);
-  for (const sx of [-1, 1]) {
-    group.add(box(0.12, 0.012, len, mats.marking, sx * (width / 2 - 0.3), 0.066, (z0 + z1) / 2));
-  }
-  for (let z = z0 + 1; z < z1 - 1.5; z += 4) {
-    const dash = box(0.14, 0.012, 2, mats.marking, 0, 0.066, z + 1);
-    dash.castShadow = false;
-    group.add(dash);
-  }
-}
-
-/** Sliding steel gate across the drive at `z`, with its two posts. */
-function addGate(group: THREE.Group, mats: AccessMaterials, width: number, z: number): void {
-  const h = 2.6;
-  for (const sx of [-1, 1]) group.add(box(0.35, h + 0.4, 0.35, mats.steel, sx * (width / 2 + 0.25), (h + 0.4) / 2, z));
-  group.add(box(width, 0.08, 0.08, mats.steel, 0, h, z));
-  group.add(box(width, 0.08, 0.08, mats.steel, 0, 0.25, z));
-  const bars = Math.round(width / 0.22);
-  const bar = new THREE.BoxGeometry(0.04, h - 0.25, 0.04);
-  const inst = new THREE.InstancedMesh(bar, mats.steel, bars);
-  const m = new THREE.Matrix4();
-  for (let i = 0; i < bars; i++) {
-    m.makeTranslation(-width / 2 + (i + 0.5) * (width / bars), 0.25 + (h - 0.25) / 2, z);
-    inst.setMatrixAt(i, m);
-  }
-  inst.castShadow = true;
-  group.add(inst);
-}
-
-/**
  * Tunnel through a swept stand: carves nothing itself (the stand skips the quads, see
- * `isTunnelQuad`), but builds the bridge deck over the carved rows, the bore under it, its road
- * and the shutter at its far end.
+ * `isTunnelQuad`), but builds the bridge deck over the carved rows, the bore under it and the
+ * shutter at its far end. Nothing reaches out of the stand onto the pitch side.
  */
 export function buildCornerTunnel(
   sw: SweptStand,
@@ -283,35 +206,14 @@ export function buildCornerTunnel(
   const inner = width - 2 * wall;
   for (const sx of [-1, 1]) bore.add(box(wall, hc, length, mats.bore, sx * (width / 2 - wall / 2), hc / 2, length / 2));
   bore.add(box(width, 0.4, length, mats.bore, 0, hc + 0.2, length / 2));
-  // Height-limit beam over the mouth.
-  bore.add(box(width, 0.45, 0.12, mats.hazard, 0, hc - 0.225, 0.08));
   // Ceiling lights down the bore.
   for (let z = 2; z < length - 1; z += 4) bore.add(box(inner * 0.5, 0.06, 0.4, mats.light, 0, hc - 0.03, z));
   // Shutter at the far end, seen from the pitch and from outside.
   bore.add(box(inner, hc - 0.1, 0.15, mats.shutter, 0, (hc - 0.1) / 2, length - 0.2));
-  addRoad(bore, mats, inner, -2.5, length - 0.3);
+  // Plain concrete floor, inside the stand only.
+  const floor = box(inner, 0.04, length - 0.3, mats.bore, 0, 0.02, (length - 0.3) / 2);
+  floor.castShadow = false;
+  bore.add(floor);
   group.add(bore);
-  return group;
-}
-
-/**
- * Driveway through an open corner, from the pitch apron at `start` outward along `dir` for
- * `length` metres, with a gate `gateAt` metres from the start.
- */
-export function buildCornerDriveway(
-  start: { x: number; z: number },
-  dir: { x: number; z: number },
-  length: number,
-  gateAt: number,
-  concrete: THREE.Material,
-  isNight: boolean
-): THREE.Group {
-  const mats = accessMaterials(concrete, isNight);
-  const group = new THREE.Group();
-  group.name = 'CornerVehicleDriveway';
-  group.position.set(start.x, 0, start.z);
-  group.rotation.y = Math.atan2(dir.x, dir.z);
-  addRoad(group, mats, CORNER_ACCESS_WIDTH - 0.7, 0, length);
-  addGate(group, mats, CORNER_ACCESS_WIDTH - 0.7, gateAt);
   return group;
 }
