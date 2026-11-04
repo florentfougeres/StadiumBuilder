@@ -1370,8 +1370,8 @@ const StandsPanel: React.FC = () => {
         />
         <SliderField
           label="Hauteur du premier rang"
-          hint="Au-dessus du terrain : un mur de front plus haut, et la tribune démarre au-dessus"
-          min={0.5}
+          hint="Au-dessus du terrain. 0 m : premier rang au ras de la pelouse, à l'anglaise. Plus haut : un mur de front plus haut, et la tribune démarre au-dessus"
+          min={0}
           max={10}
           step={0.1}
           disabled={off}
