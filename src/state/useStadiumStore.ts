@@ -10,7 +10,7 @@ import {
   TRACK_MATERIAL_CATALOG,
   TURF_MATERIAL_CATALOG,
 } from '../stadium/materials';
-import { createPresetDocument } from '../stadium/presets';
+import { createBlankDocument, createPresetDocument } from '../stadium/presets';
 import {
   CameraPresetMode,
   clampPitchToTrack,
@@ -96,7 +96,14 @@ export interface StadiumStoreState {
   // Actions
   initFromDb: () => Promise<void>;
   loadPreset: (presetId: string) => void;
+  /** Starts a new project from the blank ground. */
+  newBlankProject: () => void;
+  /** Opens a saved project, keeping its id so edits update the same record. */
   loadDocument: (doc: StadiumDocument) => void;
+  /** Opens a project file as a new project, never overwriting a saved one. */
+  importDocument: (doc: StadiumDocument) => void;
+  /** Copies the current project under a new id and opens the copy. */
+  duplicateProject: () => void;
   deleteSavedProject: (id: string) => Promise<void>;
   saveCurrentNow: () => Promise<void>;
 
@@ -240,16 +247,35 @@ export function applyShape(d: StadiumDocument, shape: StadiumShape): void {
 }
 
 let autosaveTimer: number | null = null;
+let pendingSave: StadiumDocument | null = null;
 function scheduleAutosave(doc: StadiumDocument, onSaved: (ts: number) => void) {
   if (autosaveTimer !== null) {
     window.clearTimeout(autosaveTimer);
   }
+  pendingSave = doc;
   autosaveTimer = window.setTimeout(async () => {
+    autosaveTimer = null;
+    pendingSave = null;
     const metrics = calculateStadiumMetrics(doc);
     await saveProjectToDb(doc, metrics.totalCapacity);
     onSaved(Date.now());
   }, 550);
 }
+
+/**
+ * Writes the edit still waiting for its autosave. Called before switching projects, so the last
+ * change to the project being left is not dropped when the next project's save replaces the timer.
+ */
+async function flushAutosave(): Promise<void> {
+  if (autosaveTimer === null || !pendingSave) return;
+  window.clearTimeout(autosaveTimer);
+  const doc = pendingSave;
+  autosaveTimer = null;
+  pendingSave = null;
+  await saveProjectToDb(doc, calculateStadiumMetrics(doc).totalCapacity);
+}
+
+const newProjectId = () => `stadium-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 const LEGACY_NAME_RE =
   /emirates|stade de france|at&t|marvingt|roazhon|bernab|allianz|olimpico|rome|beşiktaş|besiktas|villa park|tottenham|havre|wembley|dortmund|südtribüne|sudtribune|bordeaux|matmut|munich|maracan|francfort|amsterdam|cardiff|gelsenkirchen|mauroy/i;
@@ -430,6 +456,28 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     });
   };
 
+  /**
+   * Switches to another project. Undo history belongs to one project, so it starts empty; the
+   * project left behind gets its pending edit written first. New projects are saved at once so
+   * they show in the project list.
+   */
+  const openProject = (next: StadiumDocument, isNew: boolean) => {
+    // A fresh id per new project: two created within the same millisecond must not share a record.
+    if (isNew) next.id = newProjectId();
+    next.updatedAt = Date.now();
+    void flushAutosave().then(async () => {
+      if (isNew) await saveProjectToDb(next, calculateStadiumMetrics(next).totalCapacity);
+      set({ savedProjects: await listProjectsFromDb(), lastSavedAt: Date.now() });
+    });
+    set({
+      doc: next,
+      history: { past: [], future: [] },
+      selectedObjectId: null,
+      cameraMode: 'drone',
+      cameraTriggerNonce: get().cameraTriggerNonce + 1,
+    });
+  };
+
   return {
     doc: initialDoc,
     history: { past: [], future: [] },
@@ -462,38 +510,20 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
       }
     },
 
-    loadPreset: (presetId) => {
-      const { doc, history } = get();
-      const nextHistory = pushHistorySnapshot(history, doc);
-      const nextDoc = createPresetDocument(presetId);
-      set({
-        doc: nextDoc,
-        history: nextHistory,
-        selectedObjectId: null,
-        cameraMode: 'drone',
-        cameraTriggerNonce: get().cameraTriggerNonce + 1,
-      });
-      scheduleAutosave(nextDoc, async (ts) => {
-        const list = await listProjectsFromDb();
-        set({ lastSavedAt: ts, savedProjects: list });
-      });
+    loadPreset: (presetId) => openProject(createPresetDocument(presetId), true),
+
+    newBlankProject: () => openProject(createBlankDocument(), true),
+
+    loadDocument: (incoming) => openProject(normalizeStadiumDocument(cloneDocument(incoming)), false),
+
+    importDocument: (incoming) => {
+      openProject(normalizeStadiumDocument(cloneDocument(incoming)), true);
     },
 
-    loadDocument: (incoming) => {
-      const { doc, history } = get();
-      const nextHistory = pushHistorySnapshot(history, doc);
-      const clean = normalizeStadiumDocument(cloneDocument(incoming));
-      clean.updatedAt = Date.now();
-      set({
-        doc: clean,
-        history: nextHistory,
-        selectedObjectId: null,
-        cameraTriggerNonce: get().cameraTriggerNonce + 1,
-      });
-      scheduleAutosave(clean, async (ts) => {
-        const list = await listProjectsFromDb();
-        set({ lastSavedAt: ts, savedProjects: list });
-      });
+    duplicateProject: () => {
+      const copy = cloneDocument(get().doc);
+      copy.name = `${copy.name} (copie)`;
+      openProject(copy, true);
     },
 
     deleteSavedProject: async (id) => {

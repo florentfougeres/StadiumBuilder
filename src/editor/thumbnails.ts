@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { ENVELOPE_STYLE_CATALOG, resolveStadiumMaterials } from '../stadium/materials';
 import { buildStadiumSceneGraph, disposeObject3D } from '../stadium/buildStadiumScene';
-import { createPresetDocument, STADIUM_PRESETS } from '../stadium/presets';
+import { BLANK_PRESET_ID, createBlankDocument, createPresetDocument, STADIUM_PRESETS } from '../stadium/presets';
 import { RoofStyle, StadiumDocument, StadiumShape } from '../stadium/schema';
 import { applyShape } from '../state/useStadiumStore';
 
@@ -100,7 +100,10 @@ export function thumbnailJobs(
   roofs: RoofStyle[]
 ): Record<ThumbnailDir, ThumbnailJob[]> {
   return {
-    presets: STADIUM_PRESETS.map((p) => ({ id: p.id, doc: createPresetDocument(p.id) })),
+    presets: [
+      { id: BLANK_PRESET_ID, doc: createBlankDocument() },
+      ...STADIUM_PRESETS.map((p) => ({ id: p.id, doc: createPresetDocument(p.id) })),
+    ],
     // Uncovered and seen from higher up, so the footprint of the stands is what reads.
     shapes: shapes.map((shape) => {
       const doc = optionBase(shape);

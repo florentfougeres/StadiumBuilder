@@ -1844,3 +1844,35 @@ export function createPresetDocument(presetId: string): StadiumDocument {
   doc.updatedAt = Date.now();
   return doc;
 }
+
+/** Preset id carried by stadiums started from nothing (not one of STADIUM_PRESETS). */
+export const BLANK_PRESET_ID = 'blank';
+
+/**
+ * The smallest sensible ground to build up from: four single-tier stands of ten rows around the
+ * pitch, with no roof, floodlights, concourse, surroundings or equipment.
+ */
+export function createBlankDocument(): StadiumDocument {
+  const doc = createPresetDocument('traditional_four_stands_42k');
+  const stand = (side: StandSide, name: string) =>
+    makeStand(side, name, { rows: 10, tiers: 1, slopeAngleDeg: 24, distanceToPitch: 6, aisleCount: 4 });
+  doc.name = 'Nouveau stade';
+  doc.presetId = BLANK_PRESET_ID;
+  doc.shape = 'four_stands';
+  doc.cornerFill = false;
+  doc.corners = undefined;
+  doc.sunkenDepth = 0;
+  doc.stands = {
+    north: stand('north', 'Tribune Nord'),
+    south: stand('south', 'Tribune Sud'),
+    east: stand('east', 'Tribune Est'),
+    west: stand('west', 'Tribune Ouest'),
+  };
+  doc.roof = { ...doc.roof, style: 'none', coveredSides: undefined };
+  doc.concourse = { width: 0, heightRatio: 0.5 };
+  doc.floodlightRig = 'none';
+  doc.pitch = { ...doc.pitch, adBoards: false, hasTrack: false, movablePitch: 'none' };
+  doc.site = { setting: 'none', entrances: false, perimeterFence: false };
+  doc.objects = [];
+  return doc;
+}

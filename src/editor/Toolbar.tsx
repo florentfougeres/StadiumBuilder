@@ -5,7 +5,6 @@ import {
   ChevronDown,
   Contrast,
   Eye,
-  FileCode2,
   FileDown,
   Grid2x2,
   ImageDown,
@@ -20,14 +19,9 @@ import {
   Sun,
   Sunset,
   Undo2,
-  Upload,
   Video,
 } from 'lucide-react';
-import {
-  exportStadiumGlb,
-  exportStadiumJson,
-  parseImportedStadiumJson,
-} from '../export/exportGlb';
+import { exportStadiumGlb } from '../export/exportGlb';
 import { exportArchitecturalPlanPdf } from '../export/exportPlan';
 import { exportPathTracedPng, exportViewportPng } from '../export/exportPng';
 import { CameraPresetMode, LightingMode, TransformMode } from '../stadium/schema';
@@ -64,12 +58,10 @@ function formatSavedAt(ts: number | null): string {
 
 const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus }) => {
   const doc = useStadiumStore((s) => s.doc);
-  const loadDocument = useStadiumStore((s) => s.loadDocument);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -97,20 +89,6 @@ const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus })
       onStatus(failure);
     } finally {
       setBusy(false);
-    }
-  };
-
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const parsed = await parseImportedStadiumJson(file);
-      loadDocument(parsed);
-      onStatus(`« ${parsed.name} » ouvert`);
-    } catch (err) {
-      onStatus(err instanceof Error ? err.message : 'Fichier JSON non reconnu');
-    } finally {
-      e.target.value = '';
     }
   };
 
@@ -158,12 +136,6 @@ const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus })
       icon: <Box className="w-3.5 h-3.5" />,
       onSelect: () => run(() => exportStadiumGlb(doc), 'Modèle GLB téléchargé', 'Échec de l’export GLB'),
     },
-    {
-      label: 'Projet JSON',
-      detail: 'Pour le rouvrir plus tard',
-      icon: <FileCode2 className="w-3.5 h-3.5" />,
-      onSelect: () => run(() => exportStadiumJson(doc), 'Projet JSON téléchargé', 'Échec de l’export JSON'),
-    },
   ];
 
   return (
@@ -200,28 +172,8 @@ const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus })
               <span className="text-2xs text-ink-faint whitespace-nowrap group-hover:text-white/80">{item.detail}</span>
             </button>
           ))}
-          <div className="my-1 border-t border-line" />
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              fileInputRef.current?.click();
-            }}
-            className="flex items-center gap-2.5 w-full h-9 px-2 rounded text-left hover:bg-accent-strong group"
-          >
-            <Upload className="w-3.5 h-3.5 text-ink-muted group-hover:text-white" />
-            <span className="flex-1 text-xs text-ink group-hover:text-white">Ouvrir un projet JSON…</span>
-          </button>
         </div>
       )}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".json,application/json"
-        onChange={handleImport}
-        className="hidden"
-      />
     </div>
   );
 };
@@ -285,7 +237,7 @@ export const Toolbar: React.FC = () => {
           onChange={(e) => setProjectName(e.target.value)}
           className="min-w-0 w-48 2xl:w-56 h-7 px-2 text-xs text-ink bg-transparent rounded border border-transparent hover:border-edge-hover focus:border-accent focus:bg-field outline-none text-ellipsis"
         />
-        <ProjectsMenu />
+        <ProjectsMenu onStatus={setStatus} />
         <span className="hidden 2xl:inline text-2xs text-ink-faint whitespace-nowrap" aria-live="polite">
           {status ?? formatSavedAt(lastSavedAt)}
         </span>

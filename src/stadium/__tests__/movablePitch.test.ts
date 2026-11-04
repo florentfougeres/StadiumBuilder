@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { disposeObject3D } from '../buildStadiumScene';
 import { buildMovablePitch } from '../generateMovablePitch';
-import { createPresetDocument } from '../presets';
+import { calculateStadiumMetrics } from '../capacity';
+import { BLANK_PRESET_ID, createBlankDocument, createPresetDocument } from '../presets';
 import { normalizeStadiumDocument } from '../../state/useStadiumStore';
 
 describe('movable pitch', () => {
@@ -32,5 +33,16 @@ describe('movable pitch', () => {
     expect(clean.shape).toBe('olympic_oval');
     expect('cyclingTrack' in clean.pitch).toBe(false);
     expect('cyclingBanking' in clean.pitch).toBe(false);
+  });
+
+  it('starts a blank project as a small uncovered ground with nothing around it', () => {
+    const doc = createBlankDocument();
+    expect(doc.presetId).toBe(BLANK_PRESET_ID);
+    expect(doc.roof.style).toBe('none');
+    expect(doc.objects).toHaveLength(0);
+    expect(doc.concourse?.width).toBe(0);
+    const capacity = calculateStadiumMetrics(doc).totalCapacity;
+    expect(capacity).toBeGreaterThan(1000);
+    expect(capacity).toBeLessThan(12000);
   });
 });

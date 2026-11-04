@@ -754,7 +754,7 @@ const ShapePanel: React.FC = () => {
         <SliderField
           label="Capacité visée"
           hint="Ajuste les rangs de toutes les tribunes pour approcher ce total"
-          min={8000}
+          min={2000}
           max={110000}
           step={1000}
           value={Math.min(110000, metrics.totalCapacity)}

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { FilePlus2, X } from 'lucide-react';
 import { calculateStadiumMetrics } from '../stadium/capacity';
-import { createPresetDocument, STADIUM_PRESETS } from '../stadium/presets';
+import { BLANK_PRESET_ID, createBlankDocument, createPresetDocument, STADIUM_PRESETS } from '../stadium/presets';
 import { useStadiumStore } from '../state/useStadiumStore';
 import { renderThumbnails, THUMB_H, THUMB_W, thumbnailUrl } from './thumbnails';
 import { Button, IconButton } from './ui';
@@ -33,6 +33,9 @@ export const OnboardingDialog: React.FC<{
 }> = ({ open, onClose }) => {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const loadPreset = useStadiumStore((s) => s.loadPreset);
+  const newBlankProject = useStadiumStore((s) => s.newBlankProject);
+  const [blankThumbFailed, setBlankThumbFailed] = useState(false);
+  const blankCapacity = useMemo(() => calculateStadiumMetrics(createBlankDocument()).totalCapacity, []);
   const currentPresetId = useStadiumStore((s) => s.doc.presetId);
   const [thumbs, setThumbs] = useState<Record<string, string>>(() =>
     Object.fromEntries(STADIUM_PRESETS.map((p) => [p.id, thumbnailCache.get(p.id) ?? thumbnailUrl('presets', p.id)]))
@@ -103,11 +106,11 @@ export const OnboardingDialog: React.FC<{
         <header className="flex items-start gap-4 px-6 pt-5 pb-4 border-b border-line">
           <div className="flex-1">
             <h2 id="onboarding-title" className="text-base font-semibold text-ink">
-              Choisis un stade pour commencer
+              Comment veux-tu commencer ?
             </h2>
             <p className="mt-1 text-xs text-ink-muted max-w-[60ch]">
-              Chaque exemple est entièrement modifiable : forme, tribunes, toit, matériaux, équipements.
-              Pars de celui qui ressemble le plus à ton idée.
+              Pars de rien et construis ton stade pièce par pièce, ou choisis l’exemple qui ressemble le plus
+              à ton idée : tout reste modifiable (forme, tribunes, toit, matériaux, équipements).
             </p>
           </div>
           <IconButton label="Fermer" onClick={close}>
@@ -116,6 +119,45 @@ export const OnboardingDialog: React.FC<{
         </header>
 
         <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 p-6 overflow-y-auto">
+          <li>
+            <button
+              type="button"
+              onClick={() => {
+                newBlankProject();
+                close();
+              }}
+              className={`group block w-full h-full text-left rounded-md overflow-hidden border transition-colors duration-100 ${
+                currentPresetId === BLANK_PRESET_ID ? 'border-accent' : 'border-line hover:border-line-strong'
+              }`}
+            >
+              <div className="relative aspect-[36/22] bg-canvas">
+                {blankThumbFailed ? (
+                  <FilePlus2 aria-hidden className="absolute inset-0 m-auto w-8 h-8 text-ink-faint" />
+                ) : (
+                  <img
+                    src={thumbnailUrl('presets', BLANK_PRESET_ID)}
+                    alt=""
+                    width={THUMB_W}
+                    height={THUMB_H}
+                    decoding="async"
+                    onError={() => setBlankThumbFailed(true)}
+                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.03]"
+                  />
+                )}
+              </div>
+              <div className="px-3 py-2.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-xs font-medium text-ink">Partir de rien</span>
+                  <span className="text-2xs text-ink-faint tabular-nums whitespace-nowrap">
+                    {blankCapacity.toLocaleString('fr-FR')} pl.
+                  </span>
+                </div>
+                <p className="mt-0.5 text-2xs text-ink-muted">
+                  Quatre petites tribunes autour du terrain, sans toit ni équipements : tu construis tout.
+                </p>
+              </div>
+            </button>
+          </li>
           {examples.map((ex) => {
             const current = ex.id === currentPresetId;
             return (
