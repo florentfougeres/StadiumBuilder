@@ -120,7 +120,7 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
     }
 
     const shapes = Object.keys(STADIUM_SHAPE_LABELS) as StadiumShape[];
-    expect(shapes.length).toBe(13);
+    expect(shapes.length).toBe(12);
 
     const countWorldIntrusions = (docToTest: ReturnType<typeof createPresetDocument>) => {
       const bowlGroup = generateStandsGroup(docToTest, false);
@@ -335,7 +335,7 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
   });
 
   it('calibrates realistic capacities across all generic architectural templates', () => {
-    expect(STADIUM_PRESETS.length).toBe(29);
+    expect(STADIUM_PRESETS.length).toBe(28);
 
     const getCap = (id: string) =>
       calculateStadiumMetrics(createPresetDocument(id)).totalCapacity;

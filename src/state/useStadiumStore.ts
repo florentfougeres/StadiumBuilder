@@ -195,6 +195,11 @@ export function normalizeStadiumDocument(doc: StadiumDocument): StadiumDocument 
   } else if (legacyRoofStyle === 'retractable_arch') {
     doc.roof.style = 'retractable';
   }
+  // The 1930s cycling-track ground was dropped; its oval footprint is the olympic one's.
+  if ((doc.shape as string) === 'heritage_bowl') doc.shape = 'olympic_oval';
+  const legacyPitch = doc.pitch as PitchConfig & { cyclingTrack?: boolean; cyclingBanking?: number };
+  delete legacyPitch.cyclingTrack;
+  delete legacyPitch.cyclingBanking;
   if (doc.roof.overConcourse === undefined) {
     doc.roof.overConcourse = true;
   }
@@ -465,19 +470,6 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
                 (Math.tan((34.5 * Math.PI) / 180) * d.stands[s].rowDepth).toFixed(3)
               );
             }
-          });
-        } else if (shape === 'heritage_bowl') {
-          // 1930s ground: shallow oval terraces around a cycling track, only the main stand roofed.
-          d.cornerFill = true;
-          d.pitch.cyclingTrack = true;
-          d.roof.style = 'cantilever';
-          d.roof.coveredSides = ['north'];
-          (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
-            d.stands[s].tiers = 1;
-            d.stands[s].slopeAngleDeg = 22;
-            d.stands[s].riserHeight = Number(
-              (Math.tan((22 * Math.PI) / 180) * d.stands[s].rowDepth).toFixed(3)
-            );
           });
         } else if (shape === 'olympic_oval') {
           d.cornerFill = true;

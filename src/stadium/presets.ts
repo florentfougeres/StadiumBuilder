@@ -1616,7 +1616,7 @@ const BASE_PRESETS: PresetDefinition[] = [
 
 /**
  * Builds a preset from a base template plus a patch, for the reference typologies (sliding,
- * stayed, portal, lattice and closed roofs, cycling-track grounds) without repeating whole documents.
+ * stayed, portal, lattice and closed roofs) without repeating whole documents.
  */
 function derivedPreset(
   baseId: string,
@@ -1781,43 +1781,6 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
         facadeDensity: 1.25,
         facadeBulge: 0.6,
       });
-    }
-  ),
-  derivedPreset(
-    'olympic_masts_80k',
-    'heritage_cycling_30s',
-    'Stade Années 30 à Piste Cycliste',
-    'Ovale peu pentu autour d’une piste cycliste relevée, tribune d’honneur couverte, arche d’entrée',
-    'Stade Piste Cycliste 1930',
-    // Kept single-tier: its capacity follows from the shallow terraces.
-    null,
-    (doc) => {
-      doc.shape = 'heritage_bowl';
-      doc.pitch.hasTrack = false;
-      doc.pitch.cyclingTrack = true;
-      doc.roof = { ...doc.roof, style: 'cantilever', coveredSides: ['north'] };
-      for (const side of ['north', 'south', 'east', 'west'] as StandSide[]) {
-        const s = doc.stands[side];
-        doc.stands[side] = {
-          ...s,
-          tiers: 1,
-          rows: 22,
-          slopeAngleDeg: 22,
-          riserHeight: riserFromSlopeDeg(22, s.rowDepth),
-        };
-      }
-      withMaterials(doc, { facade: 'architectural_concrete', structure: 'reinforced_concrete' });
-      doc.objects = [
-        ...doc.objects,
-        {
-          id: 'obj-arch-30s',
-          type: 'monumental_arch',
-          name: 'Arche d’entrée',
-          position: [0, 0, 150],
-          rotation: [0, 0, 0],
-          scale: [1, 1, 1],
-        },
-      ];
     }
   ),
   derivedPreset(

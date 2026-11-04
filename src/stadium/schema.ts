@@ -2,7 +2,6 @@ export type StadiumShape =
   | 'modern_bowl'
   | 'steep_cauldron'
   | 'olympic_oval'
-  | 'heritage_bowl'
   | 'sunken_bowl'
   | 'octagonal_arena'
   | 'compact_urban'
@@ -111,10 +110,6 @@ export interface PitchConfig {
   adBoardTheme?: AdBoardTheme;
   /** Sunken concrete/water safety moat between the pitch apron and front parapets. */
   hasMoat?: boolean;
-  /** Banked concrete cycling track around the pitch, outside the athletics track if any. */
-  cyclingTrack?: boolean;
-  /** Banking of the cycling track bends in degrees (`25..45`, default 38). */
-  cyclingBanking?: number;
   /** Movable pitch: east half lifts over the west half, or the whole pitch rolls out east. */
   movablePitch?: 'none' | 'half_lift' | 'slide_out';
   /** Progress of the movable pitch (`0` = in play, `1` = arena floor cleared). */
@@ -388,39 +383,6 @@ export const TRACK_LANE1_MEASUREMENT_OFFSET_M = 0.3;
 export const TRACK_OUTER_SAFETY_MARGIN_M = 1.5;
 export const TRACK_MAX_PITCH_WIDTH_M = 70;
 export const TRACK_KERB_CLEARANCE_M = 0.6;
-
-/** Riding width of the banked cycling track and its outer safety margin (m). */
-export const CYCLING_TRACK_WIDTH_M = 7;
-const CYCLING_TRACK_MARGIN_M = 1.5;
-
-/**
- * Banked cycling track hugging the pitch (or the athletics track): two straights joined by
- * semicircular bends, as on pre-war velodrome grounds.
- */
-export function getCyclingTrackGeometry(pitch: PitchConfig): {
-  straightHalfLength: number;
-  innerRadius: number;
-  outerRadius: number;
-  outerHalfLengthX: number;
-  outerHalfWidthZ: number;
-  banking: number;
-  lapLength: number;
-} {
-  const track = pitch.hasTrack ? getTrackGeometry(pitch) : null;
-  const innerRadius = track ? track.outerRadius + 0.5 : pitch.width / 2 + pitch.marginSide;
-  // The bends' centres sit at the pitch ends, so the corners stay inside the inner edge.
-  const straightHalfLength = track ? track.straightHalfLength : pitch.length / 2 + pitch.marginEnd;
-  const outerRadius = innerRadius + CYCLING_TRACK_WIDTH_M + CYCLING_TRACK_MARGIN_M;
-  return {
-    straightHalfLength,
-    innerRadius,
-    outerRadius,
-    outerHalfLengthX: straightHalfLength + outerRadius,
-    outerHalfWidthZ: outerRadius,
-    banking: Math.max(25, Math.min(45, pitch.cyclingBanking ?? 38)),
-    lapLength: 4 * straightHalfLength + 2 * Math.PI * (innerRadius + 0.2),
-  };
-}
 
 export interface OfficialTrackGeometry {
   straightLength: number;
@@ -755,7 +717,6 @@ export function isContinuousBowlShape(shape: StadiumShape): boolean {
     shape === 'modern_bowl' ||
     shape === 'steep_cauldron' ||
     shape === 'olympic_oval' ||
-    shape === 'heritage_bowl' ||
     shape === 'sunken_bowl' ||
     shape === 'octagonal_arena' ||
     shape === 'horseshoe' ||
@@ -913,7 +874,6 @@ export const STADIUM_SHAPE_LABELS: Record<StadiumShape, string> = {
   steep_cauldron: 'Chaudron parabolique raide',
   d_shape_vertical: 'Cuvette en D & loges verticales',
   olympic_oval: 'Stade avec piste d’athlétisme',
-  heritage_bowl: 'Stade années 30 à piste cycliste',
   horseshoe: 'Fer à cheval (en U)',
   sunken_bowl: 'Amphithéâtre semi-enterré',
   octagonal_arena: 'Arène octogonale facettée',
