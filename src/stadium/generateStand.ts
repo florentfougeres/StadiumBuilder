@@ -118,6 +118,15 @@ interface TierBandSample {
   treadSegIndices: number[];
 }
 
+/** Run of rows a handrail or side guard follows: a tier, cut at each cross aisle. */
+interface RailBandSample {
+  tierIdx: number;
+  dStart: number;
+  yStart: number;
+  dEnd: number;
+  yEnd: number;
+}
+
 interface StandProfile {
   shape: THREE.Shape;
   profilePts: [number, number][];
@@ -127,6 +136,7 @@ interface StandProfile {
   rowPositions: RowSample[];
   balconies: BalconySample[];
   tierBands: TierBandSample[];
+  railBands: RailBandSample[];
 }
 
 function createStrut(
@@ -215,6 +225,7 @@ function buildStandProfilePoints(
   const rowPositions: RowSample[] = [];
   const balconies: BalconySample[] = [];
   const tierBands: TierBandSample[] = [];
+  const railBands: RailBandSample[] = [];
 
   const section = computeStandSection(stand);
 
@@ -289,6 +300,19 @@ function buildStandProfilePoints(
       pushSeg(row.d + stand.rowDepth, row.y + row.riser, false);
     }
     const last = tierRows[tierRows.length - 1];
+    let runStart = tierRows[0];
+    tierRows.forEach((row, i) => {
+      const next = tierRows[i + 1];
+      if (next && !next.crossAisle) return;
+      railBands.push({
+        tierIdx: tier.tierIndex,
+        dStart: runStart.d,
+        yStart: runStart.y,
+        dEnd: row.d + stand.rowDepth,
+        yEnd: row.y + row.riser,
+      });
+      if (next) runStart = next;
+    });
     tierBands.push({
       tierIdx: tier.tierIndex,
       dStart: tierRows[0].d,
@@ -328,6 +352,7 @@ function buildStandProfilePoints(
     rowPositions,
     balconies,
     tierBands,
+    railBands,
   };
 }
 
@@ -716,6 +741,7 @@ function buildStraightStandMesh(
     rowPositions,
     balconies,
     tierBands,
+    railBands,
   } = buildStandProfilePoints(stand, isHollow);
 
   const sunkenDepth = getEffectiveSunkenDepth(doc);
@@ -933,7 +959,7 @@ function buildStraightStandMesh(
       capMesh.receiveShadow = true;
       group.add(capMesh);
 
-      for (const band of tierBands) {
+      for (const band of railBands) {
         const pStart = new THREE.Vector3(
           endSpec.lx + (endSpec.lx > 0 ? -0.12 : 0.12),
           band.yStart + 0.9,
@@ -1091,50 +1117,37 @@ function buildStraightStandMesh(
         }
       }
 
-      // Central brushed-steel stair handrail per tier band (split cleanly around any carved vomitory)
-      for (const band of tierBands) {
+      // Central brushed-steel stair handrail per run of rows: stopped at each cross aisle and
+      // around any carved vomitory.
+      for (const band of railBands) {
         const hitZone = carvedZones.find(
           (cz) =>
             cz.tierIdx === band.tierIdx &&
             ax > cz.xMin - 0.35 &&
-            ax < cz.xMax + 0.35
+            ax < cz.xMax + 0.35 &&
+            cz.dStart < band.dEnd &&
+            cz.dEnd > band.dStart
         );
-        if (hitZone) {
-          if (hitZone.dStart - band.dStart > 1.2) {
-            group.add(
-              createStrut(
-                new THREE.Vector3(ax, band.yStart + 0.85, band.dStart + 0.25),
-                new THREE.Vector3(ax, hitZone.yStart + 0.85, hitZone.dStart - 0.15),
-                0.028,
-                0.028,
-                vomRailMat,
-                6
-              )
-            );
-          }
-          if (band.dEnd - hitZone.dEnd > 1.2) {
-            group.add(
-              createStrut(
-                new THREE.Vector3(ax, hitZone.yEnd + 0.85, hitZone.dEnd + 0.25),
-                new THREE.Vector3(ax, band.yEnd + 0.85, band.dEnd - 0.25),
-                0.028,
-                0.028,
-                vomRailMat,
-                6
-              )
-            );
-          }
-        } else if (band.dEnd - band.dStart > 1.8) {
+        const rail = (d0: number, y0: number, d1: number, y1: number) =>
           group.add(
             createStrut(
-              new THREE.Vector3(ax, band.yStart + 0.85, band.dStart + 0.25),
-              new THREE.Vector3(ax, band.yEnd + 0.85, band.dEnd - 0.25),
+              new THREE.Vector3(ax, y0 + 0.85, d0),
+              new THREE.Vector3(ax, y1 + 0.85, d1),
               0.028,
               0.028,
               vomRailMat,
               6
             )
           );
+        if (hitZone) {
+          if (hitZone.dStart - band.dStart > 1.2) {
+            rail(band.dStart + 0.25, band.yStart, hitZone.dStart - 0.15, hitZone.yStart);
+          }
+          if (band.dEnd - hitZone.dEnd > 1.2) {
+            rail(hitZone.dEnd + 0.25, hitZone.yEnd, band.dEnd - 0.25, band.yEnd);
+          }
+        } else if (band.dEnd - band.dStart > 1.8) {
+          rail(band.dStart + 0.25, band.yStart, band.dEnd - 0.25, band.yEnd);
         }
       }
     }
@@ -1848,11 +1861,17 @@ function buildSweepSeatInstances(opts: {
   // Tier index per seat tread: a run of four or more non-seat segments is a balcony break (a
   // cross aisle makes three: riser, walkway, wall).
   const tierOfSegment: number[] = [];
+  // Per seat tread, the latest tread at or before it that a cross aisle slot (riser, walkway,
+  // wall) leads into: rows on either side of a cross aisle carry different slots.
+  const aisleSlotOf: number[] = [];
+  let aisleSlot = -1;
   let tier = 0;
   let gap = 0;
   let seenSeat = false;
   isSeatSegmentMask.forEach((isSeat, p) => {
     if (isSeat) {
+      if (gap === 3) aisleSlot = p;
+      aisleSlotOf[p] = aisleSlot;
       if (seenSeat && gap >= 4) tier++;
       seenSeat = true;
       gap = 0;
@@ -1896,7 +1915,7 @@ function buildSweepSeatInstances(opts: {
 
   const placements: { m: THREE.Matrix4; seat: SweepSeat }[] = [];
   // Centre of each aisle on each row, front to back, for the aisle handrails.
-  const aislePoints: { pos: THREE.Vector3; tier: number }[][] = Array.from(
+  const aislePoints: AisleRailPoint[][] = Array.from(
     { length: Math.max(0, aisleCount) },
     () => []
   );
@@ -1924,11 +1943,18 @@ function buildSweepSeatInstances(opts: {
       const holeHere =
         (isHoleQuad ? isHoleQuad(s, row.p) : false) ||
         (rowPerTread && Math.min(treadDepth(s), treadDepth(nextSlice(s))) < rowDepth * 0.55);
+      // Width here of the walkway in front of the row's aisle slot: corner slots of a stand
+      // without the aisle there are zero wide.
+      const slot = aisleSlotOf[row.p];
+      const pts = profilePtsPerSlice[s];
+      const walkway = slot >= 2 ? pts[slot - 1][0] - pts[slot - 2][0] : 0;
       aisleAt.forEach((x, k) => {
         if (!holeHere && len > 1e-4 && x >= run && x < run + len) {
           aislePoints[k].push({
             pos: new THREE.Vector3().lerpVectors(pointAt(s, row), pointAt(nextSlice(s), row), (x - run) / len),
             tier: tierOfSegment[row.p],
+            aisleSlot: slot,
+            walkway,
           });
         }
       });
@@ -2321,14 +2347,24 @@ function buildStandBanners(
 }
 let bannerMaterialCache: THREE.MeshStandardMaterial | null = null;
 
+/** Centre of an aisle on one row, and the cross aisle it follows. */
+interface AisleRailPoint {
+  pos: THREE.Vector3;
+  tier: number;
+  /** Seat tread the latest cross aisle slot before this row leads into, and its walkway width here. */
+  aisleSlot: number;
+  walkway: number;
+}
+
 /** Galvanised steel shared by every aisle handrail. */
 let handrailMaterialCache: THREE.MeshStandardMaterial | null = null;
 
 /**
  * Centre handrails down every aisle: a top rail 0.9 m above the steps on posts every second row,
- * broken at each tier change and every six rows so spectators can cross into the rows.
+ * broken at each tier change, at each cross aisle and every six rows so spectators can cross
+ * into the rows.
  */
-function buildAisleHandrails(aisles: { pos: THREE.Vector3; tier: number }[][]): THREE.InstancedMesh | null {
+function buildAisleHandrails(aisles: AisleRailPoint[][]): THREE.InstancedMesh | null {
   const matrices: THREE.Matrix4[] = [];
   const yAxis = new THREE.Vector3(0, 1, 0);
   const bar = (a: THREE.Vector3, b: THREE.Vector3, size: number) => {
@@ -2350,7 +2386,7 @@ function buildAisleHandrails(aisles: { pos: THREE.Vector3; tier: number }[][]): 
       const top = p.pos.clone().setY(p.pos.y + railHeight);
       if (i % 2 === 0) bar(p.pos, top, 0.045);
       const next = points[i + 1];
-      if (!next || next.tier !== p.tier || i % 6 === 5) continue;
+      if (!next || next.tier !== p.tier || (next.aisleSlot !== p.aisleSlot && next.walkway > 0.3) || i % 6 === 5) continue;
       if (next.pos.distanceTo(p.pos) > 2.5) continue;
       bar(top, next.pos.clone().setY(next.pos.y + railHeight), 0.05);
     }

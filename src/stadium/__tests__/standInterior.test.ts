@@ -70,6 +70,63 @@ describe('cross aisle', () => {
     expect(aisled.rows).toHaveLength(plain.rows.length);
   });
 
+  it('takes several per tier, and on any tier', () => {
+    const stand = { ...createPresetDocument('traditional_four_stands_42k').stands.south, tiers: 2 as const };
+    const plain = computeStandSection(stand);
+    const aisled = computeStandSection({
+      ...stand,
+      crossAisles: [
+        { tier: 0, ratio: 0.3, width: 1.5 },
+        { tier: 0, ratio: 0.7, width: 1.5 },
+        { tier: 1, ratio: 0.5, width: 2 },
+      ],
+    });
+    const at = aisled.rows.flatMap((r, i) => (r.crossAisle ? [[r.tierIdx, i]] : []));
+    expect(at.map(([t]) => t)).toEqual([0, 0, 1]);
+    expect(at[1][1] - at[0][1]).toBeGreaterThanOrEqual(3);
+    expect(aisled.rows).toHaveLength(plain.rows.length);
+  });
+
+  it('drops an aisle too close to another', () => {
+    const stand = createPresetDocument('traditional_four_stands_42k').stands.south;
+    const section = computeStandSection({
+      ...stand,
+      crossAisles: [
+        { tier: 0, ratio: 0.5, width: 1.8 },
+        { tier: 0, ratio: 0.52, width: 1.8 },
+      ],
+    });
+    expect(section.rows.filter((r) => r.crossAisle)).toHaveLength(1);
+  });
+
+  it('reads the legacy single aisle', () => {
+    const stand = createPresetDocument('traditional_four_stands_42k').stands.south;
+    const legacy = computeStandSection({ ...stand, crossAisle: true, crossAisleRatio: 0.4, crossAisleWidth: 2 });
+    const list = computeStandSection({ ...stand, crossAisles: [{ tier: 0, ratio: 0.4, width: 2 }] });
+    expect(legacy.rows.map((r) => r.crossAisle)).toEqual(list.rows.map((r) => r.crossAisle));
+  });
+
+  it('stops the aisle handrails at each one', () => {
+    const doc = docOf('four_stands');
+    for (const side of SIDES) doc.stands[side].crossAisles = [{ tier: 0, ratio: 0.5, width: 1.2 }];
+    // Rail bars join the next row (~1 m); one spanning a walkway and its wall would be over 2 m.
+    // (On a bowl, a bar may bridge a row left out by a vomitory, as long, so only stands are checked.)
+    let longest = 0;
+    const m = new THREE.Matrix4();
+    const scale = new THREE.Vector3();
+    generateStandsGroup(doc).traverse((o) => {
+      if (o.name !== 'AisleHandrails') return;
+      const mesh = o as THREE.InstancedMesh;
+      for (let i = 0; i < mesh.count; i++) {
+        mesh.getMatrixAt(i, m);
+        m.decompose(new THREE.Vector3(), new THREE.Quaternion(), scale);
+        longest = Math.max(longest, scale.y);
+      }
+    });
+    expect(longest).toBeGreaterThan(0);
+    expect(longest).toBeLessThan(1.8);
+  });
+
   it.each<StadiumShape>(['four_stands', 'modern_bowl', 'compact_urban'])('builds on %s', (shape) => {
     const doc = docOf(shape);
     for (const side of SIDES) Object.assign(doc.stands[side], { crossAisle: true, rakeProfile: 'progressive' });

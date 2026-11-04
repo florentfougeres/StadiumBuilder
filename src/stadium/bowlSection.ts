@@ -48,8 +48,8 @@ interface TierSpec {
   /** Rise after each row (constant, or growing with a progressive rake). */
   risers: number[];
   overhang: number;
-  /** Row with a cross aisle in front of it, its walkway width and wall height. */
-  aisle?: { row: number; width: number; wall: number };
+  /** Rows with a cross aisle in front of them, each with its walkway width and wall height. */
+  aisles: { row: number; width: number; wall: number }[];
 }
 
 interface StandSpec {
@@ -97,16 +97,12 @@ function standSpec(stand: StandConfig): StandSpec {
   return {
     tiers: section.tiers.map((t) => {
       const rows = section.rows.filter((r) => r.tierIdx === t.tierIndex);
-      const aisleRow = rows.findIndex((r) => r.crossAisle);
       return {
         rows: t.rows,
         riser: t.riserHeight,
         risers: rows.map((r) => r.riser),
         overhang: t.overhang,
-        aisle:
-          aisleRow >= 0
-            ? { row: aisleRow, width: rows[aisleRow].crossAisle!.width, wall: rows[aisleRow].crossAisle!.wall }
-            : undefined,
+        aisles: rows.flatMap((r, row) => (r.crossAisle ? [{ row, ...r.crossAisle }] : [])),
       };
     }),
     rowDepth: stand.rowDepth,
@@ -129,8 +125,8 @@ function sameSpec(a: StandSpec, b: StandSpec): boolean {
         near(t.riser, b.tiers[i].riser) &&
         near(t.overhang, b.tiers[i].overhang) &&
         t.risers.every((r, k) => near(r, b.tiers[i].risers[k] ?? r)) &&
-        t.aisle?.row === b.tiers[i].aisle?.row &&
-        near(t.aisle?.width ?? 0, b.tiers[i].aisle?.width ?? 0)
+        t.aisles.length === b.tiers[i].aisles.length &&
+        t.aisles.every((a, k) => a.row === b.tiers[i].aisles[k].row && near(a.width, b.tiers[i].aisles[k].width))
     ) &&
     near(a.rowDepth, b.rowDepth) &&
     near(a.elevation, b.elevation) &&
@@ -170,7 +166,7 @@ export function buildBowlSectionModel(doc: StadiumDocument, hollow: boolean): Bo
     const rows: number[] = [];
     for (let r = 0; r < tierRows[t]; r++) {
       // A slot for a cross aisle wherever one stand has it (zero size on the others).
-      if (present.some((side) => specs[side].tiers[t]?.aisle?.row === r)) {
+      if (present.some((side) => specs[side].tiers[t]?.aisles.some((a) => a.row === r))) {
         isSeatSegmentMask.push(false, false);
         pointIdx += 2;
         aisleSlots.add(`${t}:${r}`);
@@ -400,7 +396,7 @@ export function bowlSectionAt(model: BowlSectionModel, mix: BowlMix): BowlSectio
     };
     // Cross aisle size in front of row `r` (zero for a stand without one there).
     const aisleAt = (r: number, key: 'width' | 'wall') => {
-      const of = (spec: StandSpec) => (spec.tiers[t]?.aisle?.row === r ? spec.tiers[t]!.aisle![key] : 0);
+      const of = (spec: StandSpec) => spec.tiers[t]?.aisles.find((a) => a.row === r)?.[key] ?? 0;
       return lerp(of(A), of(B), s);
     };
     for (let r = 0; r < rowsLaid; r++) {

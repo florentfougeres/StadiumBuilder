@@ -26,6 +26,7 @@ import {
 import {
   CornerId,
   CornerJoin,
+  CrossAisleConfig,
   CornerMode,
   EnvelopeProfile,
   EnvelopeStyle,
@@ -46,6 +47,7 @@ import {
   resolveWaveAmplitude,
   resolveRetractable,
   resolveStandVomitories,
+  resolveCrossAisles,
   RETRACTABLE_PANEL_LIMITS,
   RetractableConfig,
   RetractableMotion,
@@ -68,12 +70,14 @@ import {
 } from '../stadium/sightlines';
 import { StandTarget, useStadiumStore } from '../state/useStadiumStore';
 import { ObjectList } from './ObjectList';
+import { Plus, X } from 'lucide-react';
 import { thumbnailUrl } from './thumbnails';
 import {
   AdvancedSection,
   Button,
   FieldRow,
   GalleryOption,
+  IconButton,
   GalleryPicker,
   OptionList,
   choiceClass,
@@ -702,6 +706,94 @@ const SEAT_PATTERN_OPTIONS: { id: SeatPattern; label: string }[] = [
   { id: 'lettering', label: 'Inscription' },
 ];
 
+/**
+ * Cross aisles of a stand: any number per tier, each with its tier, position and width. An aisle
+ * too close to a tier end or to another aisle (fewer than three rows) is left out of the stand.
+ */
+const CrossAisleList: React.FC<{
+  aisles: CrossAisleConfig[];
+  tierCount: number;
+  disabled: boolean;
+  onChange: (aisles: CrossAisleConfig[]) => void;
+}> = ({ aisles, tierCount, disabled, onChange }) => {
+  const set = (i: number, patch: Partial<CrossAisleConfig>) =>
+    onChange(aisles.map((a, k) => (k === i ? { ...a, ...patch } : a)));
+  // Aisles of `tier` spaced evenly through it, so none lands on another.
+  const spread = (list: CrossAisleConfig[], tier: number) => {
+    const on = list.filter((a) => a.tier === tier);
+    return list.map((a) => (a.tier === tier ? { ...a, ratio: (on.indexOf(a) + 1) / (on.length + 1) } : a));
+  };
+  const add = () => {
+    // A new aisle goes on the lowest tier with fewest aisles.
+    const perTier = Array.from({ length: tierCount }, (_, t) => aisles.filter((a) => a.tier === t).length);
+    const tier = perTier.indexOf(Math.min(...perTier));
+    onChange(spread([...aisles, { tier, ratio: 0.5, width: 1.8 }], tier));
+  };
+  const moveTo = (i: number, tier: number) => {
+    const from = aisles[i].tier;
+    onChange(spread(spread(aisles.map((a, k) => (k === i ? { ...a, tier } : a)), tier), from));
+  };
+  return (
+    <div className="space-y-3">
+      <FieldRow
+        label="Coursives transversales"
+        hint="Allées horizontales qui coupent un étage ; les rangs derrière chacune sont surélevés par un muret. Plusieurs possibles par étage"
+      >
+        <Button disabled={disabled || aisles.length >= tierCount * 4} onClick={add}>
+          <Plus aria-hidden className="w-3.5 h-3.5" />
+          Ajouter
+        </Button>
+      </FieldRow>
+      {aisles.map((a, i) => (
+        <div key={i} className="space-y-2 pl-2 border-l border-line">
+          <FieldRow label={`Coursive ${i + 1}`}>
+            <IconButton
+              label={`Retirer la coursive ${i + 1}`}
+              disabled={disabled}
+              onClick={() => onChange(aisles.filter((_, k) => k !== i))}
+            >
+              <X aria-hidden className="w-3.5 h-3.5" />
+            </IconButton>
+          </FieldRow>
+          {tierCount > 1 && (
+            <FieldRow label="Étage" hint="Étage que la coursive coupe, 1 étant le plus bas">
+              <Segmented
+                label={`Étage de la coursive ${i + 1}`}
+                size="sm"
+                disabled={disabled}
+                value={Math.min(a.tier, tierCount - 1)}
+                onChange={(tier) => moveTo(i, tier)}
+                options={Array.from({ length: tierCount }, (_, t) => ({ id: t, label: String(t + 1) }))}
+              />
+            </FieldRow>
+          )}
+          <SliderField
+            label="Position"
+            hint="Part des rangs de l’étage devant la coursive"
+            min={0.1}
+            max={0.9}
+            step={0.05}
+            disabled={disabled}
+            value={a.ratio}
+            display={`${Math.round(a.ratio * 100)} %`}
+            onChange={(ratio) => set(i, { ratio })}
+          />
+          <SliderField
+            label="Largeur"
+            min={1.2}
+            max={3}
+            step={0.1}
+            disabled={disabled}
+            value={a.width}
+            display={`${fr1(a.width)} m`}
+            onChange={(width) => set(i, { width })}
+          />
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const TIER_NAMES = ['bas', 'deuxième', 'troisième', 'quatrième', 'cinquième'];
 
 /**
@@ -1274,6 +1366,7 @@ const StandsPanel: React.FC = () => {
   const off = !stand.enabled;
   const resolvedTiers = useMemo(() => resolveStandTiers(stand), [stand]);
   const vomSpec = useMemo(() => resolveStandVomitories(stand), [stand]);
+  const crossAisles = useMemo(() => resolveCrossAisles(stand), [stand]);
   const tierOverhang = stand.tierOverhang ?? DEFAULT_TIER_OVERHANG_M;
   const hasAsymmetricTiers = Boolean(stand.tierConfigs && stand.tierConfigs.length > 0);
   const separateStands = !isContinuousBowlShape(doc.shape);
@@ -1395,38 +1488,19 @@ const StandsPanel: React.FC = () => {
             ]}
           />
         </FieldRow>
-        <ToggleField
-          label="Coursive transversale"
-          hint="Allée horizontale qui coupe le premier niveau ; les rangs derrière sont surélevés par un muret"
+        <CrossAisleList
+          aisles={crossAisles}
+          tierCount={resolvedTiers.length}
           disabled={off}
-          checked={stand.crossAisle === true}
-          onChange={(crossAisle) => updateStand(target, { crossAisle })}
+          onChange={(list) =>
+            updateStand(target, {
+              crossAisles: list,
+              crossAisle: undefined,
+              crossAisleRatio: undefined,
+              crossAisleWidth: undefined,
+            })
+          }
         />
-        {stand.crossAisle && (
-          <>
-            <SliderField
-              label="Position de la coursive"
-              hint="Part des rangs du premier niveau devant la coursive"
-              min={0.25}
-              max={0.75}
-              step={0.05}
-              disabled={off}
-              value={stand.crossAisleRatio ?? 0.5}
-              display={`${Math.round((stand.crossAisleRatio ?? 0.5) * 100)} %`}
-              onChange={(crossAisleRatio) => updateStand(target, { crossAisleRatio })}
-            />
-            <SliderField
-              label="Largeur de la coursive"
-              min={1.2}
-              max={3}
-              step={0.1}
-              disabled={off}
-              value={stand.crossAisleWidth ?? 1.8}
-              display={`${fr1(stand.crossAisleWidth ?? 1.8)} m`}
-              onChange={(crossAisleWidth) => updateStand(target, { crossAisleWidth })}
-            />
-          </>
-        )}
       </PanelSection>
       <PanelSection title="Équipements">
         <ToggleField

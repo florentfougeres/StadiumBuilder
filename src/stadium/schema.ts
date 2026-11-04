@@ -244,11 +244,16 @@ export interface StandConfig {
    * at the back (the parabolic rake that keeps every row's view), for the same overall height.
    */
   rakeProfile?: 'constant' | 'progressive';
-  /** Cross aisle splitting the lowest tier, the rows behind it raised over a low wall. */
+  /**
+   * Cross aisles: horizontal walkways splitting a tier, the rows behind each one raised over a
+   * low wall. Any number per tier (see `resolveCrossAisles`).
+   */
+  crossAisles?: CrossAisleConfig[];
+  /** @deprecated Single cross aisle in the lowest tier, read when `crossAisles` is unset. */
   crossAisle?: boolean;
-  /** Where the cross aisle runs, as a share of the lowest tier's rows (`0.25..0.75`). */
+  /** @deprecated Position of the legacy `crossAisle`. */
   crossAisleRatio?: number;
-  /** Width of the cross aisle walkway (m, `1.2..3`). */
+  /** @deprecated Width of the legacy `crossAisle`. */
   crossAisleWidth?: number;
   /** Team dugouts set into the front wall, either side of the halfway line. */
   dugouts?: boolean;
@@ -259,13 +264,57 @@ export interface StandConfig {
 /** Height of the wall at the back of a cross aisle, raising the rows behind it (m). */
 export const CROSS_AISLE_WALL_M = 1.0;
 
-/** Resolved cross aisle of a stand, or `null`. */
-export function resolveCrossAisle(stand: StandConfig): { ratio: number; width: number } | null {
-  if (!stand.crossAisle) return null;
-  return {
-    ratio: Math.max(0.25, Math.min(0.75, stand.crossAisleRatio ?? 0.5)),
-    width: Math.max(1.2, Math.min(3, stand.crossAisleWidth ?? 1.8)),
-  };
+/** One cross aisle of a stand. */
+export interface CrossAisleConfig {
+  /** Tier it splits, from 0 (the lowest). */
+  tier: number;
+  /** Where it runs, as a share of that tier's rows (`0.1..0.9`). */
+  ratio: number;
+  /** Width of the walkway (m, `1.2..3`). */
+  width: number;
+}
+
+/** Fewest rows kept between a cross aisle and the tier's ends or another cross aisle. */
+export const CROSS_AISLE_MIN_ROWS = 3;
+
+/** Cross aisles of a stand as configured, the legacy single aisle included, values clamped. */
+export function resolveCrossAisles(stand: StandConfig): CrossAisleConfig[] {
+  const list =
+    stand.crossAisles ??
+    (stand.crossAisle
+      ? [{ tier: 0, ratio: stand.crossAisleRatio ?? 0.5, width: stand.crossAisleWidth ?? 1.8 }]
+      : []);
+  return list.map((a) => ({
+    tier: Math.max(0, Math.floor(a.tier ?? 0)),
+    ratio: Math.max(0.1, Math.min(0.9, a.ratio ?? 0.5)),
+    width: Math.max(1.2, Math.min(3, a.width ?? 1.8)),
+  }));
+}
+
+/**
+ * Rows of a tier of `rows` rows that a cross aisle runs in front of, with its width. Each sits at
+ * least CROSS_AISLE_MIN_ROWS rows from the tier's ends and from the previous one; an aisle that
+ * does not fit is dropped.
+ */
+export function crossAisleRowsOfTier(
+  stand: StandConfig,
+  tierIndex: number,
+  rows: number
+): Map<number, number> {
+  const out = new Map<number, number>();
+  const min = CROSS_AISLE_MIN_ROWS;
+  if (rows < min * 2) return out;
+  const aisles = resolveCrossAisles(stand)
+    .filter((a) => a.tier === tierIndex)
+    .sort((a, b) => a.ratio - b.ratio);
+  let last = -Infinity;
+  for (const a of aisles) {
+    const row = Math.max(min, Math.min(rows - min, Math.round(rows * a.ratio)));
+    if (row - last < min) continue;
+    out.set(row, a.width);
+    last = row;
+  }
+  return out;
 }
 
 /**

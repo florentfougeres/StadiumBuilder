@@ -1,6 +1,6 @@
 import {
   CROSS_AISLE_WALL_M,
-  resolveCrossAisle,
+  crossAisleRowsOfTier,
   riserFromSlopeDeg,
   RoofStyle,
   slopeDegFromRiser,
@@ -232,7 +232,6 @@ export function tierRowRisers(
  */
 export function computeStandSection(stand: StandConfig): StandSection {
   const tiers = resolveStandTiers(stand);
-  const crossAisle = resolveCrossAisle(stand);
   const hasVip = tiers.length >= 2 && stand.vipLoges !== false;
   const recess = hasVip ? 1.45 : 0.75;
   const baseLoggiaH = hasVip ? 1.95 : 0.95;
@@ -268,15 +267,13 @@ export function computeStandSection(stand: StandConfig): StandSection {
       curY = soffitY + fasciaH;
     }
     const risers = tierRowRisers(stand, tier, curD, curY);
-    const aisleRow =
-      crossAisle && tier.tierIndex === 0 && tier.rows >= 6
-        ? Math.max(3, Math.min(tier.rows - 3, Math.round(tier.rows * crossAisle.ratio)))
-        : -1;
+    const aisleRows = crossAisleRowsOfTier(stand, tier.tierIndex, tier.rows);
     for (let r = 0; r < tier.rows; r++) {
       let aisle: StandSectionRow['crossAisle'];
-      if (r === aisleRow && crossAisle) {
+      const aisleWidth = aisleRows.get(r);
+      if (aisleWidth !== undefined) {
         // The walkway at the level of the next tread, then a wall up to the rows behind it.
-        aisle = { width: crossAisle.width, wall: CROSS_AISLE_WALL_M };
+        aisle = { width: aisleWidth, wall: CROSS_AISLE_WALL_M };
         curD += aisle.width;
         curY += aisle.wall;
       }
