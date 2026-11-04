@@ -12,8 +12,13 @@ const SEEN_KEY = 'sf-onboarding-seen';
 const THUMB_W = 360;
 const THUMB_H = 220;
 
-/** Thumbnails are rendered once per page load and shared across openings of the dialog. */
+/** Live-rendered fallbacks, kept per page load for presets that have no shipped image. */
 const thumbnailCache = new Map<string, string>();
+
+/** Pre-rendered gallery image shipped in public/presets; regenerate with `generatePresetThumbnails`. */
+function presetThumbnailUrl(id: string): string {
+  return `${import.meta.env.BASE_URL}presets/${id}.webp`;
+}
 
 function hasSeenOnboarding(): boolean {
   try {
@@ -34,14 +39,14 @@ function markOnboardingSeen() {
 /** Renders each preset off-screen with one shared renderer, yielding between stadiums. */
 async function renderThumbnails(
   ids: string[],
-  onThumb: (id: string, url: string) => void,
-  isCancelled: () => boolean
+  onThumb: (id: string, canvas: HTMLCanvasElement) => void | Promise<void>,
+  isCancelled: () => boolean,
+  pixelRatio = Math.min(window.devicePixelRatio, 2)
 ) {
-  const pending = ids.filter((id) => !thumbnailCache.has(id));
-  if (pending.length === 0) return;
+  if (ids.length === 0) return;
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(pixelRatio);
   renderer.setSize(THUMB_W, THUMB_H, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -57,7 +62,7 @@ async function renderThumbnails(
   const camera = new THREE.PerspectiveCamera(36, THUMB_W / THUMB_H, 1, 2000);
 
   try {
-    for (const id of pending) {
+    for (const id of ids) {
       if (isCancelled()) return;
       await new Promise((r) => window.setTimeout(r, 0));
 
@@ -81,9 +86,7 @@ async function renderThumbnails(
       camera.lookAt(0, bowlSize.y * 0.15, 0);
 
       renderer.render(scene, camera);
-      const url = renderer.domElement.toDataURL('image/jpeg', 0.82);
-      thumbnailCache.set(id, url);
-      onThumb(id, url);
+      await onThumb(id, renderer.domElement);
 
       disposeObject3D(rootGroup);
     }
@@ -94,6 +97,32 @@ async function renderThumbnails(
   }
 }
 
+/**
+ * Dev only: re-renders every preset at 2x and writes public/presets/<id>.webp through the dev
+ * server (see vite.config.ts). Run `__generatePresetThumbnails()` in the browser console after
+ * adding or changing a preset.
+ */
+async function generatePresetThumbnails(): Promise<string[]> {
+  const written: string[] = [];
+  await renderThumbnails(
+    STADIUM_PRESETS.map((p) => p.id),
+    async (id, canvas) => {
+      const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/webp', 0.86));
+      if (!blob) throw new Error(`Encodage WebP impossible pour ${id}`);
+      const res = await fetch(`/__preset-thumbnails/${id}`, { method: 'POST', body: blob });
+      if (!res.ok) throw new Error(`Écriture refusée pour ${id} (${res.status})`);
+      written.push(id);
+    },
+    () => false,
+    2
+  );
+  return written;
+}
+if (import.meta.env.DEV) {
+  (window as unknown as { __generatePresetThumbnails: typeof generatePresetThumbnails }).__generatePresetThumbnails =
+    generatePresetThumbnails;
+}
+
 export const OnboardingDialog: React.FC<{
   open: boolean;
   onClose: () => void;
@@ -102,8 +131,10 @@ export const OnboardingDialog: React.FC<{
   const loadPreset = useStadiumStore((s) => s.loadPreset);
   const currentPresetId = useStadiumStore((s) => s.doc.presetId);
   const [thumbs, setThumbs] = useState<Record<string, string>>(() =>
-    Object.fromEntries(thumbnailCache)
+    Object.fromEntries(STADIUM_PRESETS.map((p) => [p.id, thumbnailCache.get(p.id) ?? presetThumbnailUrl(p.id)]))
   );
+  // Presets whose shipped image failed to load; they get a live render instead.
+  const [missing, setMissing] = useState<string[]>([]);
 
   const examples = useMemo(
     () =>
@@ -122,19 +153,27 @@ export const OnboardingDialog: React.FC<{
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || missing.length === 0) return;
     let cancelled = false;
-    renderThumbnails(
-      examples.map((e) => e.id),
-      (id, url) => setThumbs((prev) => ({ ...prev, [id]: url })),
-      () => cancelled
-    ).catch(() => {
-      // No WebGL for thumbnails: cards keep their text-only face.
-    });
+    // Debounced so the misses of one opening are rendered in a single batch.
+    const timer = window.setTimeout(() => {
+      renderThumbnails(
+        missing.filter((id) => !thumbnailCache.has(id)),
+        (id, canvas) => {
+          const url = canvas.toDataURL('image/jpeg', 0.82);
+          thumbnailCache.set(id, url);
+          setThumbs((prev) => ({ ...prev, [id]: url }));
+        },
+        () => cancelled
+      ).catch(() => {
+        // No WebGL for thumbnails: cards keep their placeholder face.
+      });
+    }, 100);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
-  }, [open, examples]);
+  }, [open, missing]);
 
   const close = () => {
     markOnboardingSeen();
@@ -190,6 +229,14 @@ export const OnboardingDialog: React.FC<{
                       <img
                         src={thumbs[ex.id]}
                         alt=""
+                        width={THUMB_W}
+                        height={THUMB_H}
+                        loading="lazy"
+                        decoding="async"
+                        onError={() => {
+                          setThumbs((prev) => ({ ...prev, [ex.id]: '' }));
+                          setMissing((prev) => (prev.includes(ex.id) ? prev : [...prev, ex.id]));
+                        }}
                         className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.03]"
                       />
                     ) : (

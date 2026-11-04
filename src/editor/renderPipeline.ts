@@ -118,7 +118,8 @@ export function createRenderPipeline(
   width: number,
   height: number
 ): {
-  render: () => void;
+  /** `interactive` skips ambient occlusion, which re-renders the whole scene for its normals. */
+  render: (interactive?: boolean) => void;
   setSize: (width: number, height: number) => void;
   setMode: (mode: LightingMode) => void;
   dispose: () => void;
@@ -148,7 +149,10 @@ export function createRenderPipeline(
   composer.addPass(new OutputPass());
 
   return {
-    render: () => composer.render(),
+    render: (interactive = false) => {
+      gtao.enabled = !interactive;
+      composer.render();
+    },
     setSize: (w, h) => {
       composer.setSize(w, h);
       gtao.setSize(w * pixelRatio, h * pixelRatio);

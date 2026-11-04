@@ -250,7 +250,8 @@ export const Viewport: React.FC = () => {
     renderer.toneMappingExposure = 1.06;
     // Partial bowl roofs are clipped per stand sector (see clipRoofToSides).
     renderer.localClippingEnabled = true;
-    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+    // Above 1.5 the 4x MSAA target already resolves edges; the extra pixels mostly cost GPU heat.
+    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = !isSoftwareGl;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -353,6 +354,13 @@ export const Viewport: React.FC = () => {
     let renderDirty = false;
     // While a path-traced still renders, the tracer owns the canvas.
     let pathTracing = false;
+    // Camera motion renders cheap frames; one full-quality frame follows once motion settles.
+    const SETTLE_MS = 150;
+    let lastMotion = -Infinity;
+    let settleTimer = 0;
+    function markMotion() {
+      lastMotion = performance.now();
+    }
 
     function afterDraw(cb: () => void) {
       const gl = renderer.getContext() as WebGL2RenderingContext;
@@ -416,8 +424,14 @@ export const Viewport: React.FC = () => {
           orbit.update();
         }
 
-        if (pipeline) pipeline.render();
+        if (transitionActive || needsMoreFrames) markMotion();
+        const interactive = performance.now() - lastMotion < SETTLE_MS;
+        if (pipeline) pipeline.render(interactive);
         else renderer.render(scene, camera);
+        if (interactive && pipeline) {
+          window.clearTimeout(settleTimer);
+          settleTimer = window.setTimeout(requestRender, SETTLE_MS);
+        }
 
         const done = () => {
           renderBusy = false;
@@ -444,6 +458,7 @@ export const Viewport: React.FC = () => {
       transitionActive = false;
     });
     orbit.addEventListener('change', () => {
+      markMotion();
       requestRender();
     });
 
@@ -489,7 +504,10 @@ export const Viewport: React.FC = () => {
     });
 
     transform.addEventListener('change', () => {
-      if (isDraggingGizmo) renderer.shadowMap.needsUpdate = true;
+      if (isDraggingGizmo) {
+        renderer.shadowMap.needsUpdate = true;
+        markMotion();
+      }
       requestRender();
     });
 
@@ -637,6 +655,7 @@ export const Viewport: React.FC = () => {
       resizeObserver.disconnect();
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
+      clearTimeout(settleTimer);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);

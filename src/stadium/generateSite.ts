@@ -668,7 +668,8 @@ function createBroadleafCrownGeometry(): THREE.BufferGeometry {
     [-0.2, -0.2, 0.55, 0.66],
   ];
   const parts = lobes.map(([x, y, z, r], li) => {
-    const g = new THREE.IcosahedronGeometry(r, 2);
+    // Detail 1 (80 faces a lobe): hundreds of crowns are instanced, and they are seen from afar.
+    const g = new THREE.IcosahedronGeometry(r, 1);
     g.deleteAttribute('uv');
     const p = g.attributes.position;
     for (let i = 0; i < p.count; i++) {
