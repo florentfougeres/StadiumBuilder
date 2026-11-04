@@ -62,6 +62,26 @@ export const ENVELOPE_STYLE_CATALOG: EnvelopeCatalogEntry[] = [
     label: 'Brise-soleil à lames ajourées',
     subtitle: 'Double peau en lames horizontales devant noyau vitré',
   },
+  {
+    id: 'stacked_arcades',
+    label: 'Arcades superposées',
+    subtitle: 'Étages d’arches en plein cintre sur piliers, corniche à chaque niveau',
+  },
+  {
+    id: 'media_mesh',
+    label: 'Façade média LED',
+    subtitle: 'Peau de pixels lumineux aux couleurs du club, éclatante la nuit',
+  },
+  {
+    id: 'helical_ramps',
+    label: 'Rampes hélicoïdales',
+    subtitle: 'Rampes d’accès enroulées autour du stade en bandes diagonales',
+  },
+  {
+    id: 'horizontal_strata',
+    label: 'Strates horizontales',
+    subtitle: 'Coursives et balcons empilés, plus ou moins ajourés, au relief ondulant',
+  },
 ];
 
 export const FACADE_MATERIAL_CATALOG: MaterialCatalogEntry<FacadeMaterialId>[] = [
@@ -627,6 +647,16 @@ export const FACADE_PATTERN_CATALOG: SimpleCatalogEntry<FacadePatternId>[] = [
     id: 'scales',
     label: 'Écailles',
     subtitle: 'Rangées d’écailles décalées qui se recouvrent',
+  },
+  {
+    id: 'honeycomb',
+    label: 'Nid d’abeille',
+    subtitle: 'Alvéoles hexagonales en quinconce, joints ouverts',
+  },
+  {
+    id: 'voronoi',
+    label: 'Voronoï',
+    subtitle: 'Cellules organiques irrégulières, plus fines vers le haut',
   },
 ];
 

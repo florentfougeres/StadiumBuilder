@@ -203,7 +203,8 @@ export function calculateStandMetrics(
         avgDistZ,
         trackOffsets.endOffset,
         trackOffsets.sideOffset,
-        safePitch.hasTrack
+        safePitch.hasTrack,
+    doc.cornerRoundness
       )
     : buildShapeBowlRing(
         'modern_bowl',
@@ -501,6 +502,10 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       ? maxStandHeight
       : doc.roof.style === 'fixed_dome'
       ? Number((maxStandHeight + doc.roof.heightOffset + 22).toFixed(1))
+      : doc.roof.style === 'air_dome'
+      ? Number((maxStandHeight + Math.max(2.4, doc.roof.heightOffset * 0.7) + 11).toFixed(1))
+      : doc.roof.style === 'cable_dome'
+      ? Number((maxStandHeight + Math.max(2.4, doc.roof.heightOffset * 0.7) + 14).toFixed(1))
       : doc.roof.style === 'giant_arch'
       ? Number((maxStandHeight + doc.roof.heightOffset + 38).toFixed(1))
       : doc.roof.style === 'timber_lattice'
@@ -581,7 +586,18 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
     baseCostPerSeat += 190;
   } else if (envelopeStyle === 'louver_curtain') {
     baseCostPerSeat += 150;
+  } else if (envelopeStyle === 'stacked_arcades') {
+    baseCostPerSeat += 230;
+  } else if (envelopeStyle === 'media_mesh') {
+    baseCostPerSeat += 320;
+  } else if (envelopeStyle === 'helical_ramps') {
+    baseCostPerSeat += 260;
+  } else if (envelopeStyle === 'horizontal_strata') {
+    baseCostPerSeat += 210;
   }
+
+  // Podium of shops and car parks under the forecourt.
+  baseCostPerSeat += Math.round(Math.max(0, doc.site?.podiumHeight ?? 0) * 28);
 
   const facadePattern = doc.materials?.facadePattern ?? 'none';
   const facadeDensity = doc.materials?.facadeDensity ?? 1.0;
@@ -591,6 +607,10 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
     baseCostPerSeat += Math.round(235 * facadeDensity);
   } else if (facadePattern === 'cassette_panels') {
     baseCostPerSeat += Math.round(175 * facadeDensity);
+  } else if (facadePattern === 'honeycomb') {
+    baseCostPerSeat += Math.round(190 * facadeDensity);
+  } else if (facadePattern === 'voronoi') {
+    baseCostPerSeat += Math.round(260 * facadeDensity);
   }
 
   switch (doc.roof.style) {
@@ -656,7 +676,22 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       baseCostPerSeat += 1300 * doc.roof.coverageRatio;
       break;
     case 'historic_gable':
+    case 'sawtooth':
+    case 'butterfly':
       baseCostPerSeat += 520 * doc.roof.coverageRatio;
+      break;
+    case 'barrel_vault':
+    case 'tree_columns':
+      baseCostPerSeat += 760 * doc.roof.coverageRatio;
+      break;
+    case 'hypar_shells':
+      baseCostPerSeat += 880 * doc.roof.coverageRatio;
+      break;
+    case 'air_dome':
+      baseCostPerSeat += 1050;
+      break;
+    case 'cable_dome':
+      baseCostPerSeat += 1500;
       break;
     case 'concrete_portals':
       baseCostPerSeat += 1180 * doc.roof.coverageRatio;

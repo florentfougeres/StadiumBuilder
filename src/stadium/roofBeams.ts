@@ -53,3 +53,41 @@ export function chordAt(
   return lo < hi ? [lo, hi] : null;
 }
 
+
+/** Grid surface over `u, v` in `[0, 1]`, uv in metres-ish tiles (`nu × nv` quads). */
+export function gridSurfaceGeometry(
+  nu: number,
+  nv: number,
+  at: (u: number, v: number) => THREE.Vector3,
+  uvScale: [number, number] = [1, 1]
+): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  for (let i = 0; i <= nu; i++) {
+    for (let j = 0; j <= nv; j++) {
+      const p = at(i / nu, j / nv);
+      pos.push(p.x, p.y, p.z);
+      uv.push((i / nu) * uvScale[0], (j / nv) * uvScale[1]);
+    }
+  }
+  for (let i = 0; i < nu; i++) {
+    for (let j = 0; j < nv; j++) {
+      const a = i * (nv + 1) + j;
+      const b = (i + 1) * (nv + 1) + j;
+      idx.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/** Round tube along points (a cable or a curved member). */
+export function tubeGeometry(points: THREE.Vector3[], radius: number, closed = false): THREE.BufferGeometry {
+  const curve = new THREE.CatmullRomCurve3(points, closed);
+  return new THREE.TubeGeometry(curve, Math.max(2, points.length * 2), radius, 5, closed);
+}

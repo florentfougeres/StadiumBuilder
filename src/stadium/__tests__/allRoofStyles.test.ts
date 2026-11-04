@@ -35,6 +35,13 @@ const SIGNATURE: Record<RoofStyle, string | null> = {
   wave_canopy: 'WaveCanopyLaceSkin',
   petal_iris: 'RetractableRoofIrisPin',
   historic_gable: 'HistoricGableTrusses',
+  sawtooth: 'SawtoothFrame',
+  butterfly: 'ButterflyFrame',
+  barrel_vault: 'BarrelVaultRibs',
+  hypar_shells: 'HyparShellEdges',
+  tree_columns: 'TreeColumns',
+  air_dome: 'AirDomeCableNet',
+  cable_dome: 'CableDomeCables',
   girder_grid: 'GirderGridTrusses',
   saddle_vault: 'SaddleVaultRibs',
   dished_canopy: 'DishedCanopyFascia',
@@ -45,7 +52,7 @@ const SIGNATURE: Record<RoofStyle, string | null> = {
   crossed_arches: 'CrossedArchTubes',
 };
 
-const PER_STAND = new Set<RoofStyle>(['historic_gable', 'truss', 'column_supported', 'goalpost_truss']);
+const PER_STAND = new Set<RoofStyle>(['historic_gable', 'sawtooth', 'butterfly', 'barrel_vault', 'hypar_shells', 'tree_columns', 'truss', 'column_supported', 'goalpost_truss']);
 
 describe('every roof style has a builder', () => {
   for (const [style, signature] of Object.entries(SIGNATURE) as [RoofStyle, string | null][]) {

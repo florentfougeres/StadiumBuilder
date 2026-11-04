@@ -115,6 +115,7 @@ export interface StadiumStoreState {
   setProjectName: (name: string) => void;
   setShape: (shape: StadiumShape) => void;
   setSunkenDepth: (depth: number) => void;
+  setCornerRoundness: (roundness: number) => void;
   setCornerFill: (fill: boolean) => void;
   setCornerMode: (corner: CornerId, mode: CornerMode) => void;
   setAllCorners: (mode: CornerMode) => void;
@@ -263,6 +264,30 @@ export function applyShape(d: StadiumDocument, shape: StadiumShape): void {
   } else if (shape === 'four_stands') {
     d.cornerFill = false;
     if (d.roof.style === 'bicycle_wheel') d.roof.style = 'truss';
+  } else if (shape === 'tilted_bowl' || shape === 'saddle_bowl') {
+    // The rim's slope comes from the difference between stands: a tall north stand falling to a
+    // low south one (tilted), or tall sides with low ends (saddle). Each end gets the rows its
+    // blended section actually carries, so the capacity matches the geometry.
+    d.cornerFill = true;
+    if (d.roof.style === 'truss') d.roof.style = 'cantilever';
+    const high = Math.max(32, d.stands.north.rows, d.stands.south.rows);
+    const low = Math.max(10, Math.round(high * (shape === 'tilted_bowl' ? 0.35 : 0.55)));
+    const ends = shape === 'tilted_bowl' ? Math.round((high + low) / 2) : low;
+    const sides: [StandSide, number][] = [
+      ['north', high],
+      ['south', shape === 'tilted_bowl' ? low : high],
+      ['east', ends],
+      ['west', ends],
+    ];
+    for (const [side, rows] of sides) {
+      d.stands[side].enabled = true;
+      d.stands[side].rows = rows;
+      d.stands[side].tierConfigs = undefined;
+    }
+  } else if (shape === 'rounded_rectangle') {
+    d.cornerFill = true;
+    d.cornerRoundness = d.cornerRoundness ?? 0.5;
+    if (d.roof.style === 'truss') d.roof.style = 'cantilever';
   }
   d.pitch = clampPitchToTrack(d.pitch);
 }
@@ -570,6 +595,10 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
 
     setShape: (shape) => commitChange((d) => applyShape(d, shape)),
 
+    setCornerRoundness: (roundness) =>
+      commitChange((d) => {
+        d.cornerRoundness = Math.max(0, Math.min(1, roundness));
+      }),
     setSunkenDepth: (depth) =>
       commitChange((d) => {
         d.sunkenDepth = Math.max(0, Math.min(16, Number(depth.toFixed(1))));

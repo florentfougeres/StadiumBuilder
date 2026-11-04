@@ -10,7 +10,10 @@ export type StadiumShape =
   | 'horseshoe'
   | 'circular_bowl'
   | 'arc_stands'
-  | 'd_shape_vertical';
+  | 'd_shape_vertical'
+  | 'tilted_bowl'
+  | 'saddle_bowl'
+  | 'rounded_rectangle';
 
 export type StandSide = 'north' | 'south' | 'east' | 'west';
 
@@ -41,6 +44,13 @@ export type RoofStyle =
   | 'wave_canopy'
   | 'petal_iris'
   | 'historic_gable'
+  | 'sawtooth'
+  | 'butterfly'
+  | 'barrel_vault'
+  | 'hypar_shells'
+  | 'tree_columns'
+  | 'air_dome'
+  | 'cable_dome'
   | 'girder_grid'
   | 'saddle_vault'
   | 'dished_canopy'
@@ -78,7 +88,11 @@ export type EnvelopeStyle =
   | 'enveloping_skin'
   | 'exposed_structure'
   | 'colonnade_forest'
-  | 'louver_curtain';
+  | 'louver_curtain'
+  | 'stacked_arcades'
+  | 'media_mesh'
+  | 'helical_ramps'
+  | 'horizontal_strata';
 
 export type PlacedObjectType =
   | 'screen'
@@ -158,7 +172,9 @@ export type FacadePatternId =
   | 'diagrid'
   | 'cassette_panels'
   | 'triangulated_lace'
-  | 'scales';
+  | 'scales'
+  | 'honeycomb'
+  | 'voronoi';
 
 export type FloodlightRigMode = 'roof_gantry' | 'corner_masts' | 'both' | 'none';
 
@@ -675,12 +691,18 @@ export interface SiteConfig {
   perimeterFence: boolean;
   /** Turnstile entrance pavilions on the stadium axes. */
   entrances: boolean;
+  /**
+   * Height (m) of the podium the stadium stands on: shops and car parks behind its outer wall,
+   * its roof a raised forecourt, a grand stair down to the ground on the south axis. `0` = none.
+   */
+  podiumHeight: number;
 }
 
 export const DEFAULT_SITE: SiteConfig = {
   setting: 'esplanade',
   perimeterFence: false,
   entrances: true,
+  podiumHeight: 0,
 };
 
 export function resolveSite(doc: StadiumDocument): SiteConfig {
@@ -697,6 +719,8 @@ export interface StadiumDocument {
   /** Per-corner architectural mode (`nw`, `ne`, `sw`, `se`). */
   corners?: Partial<Record<CornerId, CornerMode>>;
   sunkenDepth?: number;
+  /** `rounded_rectangle`: corner rounding, `0` tight to `1` a full bend (default `0.5`). */
+  cornerRoundness?: number;
   pitch: PitchConfig;
   stands: Record<StandSide, StandConfig>;
   roof: RoofConfig;
@@ -761,7 +785,10 @@ export function isContinuousBowlShape(shape: StadiumShape): boolean {
     shape === 'horseshoe' ||
     shape === 'circular_bowl' ||
     shape === 'arc_stands' ||
-    shape === 'd_shape_vertical'
+    shape === 'd_shape_vertical' ||
+    shape === 'tilted_bowl' ||
+    shape === 'saddle_bowl' ||
+    shape === 'rounded_rectangle'
   );
 }
 
@@ -918,6 +945,9 @@ export const STADIUM_SHAPE_LABELS: Record<StadiumShape, string> = {
   octagonal_arena: 'Arène octogonale facettée',
   circular_bowl: 'Bol circulaire',
   arc_stands: 'Tribunes en arc de cercle',
+  tilted_bowl: 'Bol incliné',
+  saddle_bowl: 'Bol en selle',
+  rounded_rectangle: 'Rectangle aux angles arrondis',
 };
 
 export function riserFromSlopeDeg(slopeDeg: number, rowDepth: number): number {

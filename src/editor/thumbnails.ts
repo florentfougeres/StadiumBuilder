@@ -85,6 +85,16 @@ export async function renderThumbnails(
   }
 }
 
+/** Roofs built stand by stand only: a bowl would show the default canopy instead. */
+const STAND_ONLY_ROOFS = new Set<RoofStyle>([
+  'historic_gable',
+  'sawtooth',
+  'butterfly',
+  'barrel_vault',
+  'hypar_shells',
+  'tree_columns',
+]);
+
 /** Neutral stadium the option thumbnails vary one choice of, with the surroundings cleared. */
 function optionBase(shape: StadiumShape = 'modern_bowl'): StadiumDocument {
   const doc = createPresetDocument('traditional_four_stands_42k');
@@ -111,7 +121,7 @@ export function thumbnailJobs(
       return { id: shape, doc, elevation: 1.05 };
     }),
     roofs: roofs.map((style) => {
-      const doc = optionBase();
+      const doc = optionBase(STAND_ONLY_ROOFS.has(style) ? 'four_stands' : 'modern_bowl');
       doc.roof = { ...doc.roof, style };
       return { id: style, doc };
     }),

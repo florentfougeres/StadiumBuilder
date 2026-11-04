@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   buildShapeBowlRing,
+  bowlSideWeights,
   computeRectangularCornerLayout,
   CornerQuadrantId,
   getBowlArcRange,
@@ -28,6 +29,7 @@ import {
 import {
   BOWL_CURTAIN_WALL_OFFSET,
   buildCurtainWallArticulation,
+  buildEnvelopeDressing,
   buildParametricFacadeOnRail,
   buildStraightParametricFacade,
   FacadeRailSample,
@@ -608,6 +610,36 @@ function createVomitoryPortalUnit(
   railMat: THREE.Material
 ): THREE.Group {
   return createCarvedVomitoryTunnel(2.2, 2.2, 1.65, portalMat, darkMouthMat, railMat, false);
+}
+
+/** Envelopes drawn as a dressing on a rail in front of the plain facade wall. */
+function isRailDressedEnvelope(envelope: EnvelopeStyle): boolean {
+  return (
+    envelope === 'stacked_arcades' ||
+    envelope === 'media_mesh' ||
+    envelope === 'helical_ramps' ||
+    envelope === 'horizontal_strata'
+  );
+}
+
+/** The rail dressing of an envelope drawn on a rail (see `isRailDressedEnvelope`). */
+function railEnvelopeDressing(
+  doc: StadiumDocument,
+  envelope: EnvelopeStyle,
+  samples: FacadeRailSample[],
+  closed: boolean,
+  facadeMat: THREE.Material,
+  structureMat: THREE.Material
+): THREE.Group | null {
+  return buildEnvelopeDressing({
+    samples,
+    closed,
+    style: envelope,
+    frameMat: structureMat,
+    facadeMat,
+    ledColors: [doc.colors.seatsPrimary, doc.colors.seatsSecondary],
+    night: doc.lighting !== 'day',
+  });
 }
 
 /** Column density multiplier of a `colonnade_forest` envelope. */
@@ -1348,22 +1380,44 @@ function buildStraightStandMesh(
       rearFacadeWall.receiveShadow = true;
       group.add(rearFacadeWall);
 
-      const colCount = Math.max(6, Math.floor(spanLength / 7.5));
-      const colGeo = new THREE.BoxGeometry(0.62, wallH, 2.2);
-      const colInstanced = new THREE.InstancedMesh(colGeo, structureMat, colCount);
-      colInstanced.castShadow = true;
+      const dressing = isRailDressedEnvelope(envelope)
+        ? railEnvelopeDressing(
+            doc,
+            envelope,
+            [-1, 1].map((side) => ({
+              x: (side * (spanLength + extOverhang)) / 2,
+              z: totalDepth + 0.55,
+              nx: 0,
+              nz: 1,
+              yBottom: gradeY,
+              yTop: topHeight,
+            })),
+            false,
+            facadeMat,
+            structureMat
+          )
+        : null;
+      if (dressing) group.add(dressing);
 
-      for (let i = 0; i < colCount; i++) {
-        const x = -spanLength / 2 + (i + 0.5) * (spanLength / colCount);
-        dummy.position.set(x, gradeY + wallH / 2, totalDepth + 0.58);
-        dummy.rotation.set(0, 0, 0);
-        dummy.scale.set(1, 1, 1);
-        dummy.updateMatrix();
-        colInstanced.setMatrixAt(i, dummy.matrix);
+      // Pilasters, unless the arcades or LED skin already articulate the wall.
+      if (!dressing) {
+        const colCount = Math.max(6, Math.floor(spanLength / 7.5));
+        const colGeo = new THREE.BoxGeometry(0.62, wallH, 2.2);
+        const colInstanced = new THREE.InstancedMesh(colGeo, structureMat, colCount);
+        colInstanced.castShadow = true;
+
+        for (let i = 0; i < colCount; i++) {
+          const x = -spanLength / 2 + (i + 0.5) * (spanLength / colCount);
+          dummy.position.set(x, gradeY + wallH / 2, totalDepth + 0.58);
+          dummy.rotation.set(0, 0, 0);
+          dummy.scale.set(1, 1, 1);
+          dummy.updateMatrix();
+          colInstanced.setMatrixAt(i, dummy.matrix);
+        }
+        colInstanced.instanceMatrix.needsUpdate = true;
+        colInstanced.computeBoundingSphere();
+        group.add(colInstanced);
       }
-      colInstanced.instanceMatrix.needsUpdate = true;
-      colInstanced.computeBoundingSphere();
-      group.add(colInstanced);
     }
 
     // 3D Parametric Facade Relief on straight stand exterior when concourse ring is not wrapping it
@@ -2942,7 +2996,22 @@ function buildCornerVirageQuadrant(
         )
       );
 
-      const finCount = corner.facetedThreeBay ? 4 : 6;
+      const dressing = isRailDressedEnvelope(envelope)
+        ? railEnvelopeDressing(
+            doc,
+            envelope,
+            crestPerSlice.map((cr, s) => {
+              const pt = sampleCornerQuadrantPoint(corner, s / segs, cr.outerD + 0.15);
+              return { x: pt.x, z: pt.z, nx: pt.nx, nz: pt.nz, yBottom: cr.gradeY, yTop: cr.topH - 0.25 };
+            }),
+            false,
+            facadeMat,
+            structureMat
+          )
+        : null;
+      if (dressing) group.add(dressing);
+
+      const finCount = dressing ? 0 : corner.facetedThreeBay ? 4 : 6;
       for (let i = 0; i < finCount; i++) {
         const u = corner.facetedThreeBay ? i / 3 : (i + 0.5) / finCount;
         const sIdx = Math.min(segs, Math.round(u * segs));
@@ -3902,7 +3971,8 @@ function buildModernBowlSweep(
     avgDistZ,
     trackOffsets.endOffset,
     trackOffsets.sideOffset,
-    safePitch.hasTrack
+    safePitch.hasTrack,
+    doc.cornerRoundness
   );
 
   const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
@@ -3913,15 +3983,15 @@ function buildModernBowlSweep(
   const tAtSlice = (s: number) => tStart + (s / activeSegments) * (tEnd - tStart);
 
   const sectorWeightsAt = (nx: number, nz: number) => {
-    const wE = doc.shape === 'horseshoe' ? 0 : Math.pow(Math.max(0, nx), 2.2);
-    const wW = Math.pow(Math.max(0, -nx), 2.2);
-    const wS = Math.pow(Math.max(0, nz), 2.2);
-    const wN = Math.pow(Math.max(0, -nz), 2.2);
-    const sum = wE + wW + wS + wN || 1;
-    return { e: wE / sum, s: wS / sum, w: wW / sum, n: wN / sum };
+    const w = bowlSideWeights(doc.shape, nx, nz);
+    // The horseshoe's open end has no east stand.
+    const wE = doc.shape === 'horseshoe' ? 0 : w.east;
+    const sum = wE + w.west + w.south + w.north || 1;
+    return { e: wE / sum, s: w.south / sum, w: w.west / sum, n: w.north / sum };
   };
 
   const dominantSideAt = (nx: number, nz: number): StandSide => {
+    if (doc.shape === 'tilted_bowl') return nz >= 0 ? 'south' : 'north';
     if (doc.shape === 'horseshoe' && nx > 0 && Math.abs(nx) >= Math.abs(nz)) {
       return nz >= 0 ? 'south' : 'north';
     }
@@ -5050,7 +5120,25 @@ function buildModernBowlSweep(
       });
       group.add(new THREE.Mesh(turnGeo, turnMat));
 
-      if (envelope === 'louver_curtain') {
+      if (isRailDressedEnvelope(envelope)) {
+        const rail: FacadeRailSample[] = [];
+        for (let s = 0; s < ringCount; s++) {
+          if (isSliceInOpenCorner(s)) continue;
+          const [outerD, crestY] = topCrestPerSlice[s];
+          const gradeY = Math.min(sunkenDepth, crestY * 0.65);
+          const pt = sampleRoundedBowlRing(bowlRing, tAtSlice(s), outerD + BOWL_CURTAIN_WALL_OFFSET);
+          rail.push({ x: pt.x, z: pt.z, nx: pt.nx, nz: pt.nz, yBottom: gradeY, yTop: crestY });
+        }
+        const dressing = railEnvelopeDressing(
+          doc,
+          envelope,
+          rail,
+          closed && !hasCustomCornerCutout,
+          facadeMat,
+          structureMat
+        );
+        if (dressing) group.add(dressing);
+      } else if (envelope === 'louver_curtain') {
         // Dense horizontal architectural brise-soleil rings wrapping the stadium!
         const louverCount = 7;
         for (let l = 0; l < louverCount; l++) {

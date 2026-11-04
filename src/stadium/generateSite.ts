@@ -1528,12 +1528,167 @@ function buildClassicGround(doc: StadiumDocument, plaza: PlazaMaterialId, maxAni
  * street furniture, buildings or car parks, plus the optional fence and entrance pavilions.
  * Everything is laid out from the stadium's real outer footprint, so it follows any shape.
  */
-export function generateSiteGroup(doc: StadiumDocument, fp: SiteFootprint, maxAnisotropy: number = 4): THREE.Group {
+// ---------------------------------------------------------------------------------------------
+// Podium
+// ---------------------------------------------------------------------------------------------
+
+/** How far the podium deck reaches beyond the stadium facade (m). */
+const PODIUM_MARGIN = 16;
+/** Grand stair riser and tread (m): an easy outdoor flight. */
+const STAIR_RISER = 0.16;
+const STAIR_TREAD = 0.42;
+
+/**
+ * The stadium's podium: a raised deck from just inside the facade out to `PODIUM_MARGIN`, its
+ * outer wall lined with shopfronts and car-park openings in turn, and a grand stair on the south
+ * axis from the deck down to the ground. The stadium itself stays on the ground: the podium
+ * wraps the foot of its facade, so its gates open onto the deck.
+ */
+function buildPodium(
+  doc: StadiumDocument,
+  fp: SiteFootprint,
+  height: number,
+  plaza: PlazaMaterialId,
+  maxAnisotropy: number
+): { group: THREE.Group; footprint: SiteFootprint } {
+  const group = new THREE.Group();
+  group.name = 'SitePodium';
+  const night = doc.lighting !== 'day';
+  const steps = 240;
+  const outline = (offset: number) =>
+    Array.from({ length: steps }, (_, i) => {
+      const p = ringPoint(fp, (i / steps) * Math.PI * 2, offset);
+      // Shape y maps to world -z once the extrusion is turned upright.
+      return new THREE.Vector2(p.x, -p.z);
+    });
+  const shape = new THREE.Shape(outline(PODIUM_MARGIN));
+  shape.holes.push(new THREE.Path(outline(-4).reverse()));
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false, curveSegments: 1 });
+  geo.rotateX(-Math.PI / 2);
+  // Paving tiles at 3.2 m on the deck, the wall's own scale on the sides.
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / 3.2, uv.getY(i) / 3.2);
+
+  const detail = createPlazaDetailNormalAndRoughness(plaza, maxAnisotropy);
+  const deckMat = new THREE.MeshStandardMaterial({
+    color: PLAZA_COLOR[plaza],
+    normalMap: detail.normalMap,
+    normalScale: new THREE.Vector2(0.7, 0.7),
+    roughnessMap: detail.roughnessMap,
+    roughness: 0.85,
+    metalness: 0.02,
+  });
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0xb8b2a7, roughness: 0.88, metalness: 0.02 });
+  const body = new THREE.Mesh(geo, [deckMat, wallMat]);
+  body.name = 'PodiumBody';
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  const stairW = Math.min(52, fp.halfX * 0.45);
+  const flights = Math.max(2, Math.ceil(height / STAIR_RISER));
+  const riser = height / flights;
+  const run = flights * STAIR_TREAD;
+  const z0 = fp.halfZ + PODIUM_MARGIN;
+
+  // Shopfronts and car-park mouths in bays along the outer wall, clear of the stair.
+  const shopMat = new THREE.MeshStandardMaterial({
+    color: night ? 0xffe7b8 : 0x8fb2c4,
+    emissive: night ? 0xffb85c : 0x000000,
+    emissiveIntensity: night ? 0.9 : 0,
+    roughness: 0.12,
+    metalness: 0.3,
+  });
+  const parkMat = new THREE.MeshStandardMaterial({ color: 0x17191c, roughness: 0.95 });
+  const dummy = new THREE.Object3D();
+  const shops: THREE.Matrix4[] = [];
+  const parks: THREE.Matrix4[] = [];
+  const dense = 1440;
+  const pts = Array.from({ length: dense }, (_, i) => ringPoint(fp, (i / dense) * Math.PI * 2, PODIUM_MARGIN));
+  const bay = 9;
+  let acc = 0;
+  let k = 0;
+  for (let i = 0; i < dense; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % dense];
+    acc += Math.hypot(b.x - a.x, b.z - a.z);
+    if (acc < bay) continue;
+    acc = 0;
+    if (a.z > 0 && Math.abs(a.x) < stairW / 2 + 3) continue;
+    const n = ringNormal(fp, (i / dense) * Math.PI * 2, PODIUM_MARGIN);
+    const isPark = k++ % 3 === 2;
+    const h = isPark ? Math.min(3.2, height - 1) : height - 1.4;
+    dummy.position.set(a.x + n.x * 0.12, 0.2 + h / 2, a.z + n.z * 0.12);
+    dummy.rotation.set(0, Math.atan2(n.x, n.z), 0);
+    dummy.scale.set(isPark ? 6.8 : 7.6, h, 0.3);
+    dummy.updateMatrix();
+    (isPark ? parks : shops).push(dummy.matrix.clone());
+  }
+  const box = new THREE.BoxGeometry(1, 1, 1);
+  for (const [name, list, mat] of [
+    ['PodiumShopfronts', shops, shopMat],
+    ['PodiumCarParkMouths', parks, parkMat],
+  ] as const) {
+    if (list.length === 0) continue;
+    const inst = new THREE.InstancedMesh(box, mat, list.length);
+    inst.name = name;
+    list.forEach((m, i) => inst.setMatrixAt(i, m));
+    inst.instanceMatrix.needsUpdate = true;
+    inst.computeBoundingSphere();
+    group.add(inst);
+  }
+
+  // Grand stair: each step a solid block from the deck edge out to its own nosing.
+  // Pale stone, so the treads read against the paving below.
+  const stairMat = new THREE.MeshStandardMaterial({ color: 0xded8cb, roughness: 0.8, metalness: 0.02 });
+  const stairs = new THREE.InstancedMesh(box, stairMat, flights - 1);
+  stairs.name = 'PodiumGrandStair';
+  for (let i = 0; i < flights - 1; i++) {
+    const top = height - (i + 1) * riser;
+    const depth = (i + 1) * STAIR_TREAD + 1;
+    dummy.position.set(0, top / 2, z0 - 1 + depth / 2);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(stairW, top, depth);
+    dummy.updateMatrix();
+    stairs.setMatrixAt(i, dummy.matrix);
+  }
+  stairs.instanceMatrix.needsUpdate = true;
+  stairs.computeBoundingSphere();
+  stairs.castShadow = true;
+  stairs.receiveShadow = true;
+  group.add(stairs);
+  // Cheek walls along both sides of the flight.
+  const cheek = new THREE.Shape([
+    new THREE.Vector2(-1, 0),
+    new THREE.Vector2(run, 0),
+    new THREE.Vector2(run, 0.9),
+    new THREE.Vector2(-1, height + 0.9),
+  ]);
+  const cheekGeo = new THREE.ExtrudeGeometry(cheek, { depth: 0.6, bevelEnabled: false });
+  cheekGeo.rotateY(-Math.PI / 2);
+  for (const side of [-1, 1]) {
+    const wall = new THREE.Mesh(cheekGeo, wallMat);
+    wall.position.set(side * (stairW / 2 + 0.3) + 0.3, 0, z0);
+    wall.castShadow = true;
+    group.add(wall);
+  }
+
+  return {
+    group,
+    footprint: { halfX: fp.halfX + PODIUM_MARGIN, halfZ: fp.halfZ + PODIUM_MARGIN + run, exponent: fp.exponent },
+  };
+}
+
+export function generateSiteGroup(doc: StadiumDocument, stadiumFp: SiteFootprint, maxAnisotropy: number = 4): THREE.Group {
   const site = resolveSite(doc);
   const mats = { ...DEFAULT_STADIUM_MATERIALS, ...(doc.materials ?? {}) };
-  const layout = planSite(fp, site);
   const group = new THREE.Group();
   group.name = 'SiteSurroundings';
+  // A podium widens the built footprint: the surroundings are laid out around it.
+  const podium = site.podiumHeight > 0.5 ? buildPodium(doc, stadiumFp, site.podiumHeight, mats.plazaSurface, maxAnisotropy) : null;
+  if (podium) group.add(podium.group);
+  const fp = podium?.footprint ?? stadiumFp;
+  const layout = planSite(fp, site);
 
   if (site.setting === 'none') {
     group.add(buildClassicGround(doc, mats.plazaSurface, maxAnisotropy));

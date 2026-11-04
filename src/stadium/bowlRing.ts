@@ -1,5 +1,28 @@
 import * as THREE from 'three';
-import { CornerMode, StadiumShape, StandCrestProfile, TRACK_STRAIGHT_LENGTH_M } from './schema';
+import { CornerMode, StadiumShape, StandCrestProfile, StandSide, TRACK_STRAIGHT_LENGTH_M } from './schema';
+
+/**
+ * Share of each stand in the bowl at a ring normal, summing to 1. A bowl blends smoothly from
+ * one stand to the next (steep falloff, so each side keeps its own section); a `tilted_bowl`
+ * blends only its two long sides, linearly across its width, so the rim falls in one straight
+ * slope from the north stand to the south stand and the ends carry no section of their own;
+ * a `saddle_bowl` blends over the whole bend so its rim dips smoothly from sides to ends.
+ */
+export function bowlSideWeights(shape: StadiumShape, nx: number, nz: number): Record<StandSide, number> {
+  if (shape === 'tilted_bowl') {
+    const south = Math.max(0, Math.min(1, (1 + nz) / 2));
+    return { north: 1 - south, south, east: 0, west: 0 };
+  }
+  // A saddle bowl spreads the blend over the whole bend, so the rim dips in one smooth curve
+  // from the high sides to the low ends instead of stepping at the corners.
+  const k = shape === 'saddle_bowl' ? 0.9 : 2.2;
+  const east = Math.pow(Math.max(0, nx), k);
+  const west = Math.pow(Math.max(0, -nx), k);
+  const south = Math.pow(Math.max(0, nz), k);
+  const north = Math.pow(Math.max(0, -nz), k);
+  const sum = east + west + south + north || 1;
+  return { north: north / sum, south: south / sum, east: east / sum, west: west / sum };
+}
 
 /**
  * Evaluates the normalized vertical crest height multiplier along a stand span for `u` in `[-1, 1]`
@@ -420,7 +443,9 @@ export function buildShapeBowlRing(
   avgDistZ: number,
   endTrackOffset: number,
   sideTrackOffset: number,
-  hasTrack: boolean
+  hasTrack: boolean,
+  /** `rounded_rectangle`: corner rounding from a tight 6 m radius (`0`) to a full bend (`1`). */
+  cornerRoundness: number = 0.5
 ): RoundedBowlGeometry {
   if (shape === 'circular_bowl') {
     // A round bowl must clear the pitch corners: ends sit close to the goals, sides far away.
@@ -471,6 +496,8 @@ export function buildShapeBowlRing(
         : 10.2
       : shape === 'octagonal_arena'
       ? 22
+      : shape === 'rounded_rectangle'
+      ? 6 + Math.max(0, Math.min(1, cornerRoundness)) * Math.max(0, innerHalfZ - 6)
       : shape === 'arc_stands'
       ? 9
       : shape === 'horseshoe'

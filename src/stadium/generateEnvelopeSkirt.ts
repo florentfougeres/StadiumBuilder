@@ -180,6 +180,9 @@ export function generateEnvelopeSkirt(
             style: mats.envelopeStyle ?? 'enveloping_skin',
             frameMat: finMat,
             storeys: false,
+            facadeMat: screenMat,
+            ledColors: [doc.colors.seatsPrimary, doc.colors.seatsSecondary],
+            night: doc.lighting !== 'day',
           })
         : buildParametricFacadeOnRail({
             samples: rail,

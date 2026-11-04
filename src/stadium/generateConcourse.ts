@@ -118,6 +118,9 @@ export function generateConcourseGroup(
           closed,
           style: mats.envelopeStyle ?? 'enveloping_skin',
           frameMat: structMat,
+          facadeMat,
+          ledColors: [doc.colors.seatsPrimary, doc.colors.seatsSecondary],
+          night: doc.lighting !== 'day',
         })
       : null;
   if (articulation) group.add(articulation);

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {
+  bowlSideWeights,
   buildShapeBowlRing,
   computeRectangularCornerLayout,
   CornerQuadrantId,
@@ -43,7 +44,7 @@ import {
 } from './schema';
 import { standTreadHeightAt } from './sightlines';
 import { buildRetractablePanels } from './generateRetractableRoof';
-import { beamGeometry, chordAt, mergedMesh } from './roofBeams';
+import { beamGeometry, chordAt, gridSurfaceGeometry, mergedMesh, tubeGeometry } from './roofBeams';
 
 function hasRoofGantryLights(doc: StadiumDocument): boolean {
   const rig = resolveFloodlightRig(doc);
@@ -153,29 +154,21 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
   );
 
   const standHeightAtNormal = (nx: number, nz: number): number => {
-    const wE = Math.pow(Math.max(0, nx), 2.2);
-    const wW = Math.pow(Math.max(0, -nx), 2.2);
-    const wS = Math.pow(Math.max(0, nz), 2.2);
-    const wN = Math.pow(Math.max(0, -nz), 2.2);
-    const sum = wE + wW + wS + wN || 1;
+    const { east: wE, west: wW, south: wS, north: wN } = bowlSideWeights(doc.shape, nx, nz);
     const hE = eastMetrics.enabled ? eastMetrics.maxHeight : maxStandH * 0.5;
     const hW = westMetrics.enabled ? westMetrics.maxHeight : maxStandH * 0.5;
     const hS = southMetrics.enabled ? southMetrics.maxHeight : maxStandH * 0.5;
     const hN = northMetrics.enabled ? northMetrics.maxHeight : maxStandH * 0.5;
-    return (wE * hE + wW * hW + wS * hS + wN * hN) / sum;
+    return wE * hE + wW * hW + wS * hS + wN * hN;
   };
 
   const standDepthAtNormal = (nx: number, nz: number): number => {
-    const wE = Math.pow(Math.max(0, nx), 2.2);
-    const wW = Math.pow(Math.max(0, -nx), 2.2);
-    const wS = Math.pow(Math.max(0, nz), 2.2);
-    const wN = Math.pow(Math.max(0, -nz), 2.2);
-    const sum = wE + wW + wS + wN || 1;
+    const { east: wE, west: wW, south: wS, north: wN } = bowlSideWeights(doc.shape, nx, nz);
     const dE = eastMetrics.enabled ? eastMetrics.totalDepth : avgDepth * 0.6;
     const dW = westMetrics.enabled ? westMetrics.totalDepth : avgDepth * 0.6;
     const dS = southMetrics.enabled ? southMetrics.totalDepth : avgDepth * 0.6;
     const dN = northMetrics.enabled ? northMetrics.totalDepth : avgDepth * 0.6;
-    return (wE * dE + wW * dW + wS * dS + wN * dN) / sum;
+    return wE * dE + wW * dW + wS * dS + wN * dN;
   };
 
   // Separate stands sit at their own distance from the pitch, while the ring uses the mean per
@@ -243,7 +236,8 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     avgDistZ,
     trackOffsets.endOffset,
     trackOffsets.sideOffset,
-    safePitch.hasTrack
+    safePitch.hasTrack,
+    doc.cornerRoundness
   );
 
   return {
@@ -3301,6 +3295,324 @@ function buildSingleStandRoofGroup(
     return standRoofGroup;
   }
 
+  if (style === 'sawtooth') {
+    // Shed roof of north-light teeth: each bay slopes up along the stand, then drops back to the
+    // valley through a glazed vertical face. Ridges run front to back, so the front fascia reads
+    // as a zigzag from the pitch. Valley girders sit on columns in the upper rows and the crest.
+    const teeth = Math.max(3, Math.round(roofSpan / 11));
+    const toothW = roofSpan / teeth;
+    const rise = Math.max(2.2, Math.min(4.5, toothW * 0.32));
+    const valleyY = roofHeight - 0.3;
+    const slopeLen = Math.hypot(toothW, rise);
+    const tilt = Math.atan2(rise, toothW);
+    const glazingMat = new THREE.MeshPhysicalMaterial({
+      color: 0xd6ecf5,
+      roughness: 0.08,
+      metalness: 0.15,
+      transparent: true,
+      opacity: 0.42,
+      side: THREE.DoubleSide,
+    });
+    const parts: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < teeth; i++) {
+      const x0 = -roofSpan / 2 + i * toothW;
+      const slope = new THREE.Mesh(createOrientedRoofBoxGeometry(slopeLen, 0.18, roofDepth), membraneMat);
+      slope.name = 'RoofCanopySurface';
+      slope.customDepthMaterial = shadowDepthMat;
+      slope.position.set(x0 + toothW / 2, valleyY + rise / 2, midZ);
+      slope.rotation.z = tilt;
+      slope.castShadow = true;
+      slope.receiveShadow = true;
+      standRoofGroup.add(slope);
+
+      const glass = new THREE.Mesh(new THREE.PlaneGeometry(roofDepth, rise), glazingMat);
+      glass.position.set(x0 + toothW, valleyY + rise / 2, midZ);
+      glass.rotation.y = Math.PI / 2;
+      standRoofGroup.add(glass);
+
+      // Ridge and valley girders front to back, with raking mullions in each glazed face.
+      const ridgeX = x0 + toothW;
+      parts.push(
+        beamGeometry(new THREE.Vector3(ridgeX, valleyY + rise, frontZ), new THREE.Vector3(ridgeX, valleyY + rise, rearZ), 0.2, 0.26),
+        beamGeometry(new THREE.Vector3(x0, valleyY - 0.25, frontZ), new THREE.Vector3(x0, valleyY - 0.25, rearZ), 0.3, 0.5)
+      );
+      for (const z of [frontZ + 0.2, midZ, rearZ - 0.2]) {
+        parts.push(beamGeometry(new THREE.Vector3(ridgeX, valleyY, z), new THREE.Vector3(ridgeX, valleyY + rise, z), 0.12, 0.12));
+      }
+    }
+    // Last valley girder closing the far end.
+    parts.push(
+      beamGeometry(
+        new THREE.Vector3(roofSpan / 2, valleyY - 0.25, frontZ),
+        new THREE.Vector3(roofSpan / 2, valleyY - 0.25, rearZ),
+        0.3,
+        0.5
+      )
+    );
+    const footY = Math.max(1.8, standTopY * 0.55);
+    const colZ = frontZ + Math.min(3.4, roofDepth * 0.22);
+    for (let i = 0; i <= teeth; i++) {
+      const x = -roofSpan / 2 + i * toothW;
+      if (i % 2 === 0) {
+        parts.push(beamGeometry(new THREE.Vector3(x, footY, colZ), new THREE.Vector3(x, valleyY - 0.5, colZ), 0.3, 0.3));
+      }
+      parts.push(
+        beamGeometry(
+          new THREE.Vector3(x, Math.max(0, standTopY - 2), crestSupportZ),
+          new THREE.Vector3(x, valleyY - 0.5, crestSupportZ),
+          0.34,
+          0.34
+        )
+      );
+    }
+    const frame = mergedMesh(parts, primaryStructMat, 'SawtoothFrame');
+    if (frame) standRoofGroup.add(frame);
+
+    standRoofGroup.add(
+      buildStraightCatwalkFloodlights(roofSpan, frontZ, valleyY - 0.25, doc.lighting, gantryLights)
+    );
+    return standRoofGroup;
+  }
+
+  if (style === 'butterfly') {
+    // Butterfly: two slopes falling to a central valley gutter, so the front edge kicks up toward
+    // the pitch and the rear rises again over the crest. Rafters follow the V on each bay, the
+    // gutter girder rests on columns in the upper rows, and the crest columns carry the back.
+    const valleyY = roofHeight - 1.2;
+    const valleyZ = frontZ + roofDepth * 0.55;
+    const frontY = valleyY + Math.max(3, roofDepth * 0.22);
+    const rearY = valleyY + Math.max(1.6, roofDepth * 0.12);
+    const surface = gridSurfaceGeometry(
+      8,
+      2,
+      (u, v) => {
+        const x = -roofSpan / 2 + u * roofSpan;
+        return v <= 0.5
+          ? new THREE.Vector3(x, frontY + (valleyY - frontY) * (v * 2), frontZ + (valleyZ - frontZ) * (v * 2))
+          : new THREE.Vector3(x, valleyY + (rearY - valleyY) * (v * 2 - 1), valleyZ + (rearZ - valleyZ) * (v * 2 - 1));
+      },
+      [roofSpan / 8, 2]
+    );
+    const wings = new THREE.Mesh(surface, membraneMat);
+    wings.name = 'RoofCanopySurface';
+    wings.customDepthMaterial = shadowDepthMat;
+    wings.castShadow = true;
+    wings.receiveShadow = true;
+    standRoofGroup.add(wings);
+
+    const parts: THREE.BufferGeometry[] = [];
+    const bays = Math.max(4, Math.round(roofSpan / 8));
+    const colZ = frontZ + Math.min(roofDepth * 0.5, Math.max(3, roofDepth * 0.4));
+    const footY = Math.max(1.8, standTopY * 0.6);
+    for (let b = 0; b <= bays; b++) {
+      const x = -roofSpan / 2 + (b * roofSpan) / bays;
+      const f = new THREE.Vector3(x, frontY - 0.3, frontZ);
+      const v = new THREE.Vector3(x, valleyY - 0.3, valleyZ);
+      const r = new THREE.Vector3(x, rearY - 0.3, rearZ);
+      parts.push(beamGeometry(f, v, 0.22, 0.5), beamGeometry(v, r, 0.22, 0.5));
+      if (b % 2 === 0) {
+        parts.push(
+          beamGeometry(new THREE.Vector3(x, footY, colZ), new THREE.Vector3(x, valleyY - 0.5, colZ), 0.34, 0.34),
+          beamGeometry(
+            new THREE.Vector3(x, Math.max(0, standTopY - 2), crestSupportZ),
+            new THREE.Vector3(x, valleyY + (rearY - valleyY) * ((crestSupportZ - valleyZ) / Math.max(0.1, rearZ - valleyZ)) - 0.5, crestSupportZ),
+            0.38,
+            0.38
+          )
+        );
+      }
+    }
+    // Gutter girder along the valley.
+    parts.push(
+      beamGeometry(
+        new THREE.Vector3(-roofSpan / 2, valleyY - 0.6, valleyZ),
+        new THREE.Vector3(roofSpan / 2, valleyY - 0.6, valleyZ),
+        0.6,
+        0.9
+      )
+    );
+    const frame = mergedMesh(parts, primaryStructMat, 'ButterflyFrame');
+    if (frame) standRoofGroup.add(frame);
+    standRoofGroup.add(buildStraightCatwalkFloodlights(roofSpan, frontZ, frontY - 0.4, doc.lighting, gantryLights));
+    return standRoofGroup;
+  }
+
+  if (style === 'barrel_vault') {
+    // Barrel vault along the stand: one cylindrical shell whose axis runs the length of the stand,
+    // springing from a front edge beam to the crest, stiffened by arched ribs every bay and held by
+    // tie rods between its springings.
+    const rise = Math.max(2.8, roofDepth * 0.2);
+    const springY = roofHeight - 0.6;
+    const chord = roofDepth / 2;
+    const radius = (chord * chord + rise * rise) / (2 * rise);
+    const half = Math.asin(Math.min(1, chord / radius));
+    const centreY = springY + rise - radius;
+    const arcPoint = (a: number, r: number) =>
+      new THREE.Vector3(0, centreY + Math.cos(a) * r, midZ + Math.sin(a) * r);
+    const shell = new THREE.Mesh(
+      gridSurfaceGeometry(
+        Math.max(6, Math.round(roofSpan / 6)),
+        16,
+        (u, v) => {
+          const p = arcPoint(-half + v * 2 * half, radius);
+          p.x = -roofSpan / 2 + u * roofSpan;
+          return p;
+        },
+        [roofSpan / 6, 4]
+      ),
+      membraneMat
+    );
+    shell.name = 'RoofCanopySurface';
+    shell.customDepthMaterial = shadowDepthMat;
+    shell.castShadow = true;
+    shell.receiveShadow = true;
+    standRoofGroup.add(shell);
+
+    const parts: THREE.BufferGeometry[] = [];
+    const bays = Math.max(4, Math.round(roofSpan / 9));
+    const footY = Math.max(1.8, standTopY * 0.6);
+    for (let b = 0; b <= bays; b++) {
+      const x = -roofSpan / 2 + (b * roofSpan) / bays;
+      for (let k = 0; k < 12; k++) {
+        const a0 = arcPoint(-half + (k / 12) * 2 * half, radius - 0.35);
+        const a1 = arcPoint(-half + ((k + 1) / 12) * 2 * half, radius - 0.35);
+        a0.x = x;
+        a1.x = x;
+        parts.push(beamGeometry(a0, a1, 0.3, 0.55));
+      }
+      const front = arcPoint(-half, radius);
+      const back = arcPoint(half, radius);
+      front.x = back.x = x;
+      parts.push(beamGeometry(front, back, 0.08, 0.08));
+      if (b % 2 === 0) {
+        parts.push(
+          beamGeometry(new THREE.Vector3(x, footY, frontZ + 0.4), new THREE.Vector3(x, springY - 0.2, frontZ + 0.4), 0.32, 0.32),
+          beamGeometry(
+            new THREE.Vector3(x, Math.max(0, standTopY - 2), crestSupportZ),
+            new THREE.Vector3(x, springY - 0.2, crestSupportZ),
+            0.36,
+            0.36
+          )
+        );
+      }
+    }
+    for (const z of [frontZ, rearZ]) {
+      parts.push(
+        beamGeometry(new THREE.Vector3(-roofSpan / 2, springY - 0.3, z), new THREE.Vector3(roofSpan / 2, springY - 0.3, z), 0.5, 0.7)
+      );
+    }
+    const frame = mergedMesh(parts, primaryStructMat, 'BarrelVaultRibs');
+    if (frame) standRoofGroup.add(frame);
+    standRoofGroup.add(buildStraightCatwalkFloodlights(roofSpan, frontZ, springY - 0.4, doc.lighting, gantryLights));
+    return standRoofGroup;
+  }
+
+  if (style === 'hypar_shells') {
+    // Row of thin concrete hyperbolic-paraboloid shells cantilevered from the crest: each unit is a
+    // twisted (saddle) surface between straight edges, its corners alternately raised and lowered
+    // so neighbouring units meet in a scalloped front edge. A rear column and a backstay hold each.
+    const units = Math.max(3, Math.round(roofSpan / 13));
+    const unitW = roofSpan / units;
+    const twist = Math.max(1.4, unitW * 0.16);
+    const rearY = roofHeight - 0.4;
+    const frontY = rearY + Math.max(1.2, roofDepth * 0.06);
+    // Thin shells are seen from above and below.
+    const concreteMat = createStructurePbrMaterial('reinforced_concrete', 4);
+    concreteMat.side = THREE.DoubleSide;
+    const shells: THREE.BufferGeometry[] = [];
+    const parts: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < units; i++) {
+      const x0 = -roofSpan / 2 + i * unitW;
+      const flip = i % 2 === 0 ? 1 : -1;
+      // Bilinear patch: front corners twisted up/down, rear corners the other way.
+      const corner = (u: number, v: number) => {
+        const sign = (u < 0.5 ? 1 : -1) * (v < 0.5 ? 1 : -1) * flip;
+        const base = frontY + (rearY - frontY) * v;
+        return base + sign * twist * 0.5;
+      };
+      const at = (u: number, v: number) => {
+        const y00 = corner(0, 0);
+        const y10 = corner(1, 0);
+        const y01 = corner(0, 1);
+        const y11 = corner(1, 1);
+        const y = (1 - u) * (1 - v) * y00 + u * (1 - v) * y10 + (1 - u) * v * y01 + u * v * y11;
+        return new THREE.Vector3(x0 + u * unitW, y, frontZ + v * roofDepth);
+      };
+      shells.push(gridSurfaceGeometry(10, 10, at, [unitW / 4, roofDepth / 4]));
+      // Thickened edge beams and the column with its backstay at the rear middle.
+      for (const [a, b] of [
+        [at(0, 0), at(1, 0)],
+        [at(0, 0), at(0, 1)],
+      ] as const) {
+        parts.push(beamGeometry(a.clone().setY(a.y - 0.25), b.clone().setY(b.y - 0.25), 0.35, 0.5));
+      }
+      const head = at(0.5, 0.82);
+      const xMid = x0 + unitW / 2;
+      parts.push(
+        beamGeometry(new THREE.Vector3(xMid, Math.max(0, standTopY - 2), crestSupportZ), head.clone().setY(head.y - 0.3), 0.7, 0.7),
+        beamGeometry(head, new THREE.Vector3(xMid, 0, groundSupportZ + 2), 0.12, 0.12)
+      );
+    }
+    parts.push(beamGeometry(new THREE.Vector3(roofSpan / 2, frontY, frontZ), new THREE.Vector3(roofSpan / 2, rearY, rearZ), 0.35, 0.5));
+    const shellMesh = mergedMesh(shells, concreteMat, 'RoofCanopySurface');
+    if (shellMesh) {
+      shellMesh.castShadow = true;
+      shellMesh.receiveShadow = true;
+      standRoofGroup.add(shellMesh);
+    }
+    const frame = mergedMesh(parts, concreteMat, 'HyparShellEdges');
+    if (frame) standRoofGroup.add(frame);
+    standRoofGroup.add(buildStraightCatwalkFloodlights(roofSpan, frontZ, frontY - twist, doc.lighting, gantryLights));
+    return standRoofGroup;
+  }
+
+  if (style === 'tree_columns') {
+    // Flat canopy on branching "tree" columns: each trunk rises from the crest, forks into three
+    // limbs, and each limb into twigs that pick up the deck at spread points, so the canopy needs
+    // no front support and the tree spreads its load like a crown.
+    const deckY = roofHeight;
+    const deck = new THREE.Mesh(createOrientedRoofBoxGeometry(roofSpan, 0.3, roofDepth), membraneMat);
+    deck.name = 'RoofCanopySurface';
+    deck.customDepthMaterial = shadowDepthMat;
+    deck.position.set(0, deckY, midZ);
+    deck.rotation.x = 0.03;
+    deck.castShadow = true;
+    deck.receiveShadow = true;
+    standRoofGroup.add(deck);
+
+    const parts: THREE.BufferGeometry[] = [];
+    const trees = Math.max(2, Math.round(roofSpan / 18));
+    const pitchX = roofSpan / trees;
+    const soffit = deckY - 0.35;
+    const trunkFoot = Math.max(0, standTopY - 2);
+    const forkY = trunkFoot + (soffit - trunkFoot) * 0.45;
+    for (let i = 0; i < trees; i++) {
+      const x = -roofSpan / 2 + (i + 0.5) * pitchX;
+      const fork = new THREE.Vector3(x, forkY, crestSupportZ - 0.5);
+      parts.push(beamGeometry(new THREE.Vector3(x, trunkFoot, crestSupportZ), fork, 0.9, 0.9));
+      const limbTargets = [
+        new THREE.Vector3(x - pitchX * 0.25, soffit - 2.4, midZ),
+        new THREE.Vector3(x + pitchX * 0.25, soffit - 2.4, midZ),
+        new THREE.Vector3(x, soffit - 2.0, frontZ + roofDepth * 0.22),
+      ];
+      for (const node of limbTargets) {
+        parts.push(beamGeometry(fork, node, 0.5, 0.5));
+        for (const [dx, dz] of [
+          [-pitchX * 0.14, -roofDepth * 0.12],
+          [pitchX * 0.14, -roofDepth * 0.12],
+          [0, roofDepth * 0.14],
+        ]) {
+          const tip = new THREE.Vector3(node.x + dx, soffit, Math.min(rearZ - 0.5, Math.max(frontZ + 0.5, node.z + dz)));
+          parts.push(beamGeometry(node, tip, 0.24, 0.24));
+        }
+      }
+    }
+    const frame = mergedMesh(parts, primaryStructMat, 'TreeColumns');
+    if (frame) standRoofGroup.add(frame);
+    standRoofGroup.add(buildStraightCatwalkFloodlights(roofSpan, frontZ, deckY - 0.3, doc.lighting, gantryLights));
+    return standRoofGroup;
+  }
+
   if (style === 'goalpost_truss') {
     // Monumental "Poutre-portique" (Goalpost) box-girder resting on 2 corner mega-pylons!
     const deck = new THREE.Mesh(
@@ -4136,6 +4448,207 @@ function buildCrossedArchesRoof(
 }
 
 /** Whole-arena roof systems built from the ring loft and perimeter crown helpers above. */
+/**
+ * Closed dome over the stadium contour: each course is the eave contour scaled toward the centre
+ * (`s` = 1 at the eave, 0 at the centre), at the height `heightAt` gives it.
+ */
+function contourDome(doc: StadiumDocument, crossSectionClip: boolean) {
+  const { ring, maxStandH, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
+  const springY = maxStandH + Math.max(2.4, doc.roof.heightOffset * 0.7);
+  const eaveAt = (t: number) => {
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    return sampleRoundedBowlRing(ring, t, canopyOuterOffsetAt(n.nx, n.nz, 3.2));
+  };
+  // Plan radius of the eave by direction, for heights at arbitrary plan points (cables).
+  const table = Array.from({ length: 360 }, (_, i) => {
+    const e = eaveAt(i / 360);
+    return { a: Math.atan2(e.z, e.x), r: Math.hypot(e.x, e.z) };
+  }).sort((p, q) => p.a - q.a);
+  const eaveRadius = (angle: number) => {
+    let lo = table[table.length - 1];
+    for (const p of table) {
+      if (p.a >= angle) {
+        const span = p.a - lo.a || 1;
+        const f = lo.a > p.a ? 0 : (angle - lo.a) / span;
+        return lo.r + (p.r - lo.r) * Math.max(0, Math.min(1, f));
+      }
+      lo = p;
+    }
+    return table[0].r;
+  };
+  /** Contour share `s` of a plan point (1 on the eave). */
+  const planShare = (x: number, z: number) => Math.hypot(x, z) / Math.max(1, eaveRadius(Math.atan2(z, x)));
+  const tStart = crossSectionClip ? 0.5 : 0;
+  const tSpan = crossSectionClip ? 0.5 : 1;
+  const shell = (uSegs: number, vSegs: number, heightAt: (s: number, u: number, x: number, z: number) => number) =>
+    gridSurfaceGeometry(
+      uSegs,
+      vSegs,
+      (u, v) => {
+        const e = eaveAt(tStart + u * tSpan);
+        const s = 1 - v;
+        const x = e.x * s;
+        const z = e.z * s;
+        return new THREE.Vector3(x, heightAt(s, u, x, z), z);
+      },
+      [uSegs / 6, vSegs / 4]
+    );
+  return { springY, eaveAt, planShare, shell, tStart, tSpan };
+}
+
+/** Rise (m) of the very flat air-supported membrane over its span. */
+const AIR_DOME_RISE = 11;
+/** Spacing (m) of the diagonal cable net restraining it. */
+const AIR_DOME_CABLE_SPACING = 14;
+
+/**
+ * AIR-SUPPORTED DOME (`air_dome`): a low membrane held up by a slight overpressure inside the
+ * bowl, restrained by a diagonal net of steel cables anchored in a concrete compression ring;
+ * between the cables the membrane pillows up.
+ */
+function buildAirDomeRoof(doc: StadiumDocument, crossSectionClip: boolean, maxAnisotropy: number): THREE.Group {
+  const group = new THREE.Group();
+  const dome = contourDome(doc, crossSectionClip);
+  const base = (s: number) => dome.springY + AIR_DOME_RISE * (1 - s * s);
+  const pillow = (s: number, x: number, z: number) => {
+    const a = Math.sin((Math.PI * (x + z)) / (AIR_DOME_CABLE_SPACING * Math.SQRT2));
+    const b = Math.sin((Math.PI * (x - z)) / (AIR_DOME_CABLE_SPACING * Math.SQRT2));
+    return 0.9 * Math.abs(a * b) * (1 - Math.pow(s, 6));
+  };
+  const { surfaceMat, shadowDepthMat } = buildCanopyMaterialBundle(doc, maxAnisotropy, 16, 4, 1);
+  const membrane = new THREE.Mesh(
+    dome.shell(crossSectionClip ? 96 : 192, 28, (s, _u, x, z) => base(s) + pillow(s, x, z)),
+    surfaceMat
+  );
+  membrane.name = 'RoofCanopySurface';
+  membrane.customDepthMaterial = shadowDepthMat;
+  membrane.castShadow = true;
+  membrane.receiveShadow = true;
+  membrane.renderOrder = 2;
+  group.add(membrane);
+
+  // Diagonal cable net: lines x ± z = c, sampled across the plan and kept inside the eave.
+  const cables: THREE.BufferGeometry[] = [];
+  const reach = Math.max(...Array.from({ length: 16 }, (_, i) => Math.hypot(dome.eaveAt(i / 16).x, dome.eaveAt(i / 16).z)));
+  const spacing = AIR_DOME_CABLE_SPACING * Math.SQRT2;
+  for (const dir of [1, -1]) {
+    // Cables lie in the pillows' valleys: x ± z on whole multiples of the spacing.
+    const lines = Math.ceil((reach * 1.5) / spacing);
+    for (let n = -lines; n <= lines; n++) {
+      const c = n * spacing;
+      let run: THREE.Vector3[] = [];
+      const flush = () => {
+        if (run.length >= 2) cables.push(tubeGeometry(run, 0.16));
+        run = [];
+      };
+      for (let w = -reach * 1.5; w <= reach * 1.5; w += 3) {
+        const x = (c + w) / 2;
+        const z = dir * (c - w) / 2;
+        const s = dome.planShare(x, z);
+        if (s > 0.995 || (crossSectionClip && z > 0)) {
+          flush();
+          continue;
+        }
+        run.push(new THREE.Vector3(x, base(s) + 0.05, z));
+      }
+      flush();
+    }
+  }
+  const cableMat = new THREE.MeshStandardMaterial({ color: 0x3b4048, metalness: 0.85, roughness: 0.35 });
+  const net = mergedMesh(cables, cableMat, 'AirDomeCableNet');
+  if (net) group.add(net);
+
+  const ringPts = Array.from({ length: crossSectionClip ? 49 : 96 }, (_, i) => {
+    const e = dome.eaveAt(dome.tStart + (i / (crossSectionClip ? 48 : 96)) * dome.tSpan);
+    return new THREE.Vector3(e.x, dome.springY - 0.4, e.z);
+  });
+  const ringMesh = new THREE.Mesh(
+    tubeGeometry(ringPts, 1.1, !crossSectionClip),
+    createStructurePbrMaterial('reinforced_concrete', maxAnisotropy)
+  );
+  ringMesh.name = 'AirDomeCompressionRing';
+  ringMesh.castShadow = true;
+  group.add(ringMesh);
+  return group;
+}
+
+/** Cable dome (Geiger type): radial ridge lines, hoop rings, rise (m), post length (m). */
+const CABLE_DOME_RIDGES = 24;
+const CABLE_DOME_HOOPS = [0.78, 0.55, 0.32];
+const CABLE_DOME_RISE = 14;
+const CABLE_DOME_POST = 5.5;
+
+/**
+ * CABLE DOME (`cable_dome`): a tensegrity dome closed by fabric. Radial ridge cables run from the
+ * compression ring to a central tension ring; at each hoop a short flying post stands on a ring of
+ * hoop cables, and diagonals tie each post's foot to the ridge further out. The fabric drapes in
+ * alternating ridges and valleys between the radials.
+ */
+function buildCableDomeRoof(doc: StadiumDocument, crossSectionClip: boolean, maxAnisotropy: number): THREE.Group {
+  const group = new THREE.Group();
+  const mats = resolveStadiumMaterials(doc);
+  const dome = contourDome(doc, crossSectionClip);
+  const base = (s: number) => dome.springY + CABLE_DOME_RISE * (1 - s * s);
+  const ridges = crossSectionClip ? CABLE_DOME_RIDGES / 2 : CABLE_DOME_RIDGES;
+  const valley = (s: number, u: number) => {
+    const phase = (u * ridges) % 1;
+    return 1.5 * Math.sin(Math.PI * phase) ** 2 * Math.min(1, s * 2.5);
+  };
+  const { surfaceMat, shadowDepthMat } = buildCanopyMaterialBundle(doc, maxAnisotropy, 16, 4, 1);
+  const fabric = new THREE.Mesh(
+    dome.shell(ridges * 8, 24, (s, u) => base(s) - valley(s, u)),
+    surfaceMat
+  );
+  fabric.name = 'RoofCanopySurface';
+  fabric.customDepthMaterial = shadowDepthMat;
+  fabric.castShadow = true;
+  fabric.receiveShadow = true;
+  fabric.renderOrder = 2;
+  group.add(fabric);
+
+  const cables: THREE.BufferGeometry[] = [];
+  const posts: THREE.BufferGeometry[] = [];
+  const node = (k: number, s: number, dy = 0) => {
+    const e = dome.eaveAt(dome.tStart + (k / ridges) * dome.tSpan);
+    return new THREE.Vector3(e.x * s, base(s) + 0.1 + dy, e.z * s);
+  };
+  const shares = [1, ...CABLE_DOME_HOOPS, 0.1];
+  const radials = crossSectionClip ? ridges + 1 : ridges;
+  for (let k = 0; k < radials; k++) {
+    for (let h = 0; h < shares.length - 1; h++) {
+      cables.push(beamGeometry(node(k, shares[h]), node(k, shares[h + 1]), 0.12, 0.12));
+    }
+    CABLE_DOME_HOOPS.forEach((s, h) => {
+      const top = node(k, s);
+      const foot = node(k, s, -CABLE_DOME_POST);
+      posts.push(beamGeometry(top, foot, 0.32, 0.32));
+      cables.push(beamGeometry(foot, node(k, shares[h]), 0.08, 0.08));
+      const nextK = k + 1;
+      if (crossSectionClip ? nextK <= ridges : true) {
+        cables.push(beamGeometry(foot, node(nextK % (crossSectionClip ? Infinity : ridges), s, -CABLE_DOME_POST), 0.1, 0.1));
+      }
+    });
+  }
+  const cableMat = new THREE.MeshStandardMaterial({ color: 0x3b4048, metalness: 0.85, roughness: 0.35 });
+  const net = mergedMesh(cables, cableMat, 'CableDomeCables');
+  if (net) group.add(net);
+  const postMesh = mergedMesh(posts, createStructurePbrMaterial(mats.structure, maxAnisotropy), 'CableDomePosts');
+  if (postMesh) group.add(postMesh);
+
+  const ringPts = Array.from({ length: crossSectionClip ? 49 : 96 }, (_, i) => {
+    const e = dome.eaveAt(dome.tStart + (i / (crossSectionClip ? 48 : 96)) * dome.tSpan);
+    return new THREE.Vector3(e.x, dome.springY - 0.4, e.z);
+  });
+  const ringMesh = new THREE.Mesh(
+    tubeGeometry(ringPts, 1.2, !crossSectionClip),
+    createStructurePbrMaterial('reinforced_concrete', maxAnisotropy)
+  );
+  ringMesh.name = 'CableDomeCompressionRing';
+  ringMesh.castShadow = true;
+  group.add(ringMesh);
+  return group;
+}
+
 const SIGNATURE_ROOF_BUILDERS: Partial<
   Record<RoofStyle, (doc: StadiumDocument, crossSectionClip: boolean, maxAnisotropy: number) => THREE.Group>
 > = {
@@ -4147,6 +4660,8 @@ const SIGNATURE_ROOF_BUILDERS: Partial<
   saucer_dome: buildSaucerDomeRoof,
   rising_canopy: buildRisingCanopyRoof,
   crossed_arches: buildCrossedArchesRoof,
+  air_dome: buildAirDomeRoof,
+  cable_dome: buildCableDomeRoof,
 };
 
 function clipRoofToSides(doc: StadiumDocument, roof: THREE.Group, sides: StandSide[]): THREE.Group {

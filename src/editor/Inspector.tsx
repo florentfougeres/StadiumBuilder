@@ -138,6 +138,21 @@ export const SHAPE_OPTIONS: { id: StadiumShape; label: string; desc: string }[] 
     label: 'Tribunes en arc de cercle',
     desc: '4 tribunes cintrées tournées vers le centre, virages très arrondis, coins ouverts',
   },
+  {
+    id: 'rounded_rectangle',
+    label: 'Rectangle aux angles arrondis',
+    desc: 'Entre le rectangle anglais et le bowl : arrondi des angles réglable',
+  },
+  {
+    id: 'tilted_bowl',
+    label: 'Bol incliné',
+    desc: 'Le bord des gradins suit une pente continue, de la tribune nord haute à la sud basse',
+  },
+  {
+    id: 'saddle_bowl',
+    label: 'Bol en selle',
+    desc: 'Côtés hauts et virages bas, le bord ondule sans rupture autour du bol',
+  },
 ];
 
 export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
@@ -225,6 +240,41 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
     id: 'historic_gable',
     label: 'Toit à pignon historique',
     desc: 'Toit à deux pans sur fermes rivetées, fronton au centre (stades d’avant-guerre)',
+  },
+  {
+    id: 'sawtooth',
+    label: 'Toit en dents de scie',
+    desc: 'Sheds à un pan et faces vitrées, en zigzag face au terrain (tribunes séparées)',
+  },
+  {
+    id: 'butterfly',
+    label: 'Toit papillon',
+    desc: 'Deux pans en V vers un chéneau central : le bord se relève côté terrain (tribunes séparées)',
+  },
+  {
+    id: 'barrel_vault',
+    label: 'Voûte en berceau',
+    desc: 'Voûte cintrée dans la longueur de chaque tribune, nervures en arc et tirants (tribunes séparées)',
+  },
+  {
+    id: 'hypar_shells',
+    label: 'Coques paraboloïdes',
+    desc: 'Voiles minces en béton en selle, porte-à-faux festonné sur la tribune (tribunes séparées)',
+  },
+  {
+    id: 'tree_columns',
+    label: 'Colonnes arborescentes',
+    desc: 'Auvent plat porté par des poteaux qui se ramifient en branches (tribunes séparées)',
+  },
+  {
+    id: 'air_dome',
+    label: 'Dôme gonflable',
+    desc: 'Membrane très plate tenue par la pression de l’air, filet de câbles en losanges',
+  },
+  {
+    id: 'cable_dome',
+    label: 'Dôme à câbles',
+    desc: 'Dôme surbaissé en tenségrité : câbles radiaux, anneaux et mâts volants sous toile',
   },
   {
     id: 'concrete_portals',
@@ -665,6 +715,11 @@ const STAND_ROOF_OVERRIDES: { id: RoofStyle | 'inherit'; label: string }[] = [
   { id: 'cantilever', label: 'Porte-à-faux' },
   { id: 'column_supported', label: 'Sur poteaux' },
   { id: 'historic_gable', label: 'Pignon historique' },
+  { id: 'sawtooth', label: 'Dents de scie' },
+  { id: 'butterfly', label: 'Papillon' },
+  { id: 'barrel_vault', label: 'Voûte en berceau' },
+  { id: 'hypar_shells', label: 'Coques paraboloïdes' },
+  { id: 'tree_columns', label: 'Colonnes arborescentes' },
   { id: 'goalpost_truss', label: 'Poutre-portique' },
   { id: 'truss', label: 'Charpente treillis' },
   { id: 'none', label: 'Découverte' },
@@ -732,6 +787,7 @@ const ShapePanel: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const setShape = useStadiumStore((s) => s.setShape);
   const setSunkenDepth = useStadiumStore((s) => s.setSunkenDepth);
+  const setCornerRoundness = useStadiumStore((s) => s.setCornerRoundness);
   const setCornerMode = useStadiumStore((s) => s.setCornerMode);
   const setAllCorners = useStadiumStore((s) => s.setAllCorners);
   const applyTargetCapacity = useStadiumStore((s) => s.applyTargetCapacity);
@@ -760,6 +816,23 @@ const ShapePanel: React.FC = () => {
           onChange={setShape}
           options={SHAPE_GALLERY}
         />
+        {doc.shape === 'rounded_rectangle' && (
+          <SliderField
+            label="Arrondi des angles"
+            hint="De l’angle presque vif au virage complet"
+            min={0}
+            max={1}
+            step={0.05}
+            value={doc.cornerRoundness ?? 0.5}
+            display={`${Math.round((doc.cornerRoundness ?? 0.5) * 100)} %`}
+            onChange={setCornerRoundness}
+          />
+        )}
+        {doc.shape === 'tilted_bowl' && (
+          <p className="text-2xs text-ink-faint">
+            La pente vient des rangs des tribunes nord (haute) et sud (basse) ; les virages suivent.
+          </p>
+        )}
       </PanelSection>
       <PanelSection title="Capacité">
         <SliderField
@@ -1814,7 +1887,7 @@ const RoofPanel: React.FC = () => {
             min={0.55}
             max={1.15}
             step={0.05}
-            disabled={none || roof.style === 'fixed_dome'}
+            disabled={none || roof.style === 'fixed_dome' || roof.style === 'air_dome' || roof.style === 'cable_dome'}
             value={roof.coverageRatio}
             display={`${Math.round(roof.coverageRatio * 100)} %`}
             scale={100}
@@ -2152,7 +2225,7 @@ const FacadePanel: React.FC = () => {
           display={`${fr1(depth)} m`}
           onChange={(facadeDepth) => updateMaterials({ facadeDepth })}
         />
-        {(pattern === 'triangulated_lace' || pattern === 'scales') && (
+        {(pattern === 'triangulated_lace' || pattern === 'scales' || pattern === 'honeycomb' || pattern === 'voronoi') && (
           <SliderField
             label="Bombement de la façade"
             hint="La peau se bombe vers l’extérieur à mi-hauteur"
@@ -2201,6 +2274,18 @@ const SitePanel: React.FC = () => {
           value={mats.plazaSurface}
           onChange={(plazaSurface) => updateMaterials({ plazaSurface })}
           options={materialGallery(PLAZA_MATERIAL_CATALOG)}
+        />
+      </PanelSection>
+      <PanelSection title="Socle">
+        <SliderField
+          label="Hauteur du socle"
+          hint="Podium de commerces et parkings autour du stade, grand escalier au sud"
+          min={0}
+          max={14}
+          step={0.5}
+          value={site.podiumHeight}
+          display={site.podiumHeight > 0.5 ? `${fr1(site.podiumHeight)} m` : 'Aucun'}
+          onChange={(podiumHeight) => updateSite({ podiumHeight })}
         />
       </PanelSection>
       <PanelSection title="Accès et sécurité">
