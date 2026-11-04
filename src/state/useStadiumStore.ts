@@ -122,6 +122,7 @@ export interface StadiumStoreState {
   setCornerMode: (corner: CornerId, mode: CornerMode) => void;
   setAllCorners: (mode: CornerMode) => void;
   setCornerJoin: (join: CornerJoin) => void;
+  setCornerAccess: (corner: CornerId, on: boolean) => void;
   setFloodlightRig: (mode: FloodlightRigMode) => void;
   setLighting: (lighting: LightingMode) => void;
   updatePitch: (patch: Partial<PitchConfig>) => void;
@@ -641,6 +642,14 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     setCornerJoin: (join) =>
       commitChange((d) => {
         d.cornerJoin = join;
+      }),
+
+    setCornerAccess: (corner, on) =>
+      commitChange((d) => {
+        const next = { ...(d.cornerAccess ?? {}) };
+        if (on) next[corner] = true;
+        else delete next[corner];
+        d.cornerAccess = Object.keys(next).length > 0 ? next : undefined;
       }),
 
     setFloodlightRig: (mode) =>

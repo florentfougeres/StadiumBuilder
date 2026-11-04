@@ -1,4 +1,5 @@
 import { buildShapeBowlRing, computeRectangularCornerLayout, ringSideSpans } from './bowlRing';
+import { CORNER_ACCESS_DECK_Y, CORNER_ACCESS_WIDTH } from './generateCornerAccess';
 import {
   clampPitchToTrack,
   CornerId,
@@ -255,6 +256,14 @@ export function calculateStandMetrics(
     }
   }
 
+  // Seated corners crossed by a vehicle tunnel (the horseshoe's open end has none).
+  let tunnelCorners = adjEnds.filter(
+    ({ corner }) =>
+      doc.cornerAccess?.[corner] &&
+      cornerModes[corner] === 'filled' &&
+      !(doc.shape === 'horseshoe' && (corner === 'ne' || corner === 'se'))
+  ).length;
+
   let cornerRadius = bowlRing.cornerRadius;
   if (!isContinuousBowlShape(doc.shape)) {
     // Separate stands: the same spans and corner quadrants the 3D stands are built on.
@@ -275,6 +284,7 @@ export function calculateStandMetrics(
       .filter((c) => c.active && c.mode === 'filled');
     // Each seated corner is shared with the neighbouring stand.
     cornerQuadrants = seatedCorners.length * 0.5;
+    tunnelCorners = seatedCorners.filter((c) => doc.cornerAccess?.[c.id]).length;
     if (seatedCorners.length > 0) {
       cornerRadius = seatedCorners.reduce((sum, c) => sum + c.radius, 0) / seatedCorners.length;
     }
@@ -378,6 +388,19 @@ export function calculateStandMetrics(
       120,
       totalRowSeats - deltaPortals * tierSpecs.length * seatsPerPortal
     );
+  }
+
+  // A vehicle tunnel takes the rows under its deck over the access width, widening with the
+  // corner's fan; each corner is shared with the neighbouring stand.
+  if (tunnelCorners > 0) {
+    const fanRadius = Math.max(4, innerCornerArcPerQuadrant / (Math.PI / 2));
+    let lost = 0;
+    for (const row of section.rows) {
+      if (row.y >= CORNER_ACCESS_DECK_Y) continue;
+      const d = row.d + stand.rowDepth * 0.52;
+      lost += Math.floor((CORNER_ACCESS_WIDTH * (fanRadius + d)) / fanRadius / safeSeatWidth);
+    }
+    totalRowSeats = Math.max(0, totalRowSeats - Math.round(0.5 * tunnelCorners * lost));
   }
 
   // Telescopic pitch-side lower tiers add deployable modular rows

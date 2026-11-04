@@ -904,6 +904,7 @@ const ShapePanel: React.FC = () => {
   const setCornerMode = useStadiumStore((s) => s.setCornerMode);
   const setAllCorners = useStadiumStore((s) => s.setAllCorners);
   const setCornerJoin = useStadiumStore((s) => s.setCornerJoin);
+  const setCornerAccess = useStadiumStore((s) => s.setCornerAccess);
   const applyTargetCapacity = useStadiumStore((s) => s.applyTargetCapacity);
   const updateConcourse = useStadiumStore((s) => s.updateConcourse);
   const metrics = useMemo(() => calculateStadiumMetrics(doc), [doc]);
@@ -981,6 +982,25 @@ const ShapePanel: React.FC = () => {
             options={isContinuousBowlShape(doc.shape) ? BOWL_CORNER_JOIN_OPTIONS : CORNER_JOIN_OPTIONS}
           />
         )}
+        <SubGroup title="Accès véhicule">
+          <p className="text-2xs text-ink-faint">
+            Tunnel sous les gradins d’un coin fermé, voie et portail dans un coin ouvert.
+          </p>
+          {CORNER_COMPASS_GRID.map((corner) => {
+            const mode = lockedCorner(corner.id) ? 'open' : resolvedCorners[corner.id];
+            const usable = mode === 'open' || mode === 'filled';
+            return (
+              <ToggleField
+                key={corner.id}
+                label={corner.label}
+                hint={usable ? undefined : 'Coin occupé par un bâtiment ou un écran'}
+                disabled={!usable}
+                checked={usable && Boolean(doc.cornerAccess?.[corner.id])}
+                onChange={(on) => setCornerAccess(corner.id, on)}
+              />
+            );
+          })}
+        </SubGroup>
       </PanelSection>
       <AdvancedSection tab="shape">
         <SubGroup title="Coins un par un">
@@ -1321,6 +1341,17 @@ const StandsPanel: React.FC = () => {
           value={stand.distanceToPitch}
           display={`${fr1(stand.distanceToPitch)} m`}
           onChange={(v) => updateStand(target, { distanceToPitch: v })}
+        />
+        <SliderField
+          label="Hauteur du premier rang"
+          hint="Au-dessus du terrain : un mur de front plus haut, et la tribune démarre au-dessus"
+          min={0.5}
+          max={10}
+          step={0.1}
+          disabled={off}
+          value={stand.elevationStart}
+          display={`${fr1(stand.elevationStart)} m`}
+          onChange={(v) => updateStand(target, { elevationStart: v })}
         />
       </PanelSection>
       <PanelSection title="Places">

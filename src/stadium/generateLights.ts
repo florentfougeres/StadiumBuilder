@@ -6,6 +6,7 @@ import {
   sampleRoundedBowlRing,
 } from './bowlRing';
 import { getTrackRadialOffset } from './capacity';
+import { CORNER_ACCESS_WIDTH } from './generateCornerAccess';
 import { computeStadiumRingBounds } from './generateRoof';
 import {
   createConcreteBowlMaterial,
@@ -925,6 +926,15 @@ export function generateFloodlightRigGroup(
       const pt = sampleCornerQuadrantPoint(cSpec, 0.5, radOff);
       wx = pt.x;
       wz = pt.z;
+    }
+
+    // A corner crossed by a vehicle access keeps its mast beside the drive, not on it.
+    if (doc.cornerAccess?.[item.id] && (cMode === 'open' || cMode === 'filled')) {
+      const len = Math.hypot(wx, wz) || 1;
+      const side = CORNER_ACCESS_WIDTH / 2 + 4.5;
+      const [ux, uz] = [-wz / len, wx / len];
+      wx += ux * side;
+      wz += uz * side;
     }
 
     root.add(

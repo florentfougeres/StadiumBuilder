@@ -8,6 +8,7 @@ import {
   getBowlArcRange,
   isOnRingCorner,
   RectangularCornerSpec,
+  ringSegmentStarts,
   RoundedBowlGeometry,
   sampleCornerQuadrantPoint,
   sampleRoundedBowlRing,
@@ -19,6 +20,16 @@ import {
   buildBowlSectionModel,
   usesBowlSectionModel,
 } from './bowlSection';
+import {
+  buildCornerDriveway,
+  buildCornerTunnel,
+  CORNER_ACCESS_DECK_Y,
+  CornerTunnelPlan,
+  isTunnelBay,
+  isTunnelQuad,
+  planCornerTunnel,
+  SweptStand,
+} from './generateCornerAccess';
 import {
   computeTelescopicProjection,
   getTrackRadialOffset,
@@ -2654,6 +2665,24 @@ function buildCornerVirageQuadrant(
     crestPerSlice.push({ outerD: outerWallD, topH: crestY, elev, gradeY });
   }
 
+  // Vehicle access: a tunnel carved under the corner's lower rows.
+  const cornerSwept: SweptStand = {
+    sliceCount: segs + 1,
+    closed: false,
+    profiles: profilePtsPerSlice,
+    world: (sl, radD, py) => {
+      const pt = sampleCornerQuadrantPoint(corner, sl / segs, radD);
+      return [pt.x, py, pt.z];
+    },
+  };
+  const tunnel = doc.cornerAccess?.[corner.id]
+    ? planCornerTunnel(cornerSwept, sampleCornerQuadrantPoint(corner, 0.5, 0))
+    : null;
+  if (tunnel) group.add(buildCornerTunnel(cornerSwept, tunnel, concreteMat, isNight));
+  const isCornerHole = (sl: number, p: number) => (tunnel ? isTunnelQuad(tunnel, sl, p) : false);
+  const overTunnel = (sl: number, y: number) =>
+    tunnel !== null && isTunnelBay(tunnel, sl) && y < CORNER_ACCESS_DECK_Y;
+
   // 1. Multi-material stepped corner bowl (`s = 0 -> segs` clockwise around +Y => guaranteed +Y upward treads!)
   const midDepth = (profA.totalDepth + profB.totalDepth) * 0.5;
   const midArcLen = (corner.radius + midDepth * 0.5) * (Math.PI * 0.5);
@@ -2671,7 +2700,8 @@ function buildCornerVirageQuadrant(
     },
     isSeatMask,
     cornerURepeat,
-    cornerVRepeat
+    cornerVRepeat,
+    isCornerHole
   );
 
   const cornerSeats3d = resolveStadiumMaterials(doc).seats3d !== false;
@@ -2718,6 +2748,7 @@ function buildCornerVirageQuadrant(
         return [pt.x, py, pt.z];
       },
       isSeatSegmentMask: isSeatMask,
+      isHoleQuad: isCornerHole,
       rowDepth: (standA.rowDepth + standB.rowDepth) * 0.5,
       seatWidth: (standA.seatWidth + standB.seatWidth) * 0.5,
       aisleCount: 2,
@@ -2758,6 +2789,7 @@ function buildCornerVirageQuadrant(
       for (const k of sampledRowIndices) {
         const r0 = rowSamplesPerSlice[s][k];
         const r1 = rowSamplesPerSlice[s + 1][k];
+        if (overTunnel(s, r0.y)) continue;
         const p0 = sampleCornerQuadrantPoint(corner, u0, r0.d + r0.stepD * 0.24);
         const p1 = sampleCornerQuadrantPoint(corner, u1, r1.d + r1.stepD * 0.24);
         const chordLen = Math.max(0.2, Math.hypot(p1.x - p0.x, p1.z - p0.z));
@@ -2778,6 +2810,7 @@ function buildCornerVirageQuadrant(
         cornerBackrests.setMatrixAt(instIdx++, dummySeat.matrix);
       }
     }
+    cornerBackrests.count = instIdx;
     cornerBackrests.instanceMatrix.needsUpdate = true;
     cornerBackrests.computeBoundingSphere();
     group.add(cornerBackrests);
@@ -2843,6 +2876,8 @@ function buildCornerVirageQuadrant(
     glassRailPos[b + 5] = pt.z;
   }
   for (let s = 0; s < segs; s++) {
+    // The tunnel deck carries its own parapet.
+    if (tunnel && isTunnelBay(tunnel, s)) continue;
     const a = s * 2;
     const b = (s + 1) * 2;
     const c = b + 1;
@@ -2886,7 +2921,7 @@ function buildCornerVirageQuadrant(
       : [Math.floor(nSteps * 0.36)];
   for (const rk of vomRowTargets) {
     const rSample = rowSamplesPerSlice[midSlice][Math.min(nSteps - 2, Math.max(2, rk))];
-    if (!rSample) continue;
+    if (!rSample || overTunnel(midSlice, rSample.y + 1.8)) continue;
     const vPt = sampleCornerQuadrantPoint(corner, 0.5, rSample.d);
     const portal = createVomitoryPortalUnit(vomPortalMat, darkVomMat, vomRailMat);
     portal.position.set(vPt.x, rSample.y, vPt.z);
@@ -4402,14 +4437,21 @@ function buildModernBowlSweep(
     let riseScale = Math.max(2, targetRise - breakRise(1)) / Math.max(0.1, rawRiseTotal);
     riseScale = Math.max(2, targetRise - breakRise(riseScale)) / Math.max(0.1, rawRiseTotal);
 
+    // First-row height blended across the stands, like the rest of the section.
+    const elevW = sectorWeightsAt(baseSample.nx, baseSample.nz);
+    const firstRowY =
+      elevW.e * doc.stands.east.elevationStart +
+      elevW.s * doc.stands.south.elevationStart +
+      elevW.w * doc.stands.west.elevationStart +
+      elevW.n * doc.stands.north.elevationStart;
     const pts: [number, number][] = [];
     pts.push([0, 0]);
-    pts.push([0, 1.5]);
-    pts.push([0.36, 1.5]);
-    pts.push([0.36, 0.92]);
+    pts.push([0, firstRowY + 0.58]);
+    pts.push([0.36, firstRowY + 0.58]);
+    pts.push([0.36, firstRowY]);
 
     let curD = 0.36;
-    let curY = 0.92;
+    let curY = firstRowY;
     let maxD = curD;
     let lastRise = 0;
 
@@ -4606,11 +4648,56 @@ function buildModernBowlSweep(
     }
   }
 
+  // Vehicle accesses: a tunnel under a seated corner, a driveway through an open one.
+  const bowlSwept: SweptStand = {
+    sliceCount: ringCount,
+    closed,
+    profiles: profilePtsPerSlice,
+    world: (sl, radD, py) => {
+      const pt = sampleRoundedBowlRing(bowlRing, tAtSlice(sl), radD);
+      return [pt.x, py, pt.z];
+    },
+  };
+  const bowlTunnels: CornerTunnelPlan[] = [];
+  {
+    const starts = ringSegmentStarts(bowlRing);
+    const cornerSeg: Record<CornerId, number> = { se: 1, sw: 3, nw: 5, ne: 7 };
+    for (const cid of ['se', 'sw', 'nw', 'ne'] as CornerId[]) {
+      if (!doc.cornerAccess?.[cid]) continue;
+      if (doc.shape === 'horseshoe' && (cid === 'se' || cid === 'ne')) continue;
+      if (crossSectionClip && (cid === 'se' || cid === 'sw')) continue;
+      const mode = isCornerConfigured(doc, cid) ? resolvedCorners[cid] : 'filled';
+      const tMid = (starts[cornerSeg[cid]] + starts[cornerSeg[cid] + 1]) / 2;
+      const front = sampleRoundedBowlRing(bowlRing, tMid, 0);
+      if (mode === 'filled') {
+        const plan = planCornerTunnel(bowlSwept, front);
+        if (plan) {
+          bowlTunnels.push(plan);
+          group.add(buildCornerTunnel(bowlSwept, plan, concreteMat, doc.lighting !== 'day'));
+        }
+      } else if (mode === 'open') {
+        const depth = Math.max(...topCrestPerSlice.map(([d]) => d));
+        group.add(
+          buildCornerDriveway(
+            { x: front.x - front.nx * 4, z: front.z - front.nz * 4 },
+            { x: front.nx, z: front.nz },
+            depth + 22,
+            depth + 6,
+            concreteMat,
+            doc.lighting !== 'day'
+          )
+        );
+      }
+    }
+  }
+  const isTunnelSlice = (s: number) => bowlTunnels.some((plan) => isTunnelBay(plan, s));
+
   const isBowlQuadHole = (s: number, p: number): boolean => {
     const nextS = closed ? (s + 1) % ringCount : s + 1;
     if (isSliceInOpenCorner(s) || isSliceInOpenCorner(nextS)) {
       return true;
     }
+    if (bowlTunnels.some((plan) => isTunnelQuad(plan, s, p))) return true;
     const set = bowlHoleMap.get(s);
     return set ? set.has(p) : false;
   };
@@ -4761,15 +4848,19 @@ function buildModernBowlSweep(
   const bowlGlassIdx: number[] = [];
   for (let s = 0; s < ringCount; s++) {
     const gp = sampleRoundedBowlRing(bowlRing, tAtSlice(s), 0.18);
+    // On top of the front parapet, whatever the first row's height.
+    const parapetY = profilePtsPerSlice[s][1][1];
     const b = s * 6;
     bowlGlassPos[b] = gp.x;
-    bowlGlassPos[b + 1] = 1.48;
+    bowlGlassPos[b + 1] = parapetY;
     bowlGlassPos[b + 2] = gp.z;
     bowlGlassPos[b + 3] = gp.x;
-    bowlGlassPos[b + 4] = 2.16;
+    bowlGlassPos[b + 4] = parapetY + 0.68;
     bowlGlassPos[b + 5] = gp.z;
   }
   for (let s = 0; s < activeSegments; s++) {
+    // The tunnel deck carries its own parapet.
+    if (isTunnelSlice(s)) continue;
     const nxt = closed ? (s + 1) % ringCount : s + 1;
     const a = s * 2;
     const b = nxt * 2;
@@ -4832,7 +4923,9 @@ function buildModernBowlSweep(
       // A row that has ended in the corner carries no barrier.
       const rowHere =
         !sectionModel || profilePtsPerSlice[s][stepIdx + 1][0] - profilePtsPerSlice[s][stepIdx][0] > 0.3;
-      if (inStandingZone && rowHere && stepIdx < profilePtsPerSlice[s].length - 5) {
+      const overTunnel =
+        isTunnelSlice(s) && profilePtsPerSlice[s][stepIdx]?.[1] < CORNER_ACCESS_DECK_Y;
+      if (inStandingZone && rowHere && !overTunnel && stepIdx < profilePtsPerSlice[s].length - 5) {
         const [rd, ry] = profilePtsPerSlice[s][stepIdx];
         const wp = sampleRoundedBowlRing(bowlRing, t, rd - 0.12);
         runPts.push(new THREE.Vector3(wp.x, ry + 0.55, wp.z));
@@ -5708,6 +5801,41 @@ export function generateStandsGroup(
         buildCornerScreenStructure(cornerSpec, doc, concreteMat, structureMat)
       );
     }
+  }
+
+  // Driveways through the open corners given a vehicle access, from the pitch corner outward
+  // between the two stand ends to a gate on the line of their rear walls.
+  const cornerSigns: Record<CornerQuadrantId, { sx: number; sz: number; ends: StandSide[] }> = {
+    se: { sx: 1, sz: 1, ends: ['east', 'south'] },
+    sw: { sx: -1, sz: 1, ends: ['west', 'south'] },
+    nw: { sx: -1, sz: -1, ends: ['west', 'north'] },
+    ne: { sx: 1, sz: -1, ends: ['east', 'north'] },
+  };
+  for (const cId of cornerOrder) {
+    if (!doc.cornerAccess?.[cId] || cornerModes[cId] !== 'open') continue;
+    if (crossSectionClip && (cId === 'se' || cId === 'sw')) continue;
+    const { sx, sz, ends } = cornerSigns[cId];
+    const halfX = safePitch.length / 2 + trackOffsets.endOffset;
+    const halfZ = safePitch.width / 2 + trackOffsets.sideOffset;
+    const reach = Math.max(
+      12,
+      ...ends.map((side) => {
+        const st = doc.stands[side];
+        if (!st.enabled || st.rows <= 0) return 0;
+        return st.distanceToPitch + computeStandSection(st).totalDepth;
+      })
+    );
+    const gateAt = Math.SQRT2 * reach + 2;
+    root.add(
+      buildCornerDriveway(
+        { x: sx * (halfX - 1), z: sz * (halfZ - 1) },
+        { x: sx * Math.SQRT1_2, z: sz * Math.SQRT1_2 },
+        gateAt + 16,
+        gateAt,
+        concreteMat,
+        doc.lighting !== 'day'
+      )
+    );
   }
 
   // Sunken berm on rectangular / 4-stand stadiums if user explicitly sets `sunkenDepth > 0.5`

@@ -200,6 +200,7 @@ export interface StandConfig {
   distanceToPitch: number;
   aisleCount: number;
   aisleWidth: number;
+  /** Height of the first row's tread above the pitch (m); a tall front wall below it. */
   elevationStart: number;
   seatingType?: SeatingType;
   vipLoges?: boolean;
@@ -750,6 +751,11 @@ export interface StadiumDocument {
    * wall where the other is taller.
    */
   cornerJoin?: CornerJoin;
+  /**
+   * Corners crossed by a vehicle access (emergency services, event trucks): a tunnel under the
+   * corner terraces when the corner is seated, a driveway with a gate when it is open.
+   */
+  cornerAccess?: Partial<Record<CornerId, boolean>>;
   sunkenDepth?: number;
   /** `rounded_rectangle`: corner rounding, `0` tight to `1` a full bend (default `0.5`). */
   cornerRoundness?: number;
