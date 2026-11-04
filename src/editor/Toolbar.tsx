@@ -9,7 +9,6 @@ import {
   FileDown,
   Grid2x2,
   ImageDown,
-  LayoutGrid,
   Layers,
   Moon,
   Move,
@@ -33,6 +32,7 @@ import { exportArchitecturalPlanPdf } from '../export/exportPlan';
 import { exportPathTracedPng, exportViewportPng } from '../export/exportPng';
 import { CameraPresetMode, LightingMode, TransformMode } from '../stadium/schema';
 import { useStadiumStore } from '../state/useStadiumStore';
+import { ProjectsMenu } from './ProjectsPanel';
 import { useTheme } from './theme';
 import { Button, IconButton, Segmented } from './ui';
 
@@ -226,7 +226,7 @@ const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus })
   );
 };
 
-/** Lighting switch; lives in the top bar from md up and in the properties drawer below. */
+/** Lighting switch; lives in the top bar from md up and in the side panel below. Named from xl. */
 export const LightingControl: React.FC = () => {
   const lighting = useStadiumStore((s) => s.doc.lighting);
   const setLighting = useStadiumStore((s) => s.setLighting);
@@ -235,7 +235,16 @@ export const LightingControl: React.FC = () => {
       label="Éclairage"
       value={lighting}
       onChange={setLighting}
-      options={LIGHTING_MODES.map((m) => ({ id: m.id, title: m.label, label: m.icon }))}
+      options={LIGHTING_MODES.map((m) => ({
+        id: m.id,
+        title: m.label,
+        label: (
+          <>
+            {m.icon}
+            <span className="hidden xl:inline">{m.label}</span>
+          </>
+        ),
+      }))}
     />
   );
 };
@@ -255,7 +264,6 @@ export const Toolbar: React.FC = () => {
   const canRedo = useStadiumStore((s) => s.history.future.length > 0);
   const undo = useStadiumStore((s) => s.undo);
   const redo = useStadiumStore((s) => s.redo);
-  const setExamplesOpen = useStadiumStore((s) => s.setExamplesOpen);
   const [theme, toggleTheme] = useTheme();
 
   const [status, setStatus] = useState<string | null>(null);
@@ -268,15 +276,17 @@ export const Toolbar: React.FC = () => {
   return (
     <header className="flex justify-between lg:grid lg:grid-cols-[1fr_auto_1fr] items-center gap-2 lg:gap-3 h-11 px-2 bg-panel border-b border-line shrink-0 z-30">
       <div className="hidden sm:flex items-center gap-1 min-w-0">
-        <span className="px-2 text-sm font-semibold text-ink whitespace-nowrap">StadiumForge</span>
-        <span aria-hidden className="w-px h-4 bg-line-strong" />
+        {/* The wordmark yields its room to the project name until the bar is wide enough for both. */}
+        <span className="hidden 2xl:inline px-2 text-sm font-semibold text-ink whitespace-nowrap">StadiumForge</span>
+        <span aria-hidden className="hidden 2xl:block w-px h-4 bg-line-strong" />
         <input
           aria-label="Nom du projet"
           value={docName}
           onChange={(e) => setProjectName(e.target.value)}
-          className="min-w-0 w-56 h-7 px-2 text-xs text-ink bg-transparent rounded border border-transparent hover:border-edge-hover focus:border-accent focus:bg-field outline-none truncate"
+          className="min-w-0 w-48 2xl:w-56 h-7 px-2 text-xs text-ink bg-transparent rounded border border-transparent hover:border-edge-hover focus:border-accent focus:bg-field outline-none text-ellipsis"
         />
-        <span className="hidden xl:inline text-2xs text-ink-faint whitespace-nowrap" aria-live="polite">
+        <ProjectsMenu />
+        <span className="hidden 2xl:inline text-2xs text-ink-faint whitespace-nowrap" aria-live="polite">
           {status ?? formatSavedAt(lastSavedAt)}
         </span>
       </div>
@@ -292,7 +302,7 @@ export const Toolbar: React.FC = () => {
             label: (
               <>
                 {m.icon}
-                <span className="hidden lg:inline">{m.label}</span>
+                <span className="hidden xl:inline">{m.label}</span>
               </>
             ),
           }))}
@@ -311,11 +321,6 @@ export const Toolbar: React.FC = () => {
       </div>
 
       <div className="flex items-center justify-end gap-1">
-        <Button variant="ghost" onClick={() => setExamplesOpen(true)} className="max-xl:px-1.5" title="Exemples de stades">
-          <LayoutGrid aria-hidden className="w-4 h-4" />
-          <span className="max-xl:sr-only">Exemples</span>
-        </Button>
-        <span aria-hidden className="max-sm:hidden w-px h-4 mx-1 bg-line-strong" />
         <IconButton label="Annuler (Ctrl+Z)" onClick={undo} disabled={!canUndo}>
           <Undo2 className="w-4 h-4" />
         </IconButton>

@@ -27,6 +27,7 @@ import {
   CornerId,
   CornerMode,
   EnvelopeProfile,
+  EnvelopeStyle,
   getEffectiveSunkenDepth,
   getMaxPitchLengthForTrack,
   isContinuousBowlShape,
@@ -61,14 +62,17 @@ import {
 } from '../stadium/sightlines';
 import { StandTarget, useStadiumStore } from '../state/useStadiumStore';
 import { ObjectList } from './ObjectList';
-import { ProjectsPanel } from './ProjectsPanel';
-import type { EditorNode } from './StructureTree';
+import { thumbnailUrl } from './thumbnails';
 import {
+  AdvancedSection,
   Button,
   FieldRow,
+  GalleryOption,
+  GalleryPicker,
   OptionList,
   choiceClass,
   PanelSection,
+  SubGroup,
   Segmented,
   SelectField,
   SliderField,
@@ -581,7 +585,7 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
  * (each facade texture synthesises 512² texels on first use); the SVG sketch shows meanwhile and
  * stays as the fallback where no 2D canvas exists.
  */
-const MaterialPreview: React.FC<{ materialId: string }> = ({ materialId }) => {
+const MaterialPreview: React.FC<{ materialId: string; fill?: boolean }> = ({ materialId, fill }) => {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
@@ -599,7 +603,7 @@ const MaterialPreview: React.FC<{ materialId: string }> = ({ materialId }) => {
       src={url}
       alt=""
       aria-hidden
-      className="w-10 h-[26px] rounded-sm shrink-0 object-cover ring-1 ring-black/10"
+      className={`${fill ? 'w-full h-full' : 'w-10 h-[26px]'} rounded-sm shrink-0 object-cover ring-1 ring-black/10`}
     />
   ) : (
     <MaterialSwatchSvg materialId={materialId} />
@@ -638,10 +642,10 @@ const PanelHeader: React.FC<{ title: string; meta?: React.ReactNode; action?: Re
   meta,
   action,
 }) => (
-  <div className="flex items-center gap-3 h-12 px-4 border-b border-line">
+  <div className="flex items-center gap-3 min-h-12 py-2 px-4 border-b border-line">
     <div className="flex-1 min-w-0">
-      <h2 className="text-sm font-semibold text-ink truncate">{title}</h2>
-      {meta && <div className="text-2xs text-ink-faint tabular-nums truncate">{meta}</div>}
+      <h2 className="text-sm font-semibold leading-snug text-ink">{title}</h2>
+      {meta && <div className="text-2xs leading-snug text-ink-faint tabular-nums">{meta}</div>}
     </div>
     {action}
   </div>
@@ -675,93 +679,76 @@ const CORNER_COMPASS_GRID: { id: CornerId; label: string; eastSide?: boolean }[]
   { id: 'se', label: 'Sud-Est', eastSide: true },
 ];
 
-const BowlInspector: React.FC = () => {
+/** The editor's tabs, in the order of the tab rail. */
+export type EditorTab = 'shape' | 'pitch' | 'stands' | 'roof' | 'facade' | 'site' | 'objects';
+
+const SHAPE_GALLERY: GalleryOption<StadiumShape>[] = SHAPE_OPTIONS.map((o) => ({
+  id: o.id,
+  label: o.label,
+  detail: o.desc,
+  image: thumbnailUrl('shapes', o.id),
+}));
+
+const ROOF_GALLERY: GalleryOption<RoofStyle>[] = ROOF_OPTIONS.map((o) => ({
+  id: o.id,
+  label: o.label,
+  detail: o.desc,
+  image: thumbnailUrl('roofs', o.id),
+}));
+
+const ENVELOPE_GALLERY: GalleryOption<EnvelopeStyle>[] = ENVELOPE_STYLE_CATALOG.map((o) => ({
+  id: o.id,
+  label: o.label,
+  detail: o.subtitle,
+  image: thumbnailUrl('envelopes', o.id),
+}));
+
+/** A material catalog as gallery tiles, each pictured by its rendered texture. */
+function materialGallery<T extends string>(
+  catalog: { id: T; label: string; subtitle: string }[]
+): GalleryOption<T>[] {
+  return catalog.map((item) => ({
+    id: item.id,
+    label: item.label,
+    detail: item.subtitle,
+    preview: <MaterialPreview materialId={item.id} fill />,
+  }));
+}
+
+const CORNER_IDS: CornerId[] = ['nw', 'ne', 'sw', 'se'];
+
+const ShapePanel: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const setShape = useStadiumStore((s) => s.setShape);
   const setSunkenDepth = useStadiumStore((s) => s.setSunkenDepth);
   const setCornerMode = useStadiumStore((s) => s.setCornerMode);
   const setAllCorners = useStadiumStore((s) => s.setAllCorners);
-  const updatePitch = useStadiumStore((s) => s.updatePitch);
   const applyTargetCapacity = useStadiumStore((s) => s.applyTargetCapacity);
   const updateConcourse = useStadiumStore((s) => s.updateConcourse);
-  const updateRoof = useStadiumStore((s) => s.updateRoof);
   const metrics = useMemo(() => calculateStadiumMetrics(doc), [doc]);
   const resolvedCorners = useMemo(() => resolveAllCorners(doc), [doc]);
   const sunken = getEffectiveSunkenDepth(doc);
   const concourseWidth = doc.concourse?.width ?? 0;
   const concourseHeight = doc.concourse?.heightRatio ?? 0.5;
-  const maxPitchWidth = doc.pitch.hasTrack ? TRACK_MAX_PITCH_WIDTH_M : 75;
-  const maxPitchLength = doc.pitch.hasTrack
-    ? Math.min(115, getMaxPitchLengthForTrack(doc.pitch.width))
-    : 115;
+
+  // The horseshoe's open end has no east corners to dress.
+  const lockedCorner = (id: CornerId) => doc.shape === 'horseshoe' && (id === 'ne' || id === 'se');
+  const editable = CORNER_IDS.filter((id) => !lockedCorner(id));
+  const sharedMode = editable.every((id) => resolvedCorners[id] === resolvedCorners[editable[0]])
+    ? resolvedCorners[editable[0]]
+    : 'mixed';
+  const cornerOptions = CORNER_MODE_CATALOG.map((c) => ({ id: c.id, label: c.label }));
 
   return (
     <>
-      <PanelHeader title="Enceinte et terrain" meta={`${fr(metrics.totalCapacity)} places`} />
-      <PanelSection title="Forme">
-        <OptionList
+      <PanelHeader title="Forme" meta={`${fr(metrics.totalCapacity)} places`} />
+      <PanelSection title="Enceinte">
+        <GalleryPicker
           label="Forme de l’enceinte"
           value={doc.shape}
           onChange={setShape}
-          options={SHAPE_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
+          options={SHAPE_GALLERY}
         />
-      </PanelSection>
-      <PanelSection title="Coins personnalisés">
-        <div className="grid grid-cols-4 gap-1" role="group" aria-label="Appliquer aux quatre coins">
-          {CORNER_MODE_CATALOG.map((cm) => {
-            const allMatch = (['nw', 'ne', 'sw', 'se'] as CornerId[]).every(
-              (cid) => resolvedCorners[cid] === cm.id
-            );
-            return (
-              <button
-                key={cm.id}
-                type="button"
-                aria-pressed={allMatch}
-                onClick={() => setAllCorners(cm.id)}
-                className={`h-7 px-1.5 text-2xs truncate ${choiceClass(allMatch)} ${
-                  allMatch ? 'font-medium' : ''
-                }`}
-              >
-                {cm.label}
-              </button>
-            );
-          })}
-        </div>
-        <div className="grid grid-cols-2 gap-2 pt-1">
-          {CORNER_COMPASS_GRID.map((corner) => {
-            const disabled = doc.shape === 'horseshoe' && Boolean(corner.eastSide);
-            const val: CornerMode = disabled ? 'open' : resolvedCorners[corner.id];
-            return (
-              <div
-                key={corner.id}
-                className="p-2 rounded border border-line bg-canvas/50 space-y-1.5"
-              >
-                <div className="flex items-center justify-between text-2xs">
-                  <span className="font-medium text-ink">{corner.label}</span>
-                  <span className="text-ink-faint uppercase tabular-nums">{corner.id}</span>
-                </div>
-                <select
-                  aria-label={`Coin ${corner.label}`}
-                  disabled={disabled}
-                  value={val}
-                  onChange={(e) =>
-                    setCornerMode(corner.id, e.target.value as CornerMode)
-                  }
-                  className="w-full h-7 px-1.5 rounded bg-surface border border-line text-xs text-ink focus:outline-none focus:border-accent disabled:opacity-40"
-                >
-                  {CORNER_MODE_CATALOG.map((opt) => (
-                    <option key={opt.id} value={opt.id}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            );
-          })}
-        </div>
-        <p className="text-2xs text-ink-faint">
-          Configurez chaque angle indépendamment : ouvert, gradins continus, pavillon de loges vitré ou écran géant sur portique.
-        </p>
       </PanelSection>
       <PanelSection title="Capacité">
         <SliderField
@@ -774,49 +761,88 @@ const BowlInspector: React.FC = () => {
           display={`${fr(metrics.totalCapacity)} places`}
           onChange={applyTargetCapacity}
         />
-        <SliderField
-          label="Enfouissement"
-          hint="Creuse les gradins bas sous un talus pour réduire la hauteur visible"
-          min={0}
-          max={15}
-          step={0.5}
-          value={sunken}
-          display={sunken > 0 ? `−${fr1(sunken)} m` : 'Au niveau du sol'}
-          onChange={setSunkenDepth}
+      </PanelSection>
+      <PanelSection title="Coins">
+        <SelectField<CornerMode | 'mixed'>
+          label="Les quatre coins"
+          value={sharedMode}
+          onChange={(mode) => mode !== 'mixed' && setAllCorners(mode)}
+          options={
+            sharedMode === 'mixed'
+              ? [{ id: 'mixed', label: 'Différents' }, ...cornerOptions]
+              : cornerOptions
+          }
         />
       </PanelSection>
-      <PanelSection title="Coursive extérieure">
-        <SliderField
-          label="Profondeur derrière les tribunes"
-          hint="Bâtiment qui entoure les gradins : coursives, escaliers, loges, accès"
-          min={0}
-          max={24}
-          step={0.5}
-          value={concourseWidth}
-          display={concourseWidth > 0 ? `${fr1(concourseWidth)} m` : 'Aucune'}
-          onChange={(v) => updateConcourse({ width: v })}
-        />
-        <SliderField
-          label="Hauteur"
-          hint="Part de la hauteur des tribunes : basse pour un socle, pleine pour une façade continue"
-          min={0.15}
-          max={1}
-          step={0.05}
-          scale={100}
-          disabled={concourseWidth <= 0}
-          value={concourseHeight}
-          display={concourseHeight >= 0.98 ? 'Jusqu’en haut des tribunes' : `${Math.round(concourseHeight * 100)} %`}
-          onChange={(v) => updateConcourse({ heightRatio: v })}
-        />
-        <ToggleField
-          label="Toit au-dessus de la coursive"
-          hint="Prolonge le bord extérieur de toutes les toitures jusqu’à la façade"
-          disabled={concourseWidth <= 0 || doc.roof.style === 'none'}
-          checked={doc.roof.overConcourse !== false}
-          onChange={(overConcourse) => updateRoof({ overConcourse })}
-        />
-      </PanelSection>
-      <PanelSection title="Terrain">
+      <AdvancedSection tab="shape">
+        <SubGroup title="Coins un par un">
+          {CORNER_COMPASS_GRID.map((corner) => (
+            <SelectField
+              key={corner.id}
+              label={corner.label}
+              disabled={lockedCorner(corner.id)}
+              value={lockedCorner(corner.id) ? 'open' : resolvedCorners[corner.id]}
+              onChange={(mode) => setCornerMode(corner.id, mode)}
+              options={cornerOptions}
+            />
+          ))}
+        </SubGroup>
+        <SubGroup title="Enfouissement">
+          <SliderField
+            label="Profondeur sous le sol"
+            hint="Creuse les gradins bas sous un talus pour réduire la hauteur visible"
+            min={0}
+            max={15}
+            step={0.5}
+            value={sunken}
+            display={sunken > 0 ? `−${fr1(sunken)} m` : 'Au niveau du sol'}
+            onChange={setSunkenDepth}
+          />
+        </SubGroup>
+        <SubGroup title="Coursive extérieure">
+          <SliderField
+            label="Profondeur derrière les tribunes"
+            hint="Bâtiment qui entoure les gradins : coursives, escaliers, loges, accès"
+            min={0}
+            max={24}
+            step={0.5}
+            value={concourseWidth}
+            display={concourseWidth > 0 ? `${fr1(concourseWidth)} m` : 'Aucune'}
+            onChange={(v) => updateConcourse({ width: v })}
+          />
+          <SliderField
+            label="Hauteur"
+            hint="Part de la hauteur des tribunes : basse pour un socle, pleine pour une façade continue"
+            min={0.15}
+            max={1}
+            step={0.05}
+            scale={100}
+            disabled={concourseWidth <= 0}
+            value={concourseHeight}
+            display={concourseHeight >= 0.98 ? 'Jusqu’en haut des tribunes' : `${Math.round(concourseHeight * 100)} %`}
+            onChange={(v) => updateConcourse({ heightRatio: v })}
+          />
+        </SubGroup>
+      </AdvancedSection>
+    </>
+  );
+};
+
+const PitchPanel: React.FC = () => {
+  const doc = useStadiumStore((s) => s.doc);
+  const updatePitch = useStadiumStore((s) => s.updatePitch);
+  const updateMaterials = useStadiumStore((s) => s.updateMaterials);
+  const mats = useMemo(() => resolveStadiumMaterials(doc), [doc]);
+  const maxPitchWidth = doc.pitch.hasTrack ? TRACK_MAX_PITCH_WIDTH_M : 75;
+  const maxPitchLength = doc.pitch.hasTrack
+    ? Math.min(115, getMaxPitchLengthForTrack(doc.pitch.width))
+    : 115;
+  const movable = doc.pitch.movablePitch ?? 'none';
+
+  return (
+    <>
+      <PanelHeader title="Terrain" meta={`${doc.pitch.length} × ${doc.pitch.width} m`} />
+      <PanelSection title="Dimensions">
         <SliderField
           label="Longueur"
           hint={
@@ -845,6 +871,14 @@ const BowlInspector: React.FC = () => {
           display={`${doc.pitch.width} m`}
           onChange={(v) => updatePitch({ width: v })}
         />
+      </PanelSection>
+      <PanelSection title="Pelouse">
+        <GalleryPicker
+          label="Pelouse"
+          value={mats.pitchTurf}
+          onChange={(pitchTurf) => updateMaterials({ pitchTurf })}
+          options={materialGallery(TURF_MATERIAL_CATALOG)}
+        />
         <SelectField
           label="Motif de tonte"
           value={doc.pitch.grassPattern}
@@ -855,52 +889,66 @@ const BowlInspector: React.FC = () => {
             { id: 'solid', label: 'Uni' },
           ]}
         />
+      </PanelSection>
+      <PanelSection title="Piste d’athlétisme">
         <ToggleField
-          label="Piste d’athlétisme"
+          label="Piste de 400 m"
           hint="400 m officiel (droites 84,39 m · rayon 36,5 m · couloirs 1,22 m)"
           checked={doc.pitch.hasTrack}
           onChange={(v) => updatePitch({ hasTrack: v })}
         />
         {doc.pitch.hasTrack && (
           <SliderField
-            label="Couloirs de la piste"
+            label="Couloirs"
             min={6}
             max={9}
             step={1}
             value={doc.pitch.trackLanes}
-            display={`${doc.pitch.trackLanes} couloirs · 400 m`}
+            display={`${doc.pitch.trackLanes} couloirs`}
             onChange={(trackLanes) => updatePitch({ trackLanes })}
           />
         )}
-        <SelectField
-          label="Pelouse mobile"
-          value={doc.pitch.movablePitch ?? 'none'}
-          onChange={(movablePitch) => updatePitch({ movablePitch })}
-          options={[
-            { id: 'none', label: 'Fixe' },
-            { id: 'half_lift', label: 'Demi-pelouse relevée sur l’autre' },
-            { id: 'slide_out', label: 'Pelouse qui sort du stade' },
-          ]}
-        />
-        {(doc.pitch.movablePitch ?? 'none') !== 'none' && (
-          <SliderField
-            label="Mode arène"
-            hint="0 % : pelouse en place · 100 % : plancher d’arène dégagé"
-            min={0}
-            max={1}
-            step={0.05}
-            value={doc.pitch.movablePitchState ?? 0}
-            display={`${Math.round((doc.pitch.movablePitchState ?? 0) * 100)} %`}
-            scale={100}
-            onChange={(movablePitchState) => updatePitch({ movablePitchState })}
-          />
-        )}
-        <ToggleField
-          label="Panneaux LED publicitaires"
-          checked={doc.pitch.adBoards}
-          onChange={(v) => updatePitch({ adBoards: v })}
-        />
       </PanelSection>
+      <AdvancedSection tab="pitch">
+        <SubGroup title="Pelouse mobile">
+          <SelectField
+            label="Type"
+            value={movable}
+            onChange={(movablePitch) => updatePitch({ movablePitch })}
+            options={[
+              { id: 'none', label: 'Fixe' },
+              { id: 'half_lift', label: 'Demi-pelouse relevée' },
+              { id: 'slide_out', label: 'Sort du stade' },
+            ]}
+          />
+          {movable !== 'none' && (
+            <SliderField
+              label="Mode arène"
+              hint="0 % : pelouse en place · 100 % : plancher d’arène dégagé"
+              min={0}
+              max={1}
+              step={0.05}
+              value={doc.pitch.movablePitchState ?? 0}
+              display={`${Math.round((doc.pitch.movablePitchState ?? 0) * 100)} %`}
+              scale={100}
+              onChange={(movablePitchState) => updatePitch({ movablePitchState })}
+            />
+          )}
+        </SubGroup>
+        <SubGroup title="Bord du terrain">
+          <ToggleField
+            label="Panneaux LED publicitaires"
+            checked={doc.pitch.adBoards}
+            onChange={(v) => updatePitch({ adBoards: v })}
+          />
+          <GalleryPicker
+            label="Piste et abords"
+            value={mats.trackSurface}
+            onChange={(trackSurface) => updateMaterials({ trackSurface })}
+            options={materialGallery(TRACK_MATERIAL_CATALOG)}
+          />
+        </SubGroup>
+      </AdvancedSection>
     </>
   );
 };
@@ -949,7 +997,7 @@ const SightlineProfile: React.FC<{
   );
 };
 
-const StandInspector: React.FC = () => {
+const StandsPanel: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const target = useStadiumStore((s) => s.activeStandTab);
   const setActiveStandTab = useStadiumStore((s) => s.setActiveStandTab);
@@ -960,7 +1008,10 @@ const StandInspector: React.FC = () => {
   const updateStandTier = useStadiumStore((s) => s.updateStandTier);
   const resetStandTiersUniform = useStadiumStore((s) => s.resetStandTiersUniform);
   const convertStandToKopWall = useStadiumStore((s) => s.convertStandToKopWall);
+  const updateMaterials = useStadiumStore((s) => s.updateMaterials);
+  const updateColors = useStadiumStore((s) => s.updateColors);
   const metrics = useMemo(() => calculateStadiumMetrics(doc), [doc]);
+  const mats = useMemo(() => resolveStadiumMaterials(doc), [doc]);
 
   const stand = doc.stands[side];
   const sm = metrics.stands[side];
@@ -971,6 +1022,7 @@ const StandInspector: React.FC = () => {
   const vomSpec = useMemo(() => resolveStandVomitories(stand), [stand]);
   const tierOverhang = stand.tierOverhang ?? DEFAULT_TIER_OVERHANG_M;
   const hasAsymmetricTiers = Boolean(stand.tierConfigs && stand.tierConfigs.length > 0);
+  const separateStands = !isContinuousBowlShape(doc.shape);
 
   const trackOffsets = useMemo(() => getTrackRadialOffset(doc), [doc]);
   const trackExtra =
@@ -1015,7 +1067,7 @@ const StandInspector: React.FC = () => {
           options={STAND_TABS}
         />
       </div>
-      <PanelSection title="Profil général">
+      <PanelSection title="Profil">
         <FieldRow label="Niveaux">
           <Segmented
             label="Nombre de niveaux"
@@ -1027,7 +1079,7 @@ const StandInspector: React.FC = () => {
           />
         </FieldRow>
         <SliderField
-          label="Pente globale"
+          label="Pente"
           hint="28° est la norme courante ; au-delà de 35° la tribune devient un mur"
           min={16}
           max={42}
@@ -1038,7 +1090,7 @@ const StandInspector: React.FC = () => {
           onChange={(v) => updateStand(target, { slopeAngleDeg: v })}
         />
         <SliderField
-          label="Rangs totaux"
+          label="Rangs"
           min={8}
           max={108}
           step={1}
@@ -1048,7 +1100,7 @@ const StandInspector: React.FC = () => {
           onChange={(v) => updateStand(target, { rows: v })}
         />
         <SliderField
-          label={doc.pitch.hasTrack ? 'Recul par rapport à la piste' : 'Recul par rapport au terrain'}
+          label={doc.pitch.hasTrack ? 'Recul depuis la piste' : 'Recul depuis le terrain'}
           hint={
             doc.pitch.hasTrack
               ? 'Mesuré depuis le bord extérieur de la piste : 0 m pose le pied de la tribune contre la piste'
@@ -1062,22 +1114,89 @@ const StandInspector: React.FC = () => {
           display={`${fr1(stand.distanceToPitch)} m`}
           onChange={(v) => updateStand(target, { distanceToPitch: v })}
         />
-        {stand.tiers >= 2 && (
-          <SliderField
-            label="Avancée en encorbellement"
-            hint="Avance les niveaux supérieurs au-dessus des derniers rangs du niveau inférieur ; la dalle remonte pour garder 2,4 m au-dessus des rangs abrités"
-            min={0}
-            max={7.5}
-            step={0.25}
-            disabled={off}
-            value={tierOverhang}
-            display={tierOverhang > 0 ? `+${fr1(tierOverhang)} m` : 'Aligné'}
-            onChange={(v) => updateStand(target, { tierOverhang: v })}
-          />
-        )}
       </PanelSection>
-      {stand.tiers >= 2 && (
-        <PanelSection title="Gradins asymétriques (par niveau)">
+      <PanelSection title="Places">
+        <OptionList
+          label="Type de places"
+          disabled={off}
+          value={stand.seatingType ?? 'seated'}
+          onChange={(id) =>
+            updateStand(target, {
+              seatingType: id,
+              ...(id === 'telescopic' && stand.distanceToPitch < 8.5 ? { distanceToPitch: 10.5 } : {}),
+            })
+          }
+          options={SEATING_TYPE_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
+        />
+      </PanelSection>
+      <PanelSection title="Couleurs des sièges">
+        <div className="grid grid-cols-2 gap-1" role="group" aria-label="Couleurs de club">
+          {SEAT_CLUB_PALETTES.map((pal) => {
+            const current =
+              doc.colors.seatsPrimary.toLowerCase() === pal.primary.toLowerCase() &&
+              doc.colors.seatsSecondary.toLowerCase() === pal.secondary.toLowerCase();
+            return (
+              <button
+                key={pal.id}
+                type="button"
+                aria-pressed={current}
+                onClick={() => updateColors({ seatsPrimary: pal.primary, seatsSecondary: pal.secondary })}
+                className={`flex items-center gap-2 min-h-8 px-2 py-1.5 text-left text-xs leading-snug ${choiceClass(current)} ${
+                  current ? 'font-medium' : ''
+                }`}
+              >
+                <SeatPaletteChip primary={pal.primary} secondary={pal.secondary} />
+                <span className="flex-1 min-w-0">{pal.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <ColorField
+          label="Couleur principale"
+          value={doc.colors.seatsPrimary}
+          onChange={(v) => updateColors({ seatsPrimary: v })}
+        />
+        <ColorField
+          label="Couleur du motif"
+          value={doc.colors.seatsSecondary}
+          onChange={(v) => updateColors({ seatsSecondary: v })}
+        />
+      </PanelSection>
+      <PanelSection title="Public">
+        <ToggleField
+          label="Spectateurs dans les tribunes"
+          hint="Désactivé, les sièges restent vides"
+          disabled={mats.seats3d === false}
+          checked={mats.crowd === true}
+          onChange={(crowd) => updateMaterials({ crowd })}
+        />
+        <SliderField
+          label="Affluence"
+          hint="Part des places occupées par des spectateurs"
+          disabled={mats.seats3d === false || mats.crowd !== true}
+          value={mats.crowdAttendance ?? 0.9}
+          min={0}
+          max={1}
+          step={0.05}
+          scale={100}
+          display={`${Math.round((mats.crowdAttendance ?? 0.9) * 100)} %`}
+          onChange={(crowdAttendance) => updateMaterials({ crowdAttendance })}
+        />
+      </PanelSection>
+      <AdvancedSection tab="stands">
+        {stand.tiers >= 2 && (
+          <SubGroup title="Niveaux un par un">
+            <SliderField
+              label="Avancée en encorbellement"
+              hint="Avance les niveaux supérieurs au-dessus des derniers rangs du niveau inférieur ; la dalle remonte pour garder 2,4 m au-dessus des rangs abrités"
+              min={0}
+              max={7.5}
+              step={0.25}
+              disabled={off}
+              value={tierOverhang}
+              display={tierOverhang > 0 ? `+${fr1(tierOverhang)} m` : 'Aligné'}
+              onChange={(v) => updateStand(target, { tierOverhang: v })}
+            />
           <div className="flex items-center justify-between text-2xs">
             <span className="text-ink-faint">
               {hasAsymmetricTiers
@@ -1151,9 +1270,9 @@ const StandInspector: React.FC = () => {
               </div>
             ))}
           </div>
-        </PanelSection>
-      )}
-      <PanelSection title="Vomitoires et escaliers">
+          </SubGroup>
+        )}
+        <SubGroup title="Vomitoires et escaliers">
         <SliderField
           label="Nombre de vomitoires"
           hint="Ouvertures réelles découpées dans les gradins vers les coursives"
@@ -1221,102 +1340,8 @@ const StandInspector: React.FC = () => {
             {off ? '—' : `${fr1(sm.evacuationMinutes)} min`}
           </span>
         </FieldRow>
-      </PanelSection>
-      <PanelSection title="Places">
-        <OptionList
-          label="Type de places"
-          disabled={off}
-          value={stand.seatingType ?? 'seated'}
-          onChange={(id) =>
-            updateStand(target, {
-              seatingType: id,
-              ...(id === 'telescopic' && stand.distanceToPitch < 8.5 ? { distanceToPitch: 10.5 } : {}),
-            })
-          }
-          options={SEATING_TYPE_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
-        />
-        {stand.tiers >= 2 && (
-          <ToggleField
-            label="Loges VIP entre les niveaux"
-            disabled={off}
-            checked={stand.vipLoges !== false}
-            onChange={(v) => updateStand(target, { vipLoges: v })}
-          />
-        )}
-        {!isContinuousBowlShape(doc.shape) && (
-          <ToggleField
-            label="Tifo aux couleurs du club"
-            hint="Tous les supporters habillés en bandes diagonales des deux couleurs (public activé)"
-            disabled={off || doc.materials?.crowd !== true}
-            checked={stand.tifo === true}
-            onChange={(tifo) => updateStand(target, { tifo })}
-          />
-        )}
-        {!isContinuousBowlShape(doc.shape) && (
-          <ToggleField
-            label="Banderoles de supporters"
-            hint="Bâches aux couleurs du club sur le mur du terrain et les nez de balcon"
-            disabled={off}
-            checked={stand.banners === true}
-            onChange={(banners) => updateStand(target, { banners })}
-          />
-        )}
-        {!isContinuousBowlShape(doc.shape) && (
-          <ToggleField
-            label="Gradins sur talus enherbé"
-            hint="Gradins posés sur une butte de terre engazonnée, comme les petits stades et stades d’athlétisme"
-            disabled={off}
-            checked={stand.embankment === true}
-            onChange={(embankment) => updateStand(target, { embankment })}
-          />
-        )}
-        {!editAll && (
-          <SliderField
-            label="Tribune mobile : recul"
-            hint="Tribune montée sur rails, reculée pour dégager une piste ou avancée au bord du terrain"
-            disabled={off}
-            min={0}
-            max={15}
-            step={0.5}
-            value={stand.retractShift ?? 0}
-            display={`${fr1(stand.retractShift ?? 0)} m`}
-            onChange={(v) =>
-              updateStand(target, {
-                retractShift: v,
-                distanceToPitch: Math.max(0, stand.distanceToPitch - (stand.retractShift ?? 0) + v),
-              })
-            }
-          />
-        )}
-        {!isContinuousBowlShape(doc.shape) && (
-          <SelectField
-            label="Toiture de cette tribune"
-            disabled={off}
-            value={stand.roofStyleOverride ?? 'inherit'}
-            onChange={(v) =>
-              updateStand(target, { roofStyleOverride: v === 'inherit' ? undefined : v })
-            }
-            options={STAND_ROOF_OVERRIDES}
-          />
-        )}
-        {!isContinuousBowlShape(doc.shape) && (
-          <SelectField
-            label="Structure de cette tribune"
-            disabled={off}
-            value={stand.structureMaterialOverride ?? 'inherit'}
-            onChange={(v) =>
-              updateStand(target, {
-                structureMaterialOverride: v === 'inherit' ? undefined : v,
-              })
-            }
-            options={[
-              { id: 'inherit', label: 'Comme le stade' },
-              ...STRUCTURE_MATERIAL_CATALOG.map((o) => ({ id: o.id, label: o.label })),
-            ]}
-          />
-        )}
-      </PanelSection>
-      <PanelSection title="Lignes de vue">
+        </SubGroup>
+        <SubGroup title="Lignes de vue">
         <div className="flex items-baseline justify-between text-xs">
           <span className="text-ink-muted">C-value minimale</span>
           <span className="text-ink tabular-nums">{sightlines.minCValueMm} mm</span>
@@ -1333,30 +1358,128 @@ const StandInspector: React.FC = () => {
           <span className="text-ink tabular-nums">{fr1(sightlines.avgDistanceM)} m</span>
         </div>
         <SightlineProfile points={sightlines.points} />
-      </PanelSection>
-      <PanelSection title="Avancé" defaultOpen={false}>
-        <SliderField
-          label="Profondeur de rang"
-          min={0.72}
-          max={0.95}
-          step={0.01}
-          disabled={off}
-          value={stand.rowDepth}
-          display={`${Math.round(stand.rowDepth * 100)} cm`}
-          scale={100}
-          onChange={(v) => updateStand(target, { rowDepth: v })}
-        />
-        <SliderField
-          label="Largeur de siège"
-          min={0.46}
-          max={0.62}
-          step={0.01}
-          disabled={off}
-          value={stand.seatWidth}
-          display={`${Math.round(stand.seatWidth * 100)} cm`}
-          scale={100}
-          onChange={(v) => updateStand(target, { seatWidth: v })}
-        />
+        </SubGroup>
+        <SubGroup title="Habillage">
+          {stand.tiers >= 2 && (
+            <ToggleField
+              label="Loges VIP entre les niveaux"
+              disabled={off}
+              checked={stand.vipLoges !== false}
+              onChange={(v) => updateStand(target, { vipLoges: v })}
+            />
+          )}
+          {separateStands && (
+            <>
+              <ToggleField
+                label="Tifo aux couleurs du club"
+                hint="Tous les supporters habillés en bandes diagonales des deux couleurs (public activé)"
+                disabled={off || doc.materials?.crowd !== true}
+                checked={stand.tifo === true}
+                onChange={(tifo) => updateStand(target, { tifo })}
+              />
+              <ToggleField
+                label="Banderoles de supporters"
+                hint="Bâches aux couleurs du club sur le mur du terrain et les nez de balcon"
+                disabled={off}
+                checked={stand.banners === true}
+                onChange={(banners) => updateStand(target, { banners })}
+              />
+              <ToggleField
+                label="Gradins sur talus enherbé"
+                hint="Gradins posés sur une butte de terre engazonnée, comme les petits stades et stades d’athlétisme"
+                disabled={off}
+                checked={stand.embankment === true}
+                onChange={(embankment) => updateStand(target, { embankment })}
+              />
+            </>
+          )}
+        </SubGroup>
+        {(separateStands || !editAll) && (
+          <SubGroup title="Cette tribune seule">
+            {!editAll && (
+              <SliderField
+                label="Tribune mobile : recul"
+                hint="Tribune montée sur rails, reculée pour dégager une piste ou avancée au bord du terrain"
+                disabled={off}
+                min={0}
+                max={15}
+                step={0.5}
+                value={stand.retractShift ?? 0}
+                display={`${fr1(stand.retractShift ?? 0)} m`}
+                onChange={(v) =>
+                  updateStand(target, {
+                    retractShift: v,
+                    distanceToPitch: Math.max(0, stand.distanceToPitch - (stand.retractShift ?? 0) + v),
+                  })
+                }
+              />
+            )}
+            {separateStands && (
+              <>
+                <SelectField
+                  label="Toiture"
+                  disabled={off}
+                  value={stand.roofStyleOverride ?? 'inherit'}
+                  onChange={(v) =>
+                    updateStand(target, { roofStyleOverride: v === 'inherit' ? undefined : v })
+                  }
+                  options={STAND_ROOF_OVERRIDES}
+                />
+                <SelectField
+                  label="Structure"
+                  disabled={off}
+                  value={stand.structureMaterialOverride ?? 'inherit'}
+                  onChange={(v) =>
+                    updateStand(target, {
+                      structureMaterialOverride: v === 'inherit' ? undefined : v,
+                    })
+                  }
+                  options={[
+                    { id: 'inherit', label: 'Comme le stade' },
+                    ...STRUCTURE_MATERIAL_CATALOG.map((o) => ({ id: o.id, label: o.label })),
+                  ]}
+                />
+              </>
+            )}
+          </SubGroup>
+        )}
+        <SubGroup title="Sièges">
+          <GalleryPicker
+            label="Finition des sièges"
+            value={mats.seatFinish}
+            onChange={(seatFinish) => updateMaterials({ seatFinish })}
+            options={materialGallery(SEAT_MATERIAL_CATALOG)}
+          />
+          <ToggleField
+            label="Sièges 3D individuels"
+            hint="Désactive pour un rendu plus léger sur les machines modestes"
+            checked={mats.seats3d !== false}
+            onChange={(seats3d) => updateMaterials({ seats3d })}
+          />
+          <SliderField
+            label="Profondeur de rang"
+            min={0.72}
+            max={0.95}
+            step={0.01}
+            disabled={off}
+            value={stand.rowDepth}
+            display={`${Math.round(stand.rowDepth * 100)} cm`}
+            scale={100}
+            onChange={(v) => updateStand(target, { rowDepth: v })}
+          />
+          <SliderField
+            label="Largeur de siège"
+            min={0.46}
+            max={0.62}
+            step={0.01}
+            disabled={off}
+            value={stand.seatWidth}
+            display={`${Math.round(stand.seatWidth * 100)} cm`}
+            scale={100}
+            onChange={(v) => updateStand(target, { seatWidth: v })}
+          />
+        </SubGroup>
+        <SubGroup title="Raccourcis">
         <div className="flex flex-wrap gap-2 pt-1">
           <Button
             disabled={off}
@@ -1395,22 +1518,21 @@ const StandInspector: React.FC = () => {
             Transformer en kop
           </Button>
         </div>
-      </PanelSection>
+        </SubGroup>
+      </AdvancedSection>
     </>
   );
 };
 
 const COVERED_SIDE_ORDER: StandSide[] = ['north', 'south', 'east', 'west'];
 
-const RoofInspector: React.FC = () => {
+const RoofPanel: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const roof = doc.roof;
   const shape = doc.shape;
   const updateRoof = useStadiumStore((s) => s.updateRoof);
   const updateMaterials = useStadiumStore((s) => s.updateMaterials);
-  const setFloodlightRig = useStadiumStore((s) => s.setFloodlightRig);
   const mats = useMemo(() => resolveStadiumMaterials(doc), [doc]);
-  const rigMode = resolveFloodlightRig(doc);
   const none = roof.style === 'none';
   const covered = roof.coveredSides ?? COVERED_SIDE_ORDER;
   const skyMode = roof.skylightMode ?? 'none';
@@ -1439,28 +1561,13 @@ const RoofInspector: React.FC = () => {
 
   return (
     <>
-      <PanelHeader
-        title="Toiture et éclairage"
-        meta={ROOF_OPTIONS.find((o) => o.id === roof.style)?.label}
-      />
-      <PanelSection title="Éclairage du terrain">
-        <OptionList
-          label="Système de projecteurs"
-          value={rigMode}
-          onChange={setFloodlightRig}
-          options={FLOODLIGHT_RIG_CATALOG.map((o) => ({
-            id: o.id,
-            label: o.label,
-            detail: o.subtitle,
-          }))}
-        />
-      </PanelSection>
+      <PanelHeader title="Toit" meta={ROOF_OPTIONS.find((o) => o.id === roof.style)?.label} />
       <PanelSection title="Système de toiture">
-        <OptionList
+        <GalleryPicker
           label="Système de toiture"
           value={roof.style}
           onChange={(style) => updateRoof({ style })}
-          options={ROOF_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
+          options={ROOF_GALLERY}
         />
       </PanelSection>
       {roof.style === 'suspended_masts' && (
@@ -1611,9 +1718,16 @@ const RoofInspector: React.FC = () => {
           </p>
         </PanelSection>
       )}
-      <PanelSection title="Transparence et percées de lumière">
+      <PanelSection title="Couverture">
+        <GalleryPicker
+          label="Matériau de couverture"
+          disabled={none}
+          value={mats.roof}
+          onChange={(r) => updateMaterials({ roof: r })}
+          options={materialGallery(ROOF_MATERIAL_CATALOG)}
+        />
         <SliderField
-          label="Opacité de la couverture"
+          label="Opacité"
           hint="Baissez pour du verre ou de l’ETFE translucide laissant filtrer le soleil sur la pelouse"
           min={0.15}
           max={1}
@@ -1632,7 +1746,7 @@ const RoofInspector: React.FC = () => {
               updateMaterials({ roof: 'polycarbonate_glass' });
               updateRoof({ opacity: 0.35 });
             }}
-            className={`h-7 px-1.5 text-2xs truncate ${choiceClass(
+            className={`h-7 px-1.5 text-2xs ${choiceClass(
               mats.roof === 'polycarbonate_glass' && roof.opacity <= 0.45
             )} disabled:opacity-40`}
           >
@@ -1645,7 +1759,7 @@ const RoofInspector: React.FC = () => {
               updateMaterials({ roof: 'etfe_cushions' });
               updateRoof({ opacity: 0.55 });
             }}
-            className={`h-7 px-1.5 text-2xs truncate ${choiceClass(
+            className={`h-7 px-1.5 text-2xs ${choiceClass(
               mats.roof === 'etfe_cushions' && roof.opacity <= 0.65
             )} disabled:opacity-40`}
           >
@@ -1658,13 +1772,39 @@ const RoofInspector: React.FC = () => {
               updateMaterials({ roof: 'ptfe_membrane' });
               updateRoof({ opacity: 0.92 });
             }}
-            className={`h-7 px-1.5 text-2xs truncate ${choiceClass(
+            className={`h-7 px-1.5 text-2xs ${choiceClass(
               mats.roof === 'ptfe_membrane' && roof.opacity >= 0.85
             )} disabled:opacity-40`}
           >
             Membrane PTFE
           </button>
         </div>
+      </PanelSection>
+      <AdvancedSection tab="roof">
+        <SubGroup title="Dimensions">
+          <SliderField
+            label="Hauteur au-dessus des gradins"
+            min={2}
+            max={12}
+            step={0.5}
+            disabled={none}
+            value={roof.heightOffset}
+            display={`+${fr1(roof.heightOffset)} m`}
+            onChange={(v) => updateRoof({ heightOffset: v })}
+          />
+          <SliderField
+            label="Couverture des sièges"
+            min={0.55}
+            max={1.15}
+            step={0.05}
+            disabled={none || roof.style === 'fixed_dome'}
+            value={roof.coverageRatio}
+            display={`${Math.round(roof.coverageRatio * 100)} %`}
+            scale={100}
+            onChange={(v) => updateRoof({ coverageRatio: v })}
+          />
+        </SubGroup>
+        <SubGroup title="Percées de lumière">
         <OptionList
           label="Percées de lumière"
           disabled={none}
@@ -1700,51 +1840,39 @@ const RoofInspector: React.FC = () => {
           <span className="text-ink-muted">Lumière transmise sous toiture</span>
           <span className="text-ink tabular-nums">{solarTransmissionPct} %</span>
         </div>
-      </PanelSection>
-      <PanelSection title="Dimensions">
-        <SliderField
-          label="Hauteur au-dessus des gradins"
-          min={2}
-          max={12}
-          step={0.5}
-          disabled={none}
-          value={roof.heightOffset}
-          display={`+${fr1(roof.heightOffset)} m`}
-          onChange={(v) => updateRoof({ heightOffset: v })}
-        />
-        <SliderField
-          label="Couverture des sièges"
-          min={0.55}
-          max={1.15}
-          step={0.05}
-          disabled={none || roof.style === 'fixed_dome'}
-          value={roof.coverageRatio}
-          display={`${Math.round(roof.coverageRatio * 100)} %`}
-          scale={100}
-          onChange={(v) => updateRoof({ coverageRatio: v })}
-        />
-        <ToggleField
-          label="Toit au-dessus de la coursive"
-          hint="Quand activé, prolonge le bord extérieur de la toiture jusqu’à la façade"
-          disabled={none}
-          checked={roof.overConcourse !== false}
-          onChange={(overConcourse) => updateRoof({ overConcourse })}
-        />
-        <ToggleField
-          label="Fermer l’espace sous la toiture"
-          hint="Habille d’une peau à lames le vide entre le haut de la façade (ou de la coursive) et le toit"
-          disabled={none}
-          checked={roof.enclosed !== false}
-          onChange={(enclosed) => updateRoof({ enclosed })}
-        />
-        <ToggleField
-          label="Pare-vent vitré"
-          hint="Remplace la peau par des vitrages clairs entre les tribunes et le toit"
-          disabled={none || roof.enclosed === false}
-          checked={roof.enclosureGlazed === true}
-          onChange={(enclosureGlazed) => updateRoof({ enclosureGlazed })}
-        />
-      </PanelSection>
+        </SubGroup>
+        <SubGroup title="Fermeture">
+          <ToggleField
+            label="Toit au-dessus de la coursive"
+            hint="Prolonge le bord extérieur de la toiture jusqu’à la façade"
+            disabled={none || (doc.concourse?.width ?? 0) <= 0}
+            checked={roof.overConcourse !== false}
+            onChange={(overConcourse) => updateRoof({ overConcourse })}
+          />
+          <ToggleField
+            label="Fermer l’espace sous la toiture"
+            hint="Habille d’une peau à lames le vide entre le haut de la façade (ou de la coursive) et le toit"
+            disabled={none}
+            checked={roof.enclosed !== false}
+            onChange={(enclosed) => updateRoof({ enclosed })}
+          />
+          <ToggleField
+            label="Pare-vent vitré"
+            hint="Remplace la peau par des vitrages clairs entre les tribunes et le toit"
+            disabled={none || roof.enclosed === false}
+            checked={roof.enclosureGlazed === true}
+            onChange={(enclosureGlazed) => updateRoof({ enclosureGlazed })}
+          />
+        </SubGroup>
+        <SubGroup title="Charpente">
+          <GalleryPicker
+            label="Matériau de charpente"
+            value={mats.structure}
+            onChange={(structure) => updateMaterials({ structure })}
+            options={materialGallery(STRUCTURE_MATERIAL_CATALOG)}
+          />
+        </SubGroup>
+      </AdvancedSection>
     </>
   );
 };
@@ -1900,40 +2028,73 @@ function RetractableRoofSection({
         options={PANEL_KIND_OPTIONS}
         onChange={(v) => onChange({ panelKind: v })}
       />
-      <OptionList
+      <GalleryPicker
         label="Matériau des panneaux"
         value={panelMaterial}
         onChange={(v) => onChange({ panelMaterial: v })}
-        options={materialOptions(ROOF_MATERIAL_CATALOG)}
+        options={materialGallery(ROOF_MATERIAL_CATALOG)}
       />
     </PanelSection>
   );
 }
 
-function materialOptions<T extends string>(
-  catalog: { id: T; label: string; subtitle: string }[]
-) {
-  return catalog.map((item) => ({
-    id: item.id,
-    label: item.label,
-    detail: item.subtitle,
-    leading: <MaterialPreview materialId={item.id} />,
-  }));
-}
-
-const MaterialsInspector: React.FC = () => {
+const FacadePanel: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const updateMaterials = useStadiumStore((s) => s.updateMaterials);
-  const updateColors = useStadiumStore((s) => s.updateColors);
   const mats = useMemo(() => resolveStadiumMaterials(doc), [doc]);
   const pattern = mats.facadePattern ?? 'none';
   const density = mats.facadeDensity ?? 1.0;
   const depth = mats.facadeDepth ?? 0.85;
+  const envelope = mats.envelopeStyle ?? 'enveloping_skin';
 
   return (
     <>
-      <PanelHeader title="Façade et matériaux" />
-      <PanelSection title="Façade paramétrique">
+      <PanelHeader title="Façade" meta={ENVELOPE_STYLE_CATALOG.find((o) => o.id === envelope)?.label} />
+      <PanelSection title="Enveloppe">
+        <GalleryPicker
+          label="Enveloppe extérieure"
+          value={envelope}
+          onChange={(envelopeStyle) => updateMaterials({ envelopeStyle })}
+          options={ENVELOPE_GALLERY}
+        />
+        {envelope === 'colonnade_forest' && (
+          <SliderField
+            label="Densité des poteaux"
+            hint="Jusqu’à 4 fois plus de poteaux, pour une vraie forêt"
+            min={0.5}
+            max={4}
+            step={0.1}
+            value={mats.colonnadeDensity ?? 1}
+            display={`${fr1(mats.colonnadeDensity ?? 1)}×`}
+            onChange={(colonnadeDensity) => updateMaterials({ colonnadeDensity })}
+          />
+        )}
+        {isContinuousBowlShape(doc.shape) && envelope === 'enveloping_skin' && (
+          <OptionList
+            label="Silhouette de la peau"
+            value={mats.envelopeProfile ?? 'straight'}
+            onChange={(envelopeProfile) => updateMaterials({ envelopeProfile })}
+            options={ENVELOPE_PROFILE_OPTIONS}
+          />
+        )}
+      </PanelSection>
+      <PanelSection title="Matériau">
+        <GalleryPicker
+          label="Matériau de façade"
+          value={mats.facade}
+          onChange={(facade) => updateMaterials({ facade })}
+          options={materialGallery(FACADE_MATERIAL_CATALOG)}
+        />
+        {mats.facade === 'etfe_cushions_facade' && (
+          <ColorField
+            label="Couleur d’éclairage la nuit"
+            value={mats.facadeGlowHex ?? '#ffffff'}
+            onChange={(facadeGlowHex) => updateMaterials({ facadeGlowHex })}
+          />
+        )}
+      </PanelSection>
+      <AdvancedSection tab="facade">
+        <SubGroup title="Relief paramétrique">
         <OptionList
           label="Motif géométrique 3D"
           value={pattern}
@@ -1976,154 +2137,8 @@ const MaterialsInspector: React.FC = () => {
             onChange={(facadeBulge) => updateMaterials({ facadeBulge })}
           />
         )}
-      </PanelSection>
-      <PanelSection title="Enveloppe">
-        <OptionList
-          label="Enveloppe extérieure"
-          value={mats.envelopeStyle ?? 'enveloping_skin'}
-          onChange={(envelopeStyle) => updateMaterials({ envelopeStyle })}
-          options={ENVELOPE_STYLE_CATALOG.map((o) => ({ id: o.id, label: o.label, detail: o.subtitle }))}
-        />
-        {mats.envelopeStyle === 'colonnade_forest' && (
-          <SliderField
-            label="Densité des poteaux"
-            hint="Jusqu’à 4 fois plus de poteaux, pour une vraie forêt"
-            min={0.5}
-            max={4}
-            step={0.1}
-            value={mats.colonnadeDensity ?? 1}
-            display={`${fr1(mats.colonnadeDensity ?? 1)}×`}
-            onChange={(colonnadeDensity) => updateMaterials({ colonnadeDensity })}
-          />
-        )}
-        {isContinuousBowlShape(doc.shape) && (
-          <OptionList
-            label="Silhouette de la peau"
-            disabled={(mats.envelopeStyle ?? 'enveloping_skin') !== 'enveloping_skin'}
-            value={mats.envelopeProfile ?? 'straight'}
-            onChange={(envelopeProfile) => updateMaterials({ envelopeProfile })}
-            options={ENVELOPE_PROFILE_OPTIONS}
-          />
-        )}
-      </PanelSection>
-      <PanelSection title="Façade">
-        <OptionList
-          label="Matériau de façade"
-          value={mats.facade}
-          onChange={(facade) => updateMaterials({ facade })}
-          options={materialOptions(FACADE_MATERIAL_CATALOG)}
-        />
-        {mats.facade === 'etfe_cushions_facade' && (
-          <ColorField
-            label="Couleur d’éclairage la nuit"
-            value={mats.facadeGlowHex ?? '#ffffff'}
-            onChange={(facadeGlowHex) => updateMaterials({ facadeGlowHex })}
-          />
-        )}
-      </PanelSection>
-      <PanelSection title="Couverture du toit">
-        <OptionList
-          label="Matériau de couverture"
-          value={mats.roof}
-          onChange={(roof) => updateMaterials({ roof })}
-          options={materialOptions(ROOF_MATERIAL_CATALOG)}
-        />
-      </PanelSection>
-      <PanelSection title="Charpente">
-        <OptionList
-          label="Matériau de charpente"
-          value={mats.structure}
-          onChange={(structure) => updateMaterials({ structure })}
-          options={materialOptions(STRUCTURE_MATERIAL_CATALOG)}
-        />
-      </PanelSection>
-      <PanelSection title="Sièges">
-        <ToggleField
-          label="Sièges 3D individuels"
-          hint="Désactive pour un rendu plus léger sur les machines modestes"
-          checked={mats.seats3d !== false}
-          onChange={(seats3d) => updateMaterials({ seats3d })}
-        />
-        <ToggleField
-          label="Public dans les tribunes"
-          hint="Désactivé, les sièges restent vides"
-          disabled={mats.seats3d === false}
-          checked={mats.crowd === true}
-          onChange={(crowd) => updateMaterials({ crowd })}
-        />
-        <SliderField
-          label="Affluence"
-          hint="Part des places occupées par des spectateurs"
-          disabled={mats.seats3d === false || mats.crowd !== true}
-          value={mats.crowdAttendance ?? 0.9}
-          min={0}
-          max={1}
-          step={0.05}
-          scale={100}
-          display={`${Math.round((mats.crowdAttendance ?? 0.9) * 100)} %`}
-          onChange={(crowdAttendance) => updateMaterials({ crowdAttendance })}
-        />
-        <OptionList
-          label="Finition des sièges"
-          value={mats.seatFinish}
-          onChange={(seatFinish) => updateMaterials({ seatFinish })}
-          options={materialOptions(SEAT_MATERIAL_CATALOG)}
-        />
-        <div className="grid grid-cols-2 gap-1" role="group" aria-label="Couleurs de club">
-          {SEAT_CLUB_PALETTES.map((pal) => {
-            const current =
-              doc.colors.seatsPrimary.toLowerCase() === pal.primary.toLowerCase() &&
-              doc.colors.seatsSecondary.toLowerCase() === pal.secondary.toLowerCase();
-            return (
-              <button
-                key={pal.id}
-                type="button"
-                aria-pressed={current}
-                onClick={() => updateColors({ seatsPrimary: pal.primary, seatsSecondary: pal.secondary })}
-                className={`flex items-center gap-2 h-8 px-2 text-left text-xs ${choiceClass(current)} ${
-                  current ? 'font-medium' : ''
-                }`}
-              >
-                <SeatPaletteChip primary={pal.primary} secondary={pal.secondary} />
-                <span className="truncate">{pal.label}</span>
-              </button>
-            );
-          })}
-        </div>
-        <ColorField
-          label="Couleur principale"
-          value={doc.colors.seatsPrimary}
-          onChange={(v) => updateColors({ seatsPrimary: v })}
-        />
-        <ColorField
-          label="Couleur du motif"
-          value={doc.colors.seatsSecondary}
-          onChange={(v) => updateColors({ seatsSecondary: v })}
-        />
-      </PanelSection>
-      <PanelSection title="Sols" defaultOpen={false}>
-        <div className="text-2xs text-ink-faint">Pelouse</div>
-        <OptionList
-          label="Pelouse"
-          value={mats.pitchTurf}
-          onChange={(pitchTurf) => updateMaterials({ pitchTurf })}
-          options={materialOptions(TURF_MATERIAL_CATALOG)}
-        />
-        <div className="text-2xs text-ink-faint pt-1">Piste et abords</div>
-        <OptionList
-          label="Piste et abords"
-          value={mats.trackSurface}
-          onChange={(trackSurface) => updateMaterials({ trackSurface })}
-          options={materialOptions(TRACK_MATERIAL_CATALOG)}
-        />
-        <div className="text-2xs text-ink-faint pt-1">Parvis</div>
-        <OptionList
-          label="Parvis"
-          value={mats.plazaSurface}
-          onChange={(plazaSurface) => updateMaterials({ plazaSurface })}
-          options={materialOptions(PLAZA_MATERIAL_CATALOG)}
-        />
-      </PanelSection>
+        </SubGroup>
+      </AdvancedSection>
     </>
   );
 };
@@ -2136,19 +2151,29 @@ export const SITE_OPTIONS: { id: SiteSetting; label: string; detail: string }[] 
   { id: 'parking', label: 'Parkings', detail: 'Nappes de stationnement plantées, voie de ceinture et allées piétonnes' },
 ];
 
-const SiteInspector: React.FC = () => {
+const SitePanel: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const updateSite = useStadiumStore((s) => s.updateSite);
+  const updateMaterials = useStadiumStore((s) => s.updateMaterials);
+  const mats = useMemo(() => resolveStadiumMaterials(doc), [doc]);
   const site = resolveSite(doc);
   return (
     <>
-      <PanelHeader title="Environnement" meta={SITE_OPTIONS.find((o) => o.id === site.setting)?.label} />
+      <PanelHeader title="Abords" meta={SITE_OPTIONS.find((o) => o.id === site.setting)?.label} />
       <PanelSection title="Cadre autour du stade">
         <OptionList
           label="Cadre autour du stade"
           value={site.setting}
           onChange={(setting) => updateSite({ setting })}
           options={SITE_OPTIONS}
+        />
+      </PanelSection>
+      <PanelSection title="Parvis">
+        <GalleryPicker
+          label="Revêtement du parvis"
+          value={mats.plazaSurface}
+          onChange={(plazaSurface) => updateMaterials({ plazaSurface })}
+          options={materialGallery(PLAZA_MATERIAL_CATALOG)}
         />
       </PanelSection>
       <PanelSection title="Accès et sécurité">
@@ -2169,21 +2194,37 @@ const SiteInspector: React.FC = () => {
   );
 };
 
-export const Inspector: React.FC<{ node: EditorNode }> = ({ node }) => {
-  switch (node) {
-    case 'bowl':
-      return <BowlInspector />;
-    case 'stand':
-      return <StandInspector />;
+/** Pitch floodlights, set with the other equipment. */
+const FloodlightSection: React.FC = () => {
+  const rigMode = useStadiumStore((s) => resolveFloodlightRig(s.doc));
+  const setFloodlightRig = useStadiumStore((s) => s.setFloodlightRig);
+  return (
+    <PanelSection title="Éclairage du terrain">
+      <OptionList
+        label="Système de projecteurs"
+        value={rigMode}
+        onChange={setFloodlightRig}
+        options={FLOODLIGHT_RIG_CATALOG.map((o) => ({ id: o.id, label: o.label, detail: o.subtitle }))}
+      />
+    </PanelSection>
+  );
+};
+
+export const Inspector: React.FC<{ tab: EditorTab }> = ({ tab }) => {
+  switch (tab) {
+    case 'shape':
+      return <ShapePanel />;
+    case 'pitch':
+      return <PitchPanel />;
+    case 'stands':
+      return <StandsPanel />;
     case 'roof':
-      return <RoofInspector />;
-    case 'materials':
-      return <MaterialsInspector />;
+      return <RoofPanel />;
+    case 'facade':
+      return <FacadePanel />;
     case 'site':
-      return <SiteInspector />;
+      return <SitePanel />;
     case 'objects':
-      return <ObjectList />;
-    case 'projects':
-      return <ProjectsPanel />;
+      return <ObjectList footer={<FloodlightSection />} />;
   }
 };

@@ -1,24 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import * as THREE from 'three';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { X } from 'lucide-react';
-import { buildStadiumSceneGraph, disposeObject3D } from '../stadium/buildStadiumScene';
 import { calculateStadiumMetrics } from '../stadium/capacity';
 import { createPresetDocument, STADIUM_PRESETS } from '../stadium/presets';
 import { useStadiumStore } from '../state/useStadiumStore';
+import { renderThumbnails, THUMB_H, THUMB_W, thumbnailUrl } from './thumbnails';
 import { Button, IconButton } from './ui';
 
 const SEEN_KEY = 'sf-onboarding-seen';
-const THUMB_W = 360;
-const THUMB_H = 220;
 
 /** Live-rendered fallbacks, kept per page load for presets that have no shipped image. */
 const thumbnailCache = new Map<string, string>();
-
-/** Pre-rendered gallery image shipped in public/presets; regenerate with `generatePresetThumbnails`. */
-function presetThumbnailUrl(id: string): string {
-  return `${import.meta.env.BASE_URL}presets/${id}.webp`;
-}
 
 function hasSeenOnboarding(): boolean {
   try {
@@ -36,93 +27,6 @@ function markOnboardingSeen() {
   }
 }
 
-/** Renders each preset off-screen with one shared renderer, yielding between stadiums. */
-async function renderThumbnails(
-  ids: string[],
-  onThumb: (id: string, canvas: HTMLCanvasElement) => void | Promise<void>,
-  isCancelled: () => boolean,
-  pixelRatio = Math.min(window.devicePixelRatio, 2)
-) {
-  if (ids.length === 0) return;
-
-  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(pixelRatio);
-  renderer.setSize(THUMB_W, THUMB_H, false);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
-  renderer.localClippingEnabled = true;
-
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const room = new RoomEnvironment();
-  const envMap = pmrem.fromScene(room, 0.04).texture;
-  room.dispose();
-  pmrem.dispose();
-
-  const camera = new THREE.PerspectiveCamera(36, THUMB_W / THUMB_H, 1, 2000);
-
-  try {
-    for (const id of ids) {
-      if (isCancelled()) return;
-      await new Promise((r) => window.setTimeout(r, 0));
-
-      const doc = createPresetDocument(id);
-      const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x2a3440);
-      scene.environment = envMap;
-      scene.add(new THREE.HemisphereLight(0xdbeafe, 0x1e293b, 0.9));
-      const sun = new THREE.DirectionalLight(0xfffbeb, 2.3);
-      sun.position.set(115, 152, 92);
-      scene.add(sun);
-
-      const { rootGroup } = buildStadiumSceneGraph(doc, { maxAnisotropy: 2 });
-      scene.add(rootGroup);
-
-      // Frame the bowl, not the surrounding plaza, which extends far beyond the stands.
-      const bowl = new THREE.Box3().setFromObject(rootGroup.getObjectByName('StandsAssembly') ?? rootGroup.children[1] ?? rootGroup);
-      const bowlSize = bowl.getSize(new THREE.Vector3());
-      const radius = Math.max(bowlSize.x, bowlSize.z, 120) * 0.9;
-      camera.position.set(radius * 0.95, radius * 0.62, radius * 1.05);
-      camera.lookAt(0, bowlSize.y * 0.15, 0);
-
-      renderer.render(scene, camera);
-      await onThumb(id, renderer.domElement);
-
-      disposeObject3D(rootGroup);
-    }
-  } finally {
-    envMap.dispose();
-    renderer.dispose();
-    renderer.forceContextLoss();
-  }
-}
-
-/**
- * Dev only: re-renders every preset at 2x and writes public/presets/<id>.webp through the dev
- * server (see vite.config.ts). Run `__generatePresetThumbnails()` in the browser console after
- * adding or changing a preset.
- */
-async function generatePresetThumbnails(): Promise<string[]> {
-  const written: string[] = [];
-  await renderThumbnails(
-    STADIUM_PRESETS.map((p) => p.id),
-    async (id, canvas) => {
-      const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/webp', 0.86));
-      if (!blob) throw new Error(`Encodage WebP impossible pour ${id}`);
-      const res = await fetch(`/__preset-thumbnails/${id}`, { method: 'POST', body: blob });
-      if (!res.ok) throw new Error(`Écriture refusée pour ${id} (${res.status})`);
-      written.push(id);
-    },
-    () => false,
-    2
-  );
-  return written;
-}
-if (import.meta.env.DEV) {
-  (window as unknown as { __generatePresetThumbnails: typeof generatePresetThumbnails }).__generatePresetThumbnails =
-    generatePresetThumbnails;
-}
-
 export const OnboardingDialog: React.FC<{
   open: boolean;
   onClose: () => void;
@@ -131,7 +35,7 @@ export const OnboardingDialog: React.FC<{
   const loadPreset = useStadiumStore((s) => s.loadPreset);
   const currentPresetId = useStadiumStore((s) => s.doc.presetId);
   const [thumbs, setThumbs] = useState<Record<string, string>>(() =>
-    Object.fromEntries(STADIUM_PRESETS.map((p) => [p.id, thumbnailCache.get(p.id) ?? presetThumbnailUrl(p.id)]))
+    Object.fromEntries(STADIUM_PRESETS.map((p) => [p.id, thumbnailCache.get(p.id) ?? thumbnailUrl('presets', p.id)]))
   );
   // Presets whose shipped image failed to load; they get a live render instead.
   const [missing, setMissing] = useState<string[]>([]);
@@ -158,7 +62,9 @@ export const OnboardingDialog: React.FC<{
     // Debounced so the misses of one opening are rendered in a single batch.
     const timer = window.setTimeout(() => {
       renderThumbnails(
-        missing.filter((id) => !thumbnailCache.has(id)),
+        missing
+          .filter((id) => !thumbnailCache.has(id))
+          .map((id) => ({ id, doc: createPresetDocument(id) })),
         (id, canvas) => {
           const url = canvas.toDataURL('image/jpeg', 0.82);
           thumbnailCache.set(id, url);

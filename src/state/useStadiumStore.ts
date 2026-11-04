@@ -150,6 +150,95 @@ export interface StadiumStoreState {
   redo: () => void;
 }
 
+/**
+ * Switches the bowl shape and applies the stand, corner and roof defaults that make that shape
+ * read correctly. Pure on the draft, so option thumbnails can show the same result.
+ */
+export function applyShape(d: StadiumDocument, shape: StadiumShape): void {
+  const prevShape = d.shape;
+  d.shape = shape;
+  d.corners = undefined;
+
+  if (prevShape === 'horseshoe' && shape !== 'horseshoe') {
+    d.stands.east.enabled = true;
+  }
+  if (prevShape === 'sunken_bowl' && shape !== 'sunken_bowl' && d.sunkenDepth === 9) {
+    d.sunkenDepth = 0;
+  }
+
+  if (shape === 'sunken_bowl') {
+    d.cornerFill = true;
+    d.sunkenDepth = d.sunkenDepth && d.sunkenDepth >= 2 ? d.sunkenDepth : 9.0;
+    if (d.roof.style === 'truss') d.roof.style = 'cantilever';
+  } else if (shape === 'horseshoe') {
+    d.cornerFill = true;
+    d.stands.north.enabled = true;
+    d.stands.south.enabled = true;
+    d.stands.west.enabled = true;
+    d.stands.east.enabled = false;
+    if (
+      d.roof.style === 'truss' ||
+      d.roof.style === 'retractable' ||
+      d.roof.style === 'petal_iris'
+    ) {
+      d.roof.style = 'cantilever';
+    }
+  } else if (shape === 'modern_bowl') {
+    d.cornerFill = true;
+    if (d.roof.style === 'truss') d.roof.style = 'bicycle_wheel';
+  } else if (shape === 'steep_cauldron') {
+    d.cornerFill = true;
+    if (d.roof.style === 'truss') d.roof.style = 'bicycle_wheel';
+    (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
+      d.stands[s].distanceToPitch = Math.min(d.stands[s].distanceToPitch, 6.2);
+      if ((d.stands[s].slopeAngleDeg ?? 28) < 33.5) {
+        d.stands[s].slopeAngleDeg = 34.5;
+        d.stands[s].riserHeight = Number(
+          (Math.tan((34.5 * Math.PI) / 180) * d.stands[s].rowDepth).toFixed(3)
+        );
+      }
+    });
+  } else if (shape === 'olympic_oval') {
+    d.cornerFill = true;
+    d.pitch.hasTrack = true;
+    if (d.roof.style === 'truss') d.roof.style = 'suspended_masts';
+    (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
+      if ((d.stands[s].slopeAngleDeg ?? 28) > 28.5) {
+        d.stands[s].slopeAngleDeg = 26;
+        d.stands[s].riserHeight = Number(
+          (Math.tan((26 * Math.PI) / 180) * d.stands[s].rowDepth).toFixed(3)
+        );
+      }
+    });
+  } else if (shape === 'octagonal_arena') {
+    d.cornerFill = true;
+    if (d.roof.style === 'truss') d.roof.style = 'cantilever';
+  } else if (shape === 'compact_urban') {
+    d.cornerFill = true;
+    if (d.roof.style === 'bicycle_wheel') d.roof.style = 'cantilever';
+    (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
+      d.stands[s].distanceToPitch = Math.min(d.stands[s].distanceToPitch, 5.8);
+      if ((d.stands[s].slopeAngleDeg ?? 28) < 32) {
+        d.stands[s].slopeAngleDeg = 34;
+        d.stands[s].riserHeight = Number(
+          (Math.tan((34 * Math.PI) / 180) * d.stands[s].rowDepth).toFixed(3)
+        );
+      }
+      if (
+        d.stands[s].tiers < 2 &&
+        d.stands[s].rows >= 20 &&
+        d.stands[s].seatingType !== 'safe_standing'
+      ) {
+        d.stands[s].tiers = 3;
+      }
+    });
+  } else if (shape === 'four_stands') {
+    d.cornerFill = false;
+    if (d.roof.style === 'bicycle_wheel') d.roof.style = 'truss';
+  }
+  d.pitch = clampPitchToTrack(d.pitch);
+}
+
 let autosaveTimer: number | null = null;
 function scheduleAutosave(doc: StadiumDocument, onSaved: (ts: number) => void) {
   if (autosaveTimer !== null) {
@@ -426,91 +515,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
         d.name = name;
       }),
 
-    setShape: (shape) =>
-      commitChange((d) => {
-        const prevShape = d.shape;
-        d.shape = shape;
-        d.corners = undefined;
-
-        if (prevShape === 'horseshoe' && shape !== 'horseshoe') {
-          d.stands.east.enabled = true;
-        }
-        if (prevShape === 'sunken_bowl' && shape !== 'sunken_bowl' && d.sunkenDepth === 9) {
-          d.sunkenDepth = 0;
-        }
-
-        if (shape === 'sunken_bowl') {
-          d.cornerFill = true;
-          d.sunkenDepth = d.sunkenDepth && d.sunkenDepth >= 2 ? d.sunkenDepth : 9.0;
-          if (d.roof.style === 'truss') d.roof.style = 'cantilever';
-        } else if (shape === 'horseshoe') {
-          d.cornerFill = true;
-          d.stands.north.enabled = true;
-          d.stands.south.enabled = true;
-          d.stands.west.enabled = true;
-          d.stands.east.enabled = false;
-          if (
-            d.roof.style === 'truss' ||
-            d.roof.style === 'retractable' ||
-            d.roof.style === 'petal_iris'
-          ) {
-            d.roof.style = 'cantilever';
-          }
-        } else if (shape === 'modern_bowl') {
-          d.cornerFill = true;
-          if (d.roof.style === 'truss') d.roof.style = 'bicycle_wheel';
-        } else if (shape === 'steep_cauldron') {
-          d.cornerFill = true;
-          if (d.roof.style === 'truss') d.roof.style = 'bicycle_wheel';
-          (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
-            d.stands[s].distanceToPitch = Math.min(d.stands[s].distanceToPitch, 6.2);
-            if ((d.stands[s].slopeAngleDeg ?? 28) < 33.5) {
-              d.stands[s].slopeAngleDeg = 34.5;
-              d.stands[s].riserHeight = Number(
-                (Math.tan((34.5 * Math.PI) / 180) * d.stands[s].rowDepth).toFixed(3)
-              );
-            }
-          });
-        } else if (shape === 'olympic_oval') {
-          d.cornerFill = true;
-          d.pitch.hasTrack = true;
-          if (d.roof.style === 'truss') d.roof.style = 'suspended_masts';
-          (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
-            if ((d.stands[s].slopeAngleDeg ?? 28) > 28.5) {
-              d.stands[s].slopeAngleDeg = 26;
-              d.stands[s].riserHeight = Number(
-                (Math.tan((26 * Math.PI) / 180) * d.stands[s].rowDepth).toFixed(3)
-              );
-            }
-          });
-        } else if (shape === 'octagonal_arena') {
-          d.cornerFill = true;
-          if (d.roof.style === 'truss') d.roof.style = 'cantilever';
-        } else if (shape === 'compact_urban') {
-          d.cornerFill = true;
-          if (d.roof.style === 'bicycle_wheel') d.roof.style = 'cantilever';
-          (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
-            d.stands[s].distanceToPitch = Math.min(d.stands[s].distanceToPitch, 5.8);
-            if ((d.stands[s].slopeAngleDeg ?? 28) < 32) {
-              d.stands[s].slopeAngleDeg = 34;
-              d.stands[s].riserHeight = Number(
-                (Math.tan((34 * Math.PI) / 180) * d.stands[s].rowDepth).toFixed(3)
-              );
-            }
-            if (
-              d.stands[s].tiers < 2 &&
-              d.stands[s].rows >= 20 &&
-              d.stands[s].seatingType !== 'safe_standing'
-            ) {
-              d.stands[s].tiers = 3;
-            }
-          });
-        } else if (shape === 'four_stands') {
-          d.cornerFill = false;
-          if (d.roof.style === 'bicycle_wheel') d.roof.style = 'truss';
-        }
-        d.pitch = clampPitchToTrack(d.pitch);
-      }),
+    setShape: (shape) => commitChange((d) => applyShape(d, shape)),
 
     setSunkenDepth: (depth) =>
       commitChange((d) => {

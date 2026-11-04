@@ -1,6 +1,7 @@
-import React, { useId, useState } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, X } from 'lucide-react';
 
 const parseFr = (raw: string) => Number(raw.replace(/\s/g, '').replace(',', '.'));
 
@@ -29,28 +30,39 @@ const RadioMark: React.FC<{ active: boolean }> = ({ active }) => (
   </span>
 );
 
+/** Open state of sections that carry a `persistKey`, kept across tab switches for the session. */
+const sectionOpenState = new Map<string, boolean>();
+
 /** Inspector section: a title row that collapses its body. */
 export const PanelSection: React.FC<{
   title: string;
   action?: React.ReactNode;
   defaultOpen?: boolean;
+  /** Remembers the open state under this key while the page is open. */
+  persistKey?: string;
   children: React.ReactNode;
-}> = ({ title, action, defaultOpen = true, children }) => {
-  const [open, setOpen] = useState(defaultOpen);
+}> = ({ title, action, defaultOpen = true, persistKey, children }) => {
+  const [open, setOpenState] = useState(() =>
+    persistKey ? (sectionOpenState.get(persistKey) ?? defaultOpen) : defaultOpen
+  );
+  const setOpen = (next: boolean) => {
+    if (persistKey) sectionOpenState.set(persistKey, next);
+    setOpenState(next);
+  };
   const bodyId = useId();
   return (
     <section className="border-b border-line">
-      <div className="flex items-center h-10 pl-2 pr-3">
+      <div className="flex items-center min-h-10 pl-2 pr-3">
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => setOpen(!open)}
           aria-expanded={open}
           aria-controls={bodyId}
-          className="flex flex-1 items-center gap-1 h-full text-left text-xs font-semibold text-ink rounded"
+          className="flex flex-1 items-center gap-1 min-h-10 py-2 text-left text-xs font-semibold text-ink rounded"
         >
           <ChevronRight
             aria-hidden
-            className={`w-3.5 h-3.5 text-ink-faint transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
+            className={`w-3.5 h-3.5 shrink-0 text-ink-faint transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
           />
           {title}
         </button>
@@ -65,6 +77,24 @@ export const PanelSection: React.FC<{
   );
 };
 
+/**
+ * The collapsed home of a tab's expert settings, closed by default and remembered per tab.
+ * Its body is grouped under `SubHeading`s rather than nested collapsible sections.
+ */
+export const AdvancedSection: React.FC<{ tab: string; children: React.ReactNode }> = ({ tab, children }) => (
+  <PanelSection title="Avancé" defaultOpen={false} persistKey={`advanced:${tab}`}>
+    <div className="space-y-5">{children}</div>
+  </PanelSection>
+);
+
+/** A titled group of fields inside a section (used to organise the Avancé section). */
+export const SubGroup: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div className="space-y-3">
+    <h3 className="text-2xs font-medium text-ink-faint">{title}</h3>
+    {children}
+  </div>
+);
+
 /** Label on the left, control on the right, on one 28px row. */
 export const FieldRow: React.FC<{
   label: string;
@@ -72,7 +102,7 @@ export const FieldRow: React.FC<{
   children: React.ReactNode;
 }> = ({ label, hint, children }) => (
   <div className="flex items-center justify-between gap-3 min-h-7">
-    <span className="text-xs text-ink-muted truncate" title={hint}>
+    <span className="min-w-0 text-xs leading-snug text-ink-muted" title={hint}>
       {label}
     </span>
     <div className="flex items-center gap-2 shrink-0">{children}</div>
@@ -106,7 +136,7 @@ export const SliderField: React.FC<{
   return (
     <div className={disabled ? 'opacity-50' : undefined}>
       <div className="flex items-baseline justify-between gap-3">
-        <label htmlFor={id} className="text-xs text-ink-muted truncate" title={hint}>
+        <label htmlFor={id} className="min-w-0 text-xs leading-snug text-ink-muted" title={hint}>
           {label}
         </label>
         <input
@@ -302,12 +332,12 @@ export function OptionList<T extends string>({
             aria-checked={active}
             title={o.detail}
             onClick={() => onChange(o.id)}
-            className={`flex items-center gap-2 min-h-8 px-2 py-1.5 text-left ${choiceClass(active)}`}
+            className={`flex items-center gap-2 min-h-9 min-w-0 px-2 py-1.5 text-left ${choiceClass(active)}`}
           >
             <RadioMark active={active} />
             {o.leading}
             <span className="flex-1 min-w-0">
-              <span className={`block text-xs truncate text-ink ${active ? 'font-medium' : ''}`}>
+              <span className={`block text-xs leading-snug text-ink break-words ${active ? 'font-medium' : ''}`}>
                 {o.label}
               </span>
               {o.detail && active && columns === 1 && (
@@ -374,3 +404,189 @@ export const NumberField: React.FC<{
     />
   </label>
 );
+
+export interface GalleryOption<T extends string> {
+  id: T;
+  label: string;
+  detail?: string;
+  /** Rendered thumbnail; when it fails to load the tile keeps a plain face. */
+  image?: string;
+  /** Drawn preview instead of an image (material swatches). */
+  preview?: React.ReactNode;
+}
+
+const GalleryVisual: React.FC<{ option: GalleryOption<string>; className: string }> = ({ option, className }) => {
+  const [failed, setFailed] = useState(false);
+  if (option.preview) {
+    return <span className={`${className} grid overflow-hidden [&>*]:w-full [&>*]:h-full`}>{option.preview}</span>;
+  }
+  if (option.image && !failed) {
+    return (
+      <img
+        src={option.image}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        onError={() => setFailed(true)}
+        className={`${className} object-cover`}
+      />
+    );
+  }
+  return <span aria-hidden className={`${className} bg-canvas`} />;
+};
+
+/**
+ * A big choice (stadium shape, roof system, facade material): the current option on one row with
+ * its picture; clicking opens a grid of pictured tiles beside the side panel, over the viewport.
+ */
+export function GalleryPicker<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: T;
+  options: GalleryOption<T>[];
+  onChange: (id: T) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [box, setBox] = useState<{ left: number; top: number; width: number; bottom: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popRef = useRef<HTMLDivElement | null>(null);
+  const titleId = useId();
+  const current = options.find((o) => o.id === value);
+
+  // Beside the side panel on desktop; over the panel itself when it is a full-width drawer.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const panel = triggerRef.current?.closest('[data-side-panel]')?.getBoundingClientRect();
+      if (!panel) return;
+      const vw = window.innerWidth;
+      const room = vw - panel.right - 16;
+      const left = room >= 360 ? panel.right + 8 : panel.left + 8;
+      setBox({
+        left,
+        top: panel.top + 8,
+        bottom: window.innerHeight - panel.bottom + 8,
+        width: Math.min(640, vw - left - 8),
+      });
+    };
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    popRef.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+    const onPointer = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!popRef.current?.contains(t) && !triggerRef.current?.contains(t)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    window.addEventListener('pointerdown', onPointer);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', onPointer);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const columns = box && box.width >= 600 ? 'grid-cols-3' : 'grid-cols-2';
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={`${label} : ${current?.label ?? ''}, changer`}
+        onClick={() => setOpen((o) => !o)}
+        className={`flex items-center gap-3 w-full p-1.5 pr-2 text-left disabled:opacity-40 disabled:pointer-events-none ${choiceClass(open)}`}
+      >
+        {current && <GalleryVisual option={current} className="w-[72px] h-11 shrink-0 rounded-sm" />}
+        <span className="flex-1 min-w-0">
+          <span className="block text-xs font-medium leading-snug text-ink">{current?.label ?? '—'}</span>
+          {current?.detail && (
+            <span className="block mt-0.5 text-2xs leading-snug text-ink-muted">{current.detail}</span>
+          )}
+        </span>
+        <span className="flex items-center gap-0.5 shrink-0 text-2xs text-ink-muted">
+          Changer
+          <ChevronRight aria-hidden className="w-3.5 h-3.5" />
+        </span>
+      </button>
+      {open &&
+        box &&
+        createPortal(
+          <div
+            ref={popRef}
+            role="dialog"
+            aria-labelledby={titleId}
+            style={{ left: box.left, top: box.top, bottom: box.bottom, width: box.width }}
+            className="fixed z-50 flex flex-col rounded-md bg-panel border border-line shadow-[0_8px_24px_rgb(0_0_0/0.45)]"
+          >
+            <div className="flex items-center gap-2 h-11 pl-4 pr-2 border-b border-line shrink-0">
+              <h2 id={titleId} className="flex-1 text-sm font-semibold text-ink">
+                {label}
+              </h2>
+              <span className="text-2xs text-ink-faint tabular-nums">{options.length} choix</span>
+              <IconButton
+                label="Fermer"
+                onClick={() => {
+                  setOpen(false);
+                  triggerRef.current?.focus();
+                }}
+              >
+                <X className="w-4 h-4" />
+              </IconButton>
+            </div>
+            <div role="radiogroup" aria-label={label} className={`grid ${columns} gap-2 p-3 overflow-y-auto`}>
+              {options.map((o) => {
+                const active = o.id === value;
+                return (
+                  <button
+                    key={o.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => {
+                      onChange(o.id);
+                      setOpen(false);
+                      triggerRef.current?.focus();
+                    }}
+                    className={`flex flex-col gap-1.5 p-1.5 text-left ${choiceClass(active)}`}
+                  >
+                    <GalleryVisual option={o} className="w-full aspect-[36/22] rounded-sm" />
+                    <span className="flex items-start gap-1.5 px-0.5">
+                      <RadioMark active={active} />
+                      <span className="flex-1 min-w-0">
+                        <span className={`block text-xs leading-snug text-ink ${active ? 'font-medium' : ''}`}>
+                          {o.label}
+                        </span>
+                        {o.detail && (
+                          <span className="block mt-0.5 text-2xs leading-snug text-ink-muted">{o.detail}</span>
+                        )}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>,
+          document.body
+        )}
+    </>
+  );
+}

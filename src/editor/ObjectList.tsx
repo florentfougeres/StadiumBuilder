@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Building2,
+  ChevronLeft,
   Car,
   Copy,
   Fence,
@@ -60,6 +61,7 @@ const SelectedObjectInspector: React.FC = () => {
   const updateObjectTransform = useStadiumStore((s) => s.updateObjectTransform);
   const duplicateSelectedObject = useStadiumStore((s) => s.duplicateSelectedObject);
   const removeObject = useStadiumStore((s) => s.removeObject);
+  const selectObject = useStadiumStore((s) => s.selectObject);
   const roofStyle = useStadiumStore((s) => s.doc.roof.style);
   const obj = objects.find((o) => o.id === selectedObjectId);
   if (!obj) return null;
@@ -71,9 +73,12 @@ const SelectedObjectInspector: React.FC = () => {
 
   return (
     <>
-      <div className="flex items-center gap-1 h-12 pl-4 pr-2 border-b border-line">
+      <div className="flex items-center gap-1 min-h-12 py-2 pl-2 pr-2 border-b border-line">
+        <IconButton label="Retour aux équipements" onClick={() => selectObject(null)}>
+          <ChevronLeft className="w-4 h-4" />
+        </IconButton>
         <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-semibold text-ink truncate">{obj.name}</h2>
+          <h2 className="text-sm font-semibold leading-snug text-ink">{obj.name}</h2>
           <div className="text-2xs text-ink-faint">G déplacer · R tourner · S échelle</div>
         </div>
         <IconButton label="Dupliquer" onClick={duplicateSelectedObject}>
@@ -170,10 +175,13 @@ const SelectedObjectInspector: React.FC = () => {
   );
 };
 
-export const ObjectList: React.FC = () => {
+/** Equipment tab: what is placed, what can be added, then `footer` (the pitch floodlights). */
+export const ObjectList: React.FC<{ footer?: React.ReactNode }> = ({ footer }) => {
   const objects = useStadiumStore((s) => s.doc.objects);
   const selectedObjectId = useStadiumStore((s) => s.selectedObjectId);
   const addObject = useStadiumStore((s) => s.addObject);
+  const selectObject = useStadiumStore((s) => s.selectObject);
+  const removeObject = useStadiumStore((s) => s.removeObject);
 
   if (selectedObjectId && objects.some((o) => o.id === selectedObjectId)) {
     return <SelectedObjectInspector />;
@@ -181,7 +189,7 @@ export const ObjectList: React.FC = () => {
 
   return (
     <>
-      <div className="flex items-center h-12 px-4 border-b border-line">
+      <div className="flex items-center min-h-12 py-2 px-4 border-b border-line">
         <div>
           <h2 className="text-sm font-semibold text-ink">Équipements</h2>
           <div className="text-2xs text-ink-faint tabular-nums">
@@ -189,6 +197,30 @@ export const ObjectList: React.FC = () => {
           </div>
         </div>
       </div>
+      {objects.length > 0 && (
+        <PanelSection title="Placés">
+          <ul className="grid gap-px -mx-2">
+            {objects.map((obj) => (
+              <li key={obj.id} className="group flex items-center gap-1 min-h-8 pl-2 pr-1 rounded hover:bg-hover">
+                <button
+                  type="button"
+                  onClick={() => selectObject(obj.id)}
+                  className="flex-1 min-w-0 py-1.5 text-left text-xs leading-snug text-ink"
+                >
+                  {obj.name}
+                </button>
+                <IconButton
+                  label={`Supprimer « ${obj.name} »`}
+                  onClick={() => removeObject(obj.id)}
+                  className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-danger"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </IconButton>
+              </li>
+            ))}
+          </ul>
+        </PanelSection>
+      )}
       <PanelSection title="Ajouter">
         <div className="grid grid-cols-2 gap-1">
           {ADDABLE_ASSETS.map((item) => (
@@ -196,19 +228,19 @@ export const ObjectList: React.FC = () => {
               key={item.type}
               type="button"
               onClick={() => addObject(item.type)}
-              className={`group flex items-center gap-2 h-8 px-2 text-left text-xs ${choiceClass(false)}`}
+              className={`group flex items-center gap-2 min-h-8 px-2 py-1.5 text-left text-xs leading-snug ${choiceClass(false)}`}
             >
               <span className="text-ink-faint group-hover:text-ink">{item.icon}</span>
-              <span className="flex-1 truncate">{item.label}</span>
-              <Plus aria-hidden className="w-3 h-3 text-ink-faint group-hover:text-accent-ink" />
+              <span className="flex-1 min-w-0">{item.label}</span>
+              <Plus aria-hidden className="w-3 h-3 shrink-0 text-ink-faint group-hover:text-accent-ink" />
             </button>
           ))}
         </div>
         <p className="text-2xs text-ink-faint">
-          L’équipement apparaît près du terrain. Sélectionne-le dans la scène ou dans l’arborescence pour le
-          placer.
+          L’équipement apparaît près du terrain. Clique-le dans la scène ou dans la liste pour le régler.
         </p>
       </PanelSection>
+      {footer}
     </>
   );
 };

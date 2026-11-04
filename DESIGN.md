@@ -70,8 +70,8 @@ spacing:
   section-title: "40px"
   topbar: "44px"
   panel-header: "48px"
-  tree-width: "240px"
-  inspector-width: "300px"
+  rail-width: "72px"
+  panel-width: "340px"
 components:
   button-primary:
     backgroundColor: "{colors.accent-strong}"
@@ -123,13 +123,19 @@ components:
     textColor: "{colors.ink}"
     rounded: "{rounded.DEFAULT}"
     height: "28px"
-  tree-row:
-    textColor: "{colors.ink}"
-    typography: "{typography.body}"
+  rail-tab:
+    textColor: "{colors.ink-muted}"
+    typography: "{typography.label}"
     rounded: "{rounded.DEFAULT}"
-    height: "28px"
-  tree-row-active:
+    width: "72px"
+    height: "56px"
+  rail-tab-active:
     backgroundColor: "{colors.accent-soft}"
+    textColor: "{colors.accent-ink}"
+  gallery-tile:
+    backgroundColor: "{colors.panel}"
+    rounded: "{rounded.DEFAULT}"
+    padding: "6px"
   switch-on:
     backgroundColor: "{colors.accent-strong}"
     rounded: "{rounded.full}"
@@ -158,7 +164,7 @@ components:
 
 **Creative North Star: "The Quiet Workbench"**
 
-StadiumForge's chrome is a category-standard design-tool editor executed without irony, with Figma's craft level as the bar. A near-black neutral ground, three tonal grey steps, hairline dividers and one blue do all the work, so the 3D stadium in the centre is the only thing on screen with colour and spectacle. The interface is a workbench around the model: a structure tree on the left, the viewport filling the centre, a contextual inspector on the right, a slim top bar above.
+StadiumForge's chrome is a category-standard design-tool editor executed without irony, with Figma's craft level as the bar. A near-black neutral ground, three tonal grey steps, hairline dividers and one blue do all the work, so the 3D stadium in the centre is the only thing on screen with colour and spectacle. The interface is a workbench around the model: a column of labelled tabs on the left, one settings panel beside it, the viewport filling the rest, a slim top bar above.
 
 Density is high and calm. Type sits at 11 to 13px, controls sit on 28px rows, and numbers are always tabular and French-formatted (fr-FR: narrow-space thousands, comma decimals). Feedback is carried by value, not by colour: when a parameter changes, the metric strip flashes a signed delta in blue, holds it, then lets it fade.
 
@@ -203,6 +209,8 @@ A neutral charcoal ramp with a single electric blue split into four jobs, plus t
 
 **The No Scoreboard Rule.** Metric changes are never green or red. A delta is Signal Blue Ink with an explicit sign (+ or the true minus −); red and amber are kept for warnings and destruction.
 
+**The No Ellipsis Rule.** Labels, names, options and metadata never end in "…": they wrap to a second line, or the layout yields room (the wordmark hides before the project name clips). An important command never relies on an icon alone at desktop widths.
+
 **The Visible Choice Rule.** Anything the user picks is outlined at rest (Edge), strengthens on hover (Edge Hover + Hover fill) and turns blue when chosen (Selection Blue border + Selection Wash). Single choices also carry a radio mark. A choice that only reveals itself on hover is a bug. The shared `choiceClass()` in `src/editor/ui.tsx` owns this shell.
 
 ### Light theme
@@ -233,11 +241,15 @@ Same roles, white workbench, set by `data-theme="light"` on `<html>` (`src/index
 
 ## Layout
 
-A three-zone editor: 44px top bar; 240px structure tree left; viewport fills the centre; 300px inspector right. The top bar is a three-column grid at lg (identity and project name left, camera and lighting segmented controls centred, undo/redo, panel toggle and Exporter right). Panel headers are 48px, collapsible section title rows 40px, field rows 28px. Panel bodies use 16px side padding and 12px vertical gaps between fields.
+One panel, never two: 44px top bar; a 72px tab rail on the left (Forme, Terrain, Tribunes, Toit, Façade, Abords, Équipements); a single 340px settings panel beside it; the viewport fills the rest. Clicking the open tab again folds the panel away (as does H); any tab reopens it. Materials live in the tab of the part they dress (roof covering and structure under Toit, seats under Tribunes, turf and track under Terrain, plaza under Abords), never in a materials catch-all.
+
+Each tab shows its essentials first and keeps expert settings in one collapsed "Avancé" section at the bottom, grouped by 11px sub-headings rather than nested collapsibles; its open state is remembered per tab for the session. Saved projects and the example gallery sit in the top bar's Projets menu, not in the panel.
+
+The top bar is a three-column grid at lg (project name and Projets menu left, camera and lighting segmented controls centred, undo/redo, panel toggle, theme and Exporter right). Camera modes and lighting carry their written names from xl (1280px); below, icons with a tooltip. The StadiumForge wordmark appears from 2xl so the project name never gets cut. Panel headers are at least 48px, collapsible section title rows 40px, field rows 28px. Panel bodies use 16px side padding and 12px vertical gaps between fields.
 
 Spacing runs on a 4px grid (2, 4, 8, 12, 16). The metric strip floats 12px from the viewport's bottom-left corner as a single row of cells divided by hairlines; non-essential cells hide below sm.
 
-Below lg the tree is hidden and the inspector becomes a right-hand drawer (up to 300px, full width when narrower) over the viewport, with a node selector at its head; camera modes collapse to icons.
+Below lg the rail becomes a bottom tab bar (scrolling sideways when needed) and the panel a left-hand drawer over the viewport (up to 380px, full width when narrower), with the lighting switch at its head below md; it starts closed on small screens.
 
 ## Elevation & Depth
 
@@ -245,7 +257,7 @@ Flat by default. Depth is tonal: canvas recedes, panels sit level, raised greys 
 
 ### Shadow Vocabulary
 - **Popover** (`box-shadow: 0 8px 24px rgb(0 0 0 / 0.45)`): menus that float over the work (export menu).
-- **Drawer** (`box-shadow: -8px 0 24px rgb(0 0 0 / 0.4)`): the inspector when it overlays the viewport below lg.
+- **Drawer** (`box-shadow: 8px 0 24px rgb(0 0 0 / 0.4)`): the settings panel when it overlays the viewport below lg.
 - **Thumb contact** (`box-shadow: 0 1px 2px rgb(0 0 0 / 0.5)`): the white slider thumb only, so it reads against the track.
 
 ### Named Rules
@@ -285,11 +297,14 @@ Label left, formatted value right (click to type an exact value, Enter commits, 
 ### Option list
 Single-choice list of compact outlined rows (min 32px, 4px gap) replacing paragraph cards, each led by a 14px radio mark. At rest: Panel fill, Edge outline, empty ring. Hover: Edge Hover outline and Hover fill. Selected: Selection Blue outline, Selection Wash, filled blue dot, medium text, and its one-line detail revealed in 11px Muted Ink. Toggle groups (covered stands), club palettes and the add-equipment grid use the same `choiceClass()` tile.
 
-### Navigation (structure tree)
-28px rows, 4px radius, icon in Faint Ink, optional right-aligned tabular metadata. Children indent to 32px. Selected row: Selection Wash with a Signal Blue Ink icon. Group labels (Stade, Abords, Fichier) are 11px medium Faint Ink, sentence case.
+### Navigation (tab rail)
+72 by 56px tabs, 4px radius: an 18px icon over its 11px name, both always shown. At rest Muted Ink; hover Hover Graphite and Ink; the open tab takes Selection Wash with a Signal Blue Ink icon and a medium Ink name. Below lg the same tabs run along the bottom.
 
-### Inspector panel
-48px header (13px semibold title, 11px tabular metadata), then collapsible sections with a rotating chevron; essentials open, expert settings in a collapsed "Avancé" section.
+### Settings panel
+A header of at least 48px (13px semibold title, 11px tabular metadata that wraps rather than clips), then collapsible sections with a rotating chevron; essentials open, expert settings in the collapsed "Avancé" section, grouped under 11px medium Faint Ink sub-headings.
+
+### Gallery picker
+For the big visual choices (bowl shape, roof system, envelope, every material). In the panel: one outlined row with a 72 by 44px picture, the current name, its one-line detail and "Changer ›". Clicking opens a Panel Charcoal sheet beside the panel, over the viewport (over the drawer itself when there is no room), with the Popover shadow: a 44px title row with the count and a close button, then a grid of tiles (3 columns from 600px wide, else 2). Each tile is a `choiceClass()` shell holding a 36:22 picture, a radio mark, the full name and its detail. Choosing closes the sheet and returns focus to the row; Escape and outside clicks close it. Pictures are pre-rendered WebP files in `public/shapes`, `public/roofs` and `public/envelopes` (regenerated in dev with `__generateThumbnails()`), or the material's own rendered texture.
 
 ### Metric strip (signature)
 A row of hairline-divided cells on 95% Panel Charcoal floating bottom-left of the viewport. Each cell: 11px Faint Ink label, 13px medium tabular value with 11px Muted Ink unit. After each change a signed delta in Signal Blue Ink appears beside the label, rises 3px into place, holds, and fades over 1800ms (expo-out); under reduced motion it appears and disappears without movement.

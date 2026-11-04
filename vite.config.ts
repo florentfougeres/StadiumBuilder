@@ -5,18 +5,17 @@ import path from 'path';
 import {defineConfig, type Plugin} from 'vite';
 
 /**
- * Dev-only endpoint for `__generatePresetThumbnails()` (OnboardingDialog.tsx): the browser renders
- * each preset and POSTs the WebP here, written to public/presets/<id>.webp for the gallery.
+ * Dev-only endpoint for `__generateThumbnails()` (src/editor/thumbnails.ts): the browser renders
+ * each preset or option and POSTs the WebP here, written to public/<dir>/<id>.webp.
  */
-function presetThumbnailWriter(): Plugin {
-  const dir = path.resolve(__dirname, 'public/presets');
+function thumbnailWriter(): Plugin {
   return {
-    name: 'preset-thumbnail-writer',
+    name: 'thumbnail-writer',
     apply: 'serve',
     configureServer(server) {
-      server.middlewares.use('/__preset-thumbnails/', (req, res) => {
-        const id = (req.url ?? '').replace(/^\//, '');
-        if (req.method !== 'POST' || !/^[a-z0-9_]+$/.test(id)) {
+      server.middlewares.use('/__thumbnails/', (req, res) => {
+        const match = /^\/(presets|shapes|roofs|envelopes)\/([a-z0-9_]+)$/.exec(req.url ?? '');
+        if (req.method !== 'POST' || !match) {
           res.statusCode = 400;
           res.end();
           return;
@@ -24,8 +23,9 @@ function presetThumbnailWriter(): Plugin {
         const chunks: Buffer[] = [];
         req.on('data', (c: Buffer) => chunks.push(c));
         req.on('end', () => {
+          const dir = path.resolve(__dirname, 'public', match[1]);
           fs.mkdirSync(dir, {recursive: true});
-          fs.writeFileSync(path.join(dir, `${id}.webp`), Buffer.concat(chunks));
+          fs.writeFileSync(path.join(dir, `${match[2]}.webp`), Buffer.concat(chunks));
           res.statusCode = 204;
           res.end();
         });
@@ -38,7 +38,7 @@ export default defineConfig(() => {
   return {
     // Relative asset URLs so the build works under GitHub Pages' /<repo>/ sub-path.
     base: './',
-    plugins: [react(), tailwindcss(), presetThumbnailWriter()],
+    plugins: [react(), tailwindcss(), thumbnailWriter()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

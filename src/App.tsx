@@ -4,24 +4,79 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Inspector } from './editor/Inspector';
+import {
+  Armchair,
+  Box,
+  Building,
+  CircleDashed,
+  RectangleHorizontal,
+  Tent,
+  Trees,
+} from 'lucide-react';
+import { EditorTab, Inspector, ROOF_OPTIONS, SHAPE_OPTIONS } from './editor/Inspector';
 import { OnboardingDialog, shouldShowOnboardingOnStart } from './editor/OnboardingDialog';
-import { EditorNode, StructureTree } from './editor/StructureTree';
+import { generateThumbnails, ThumbnailDir, thumbnailJobs } from './editor/thumbnails';
 import { LightingControl, Toolbar } from './editor/Toolbar';
 import { Viewport } from './editor/Viewport';
 import { calculateStadiumMetrics } from './stadium/capacity';
 import { StadiumMetrics } from './stadium/schema';
 import { useStadiumStore } from './state/useStadiumStore';
 
-const NODE_LABELS: Record<EditorNode, string> = {
-  bowl: 'Enceinte et terrain',
-  stand: 'Tribunes',
-  roof: 'Toiture',
-  materials: 'Façade et matériaux',
-  site: 'Environnement',
-  objects: 'Équipements',
-  projects: 'Mes projets',
-};
+const TABS: { id: EditorTab; label: string; icon: React.ReactNode }[] = [
+  { id: 'shape', label: 'Forme', icon: <CircleDashed className="w-[18px] h-[18px]" /> },
+  { id: 'pitch', label: 'Terrain', icon: <RectangleHorizontal className="w-[18px] h-[18px]" /> },
+  { id: 'stands', label: 'Tribunes', icon: <Armchair className="w-[18px] h-[18px]" /> },
+  { id: 'roof', label: 'Toit', icon: <Tent className="w-[18px] h-[18px]" /> },
+  { id: 'facade', label: 'Façade', icon: <Building className="w-[18px] h-[18px]" /> },
+  { id: 'site', label: 'Abords', icon: <Trees className="w-[18px] h-[18px]" /> },
+  { id: 'objects', label: 'Équipements', icon: <Box className="w-[18px] h-[18px]" /> },
+];
+
+if (import.meta.env.DEV) {
+  (window as unknown as { __generateThumbnails: (only?: ThumbnailDir[]) => Promise<number> }).__generateThumbnails = (
+    only
+  ) =>
+    generateThumbnails(
+      thumbnailJobs(
+        SHAPE_OPTIONS.map((o) => o.id),
+        ROOF_OPTIONS.map((o) => o.id)
+      ),
+      only
+    );
+}
+
+/**
+ * The editor's sections as labelled tabs: a column on the left from lg, a bar along the bottom
+ * below. The active tab opens the side panel; clicking it again folds the panel away.
+ */
+const TabRail: React.FC<{ tab: EditorTab; panelOpen: boolean; onSelect: (tab: EditorTab) => void }> = ({
+  tab,
+  panelOpen,
+  onSelect,
+}) => (
+  <nav
+    aria-label="Sections du stade"
+    className="order-last lg:order-first flex lg:flex-col shrink-0 gap-0.5 p-1 lg:py-2 bg-panel border-t lg:border-t-0 lg:border-r border-line max-lg:overflow-x-auto"
+  >
+    {TABS.map((t) => {
+      const active = t.id === tab && panelOpen;
+      return (
+        <button
+          key={t.id}
+          type="button"
+          aria-pressed={active}
+          onClick={() => onSelect(t.id)}
+          className={`flex flex-col items-center justify-center gap-1 shrink-0 w-[68px] lg:w-[72px] h-14 rounded transition-colors duration-100 ${
+            active ? 'bg-accent-soft text-accent-ink' : 'text-ink-muted hover:text-ink hover:bg-hover'
+          }`}
+        >
+          {t.icon}
+          <span className={`text-2xs leading-none ${active ? 'font-medium text-ink' : ''}`}>{t.label}</span>
+        </button>
+      );
+    })}
+  </nav>
+);
 
 const fr = (n: number) => n.toLocaleString('fr-FR');
 
@@ -96,7 +151,7 @@ const MetricStrip: React.FC<{ metrics: StadiumMetrics; docId: string }> = ({ met
 };
 
 export default function App() {
-  const [node, setNode] = useState<EditorNode>('bowl');
+  const [tab, setTab] = useState<EditorTab>('shape');
 
   const doc = useStadiumStore((s) => s.doc);
   const panelsHidden = useStadiumStore((s) => s.dockCollapsed);
@@ -120,10 +175,18 @@ export default function App() {
     if (window.innerWidth < 1024 && !useStadiumStore.getState().dockCollapsed) togglePanels();
   }, [initFromDb, togglePanels, setExamplesOpen]);
 
-  // Picking an object in the 3D scene opens its inspector.
+  // Picking an object in the 3D scene opens its settings.
   useEffect(() => {
-    if (selectedObjectId) setNode('objects');
-  }, [selectedObjectId]);
+    if (!selectedObjectId) return;
+    setTab('objects');
+    if (useStadiumStore.getState().dockCollapsed) togglePanels();
+  }, [selectedObjectId, togglePanels]);
+
+  const selectTab = (next: EditorTab) => {
+    // A closed panel opens on any tab; the open tab clicked again folds it away.
+    if (panelsHidden || next === tab) togglePanels();
+    setTab(next);
+  };
 
   // Keyboard shortcuts: G/R/S gizmo, H panels, Escape deselect, Delete object, Ctrl+Z / Ctrl+Y
   useEffect(() => {
@@ -184,49 +247,30 @@ export default function App() {
     <div className="flex flex-col w-full h-[100dvh] overflow-hidden bg-canvas text-ink">
       <Toolbar />
 
-      <div className="relative flex flex-1 min-h-0">
-        {!panelsHidden && (
-          <aside
-            aria-label="Structure"
-            className="hidden lg:block w-60 shrink-0 bg-panel border-r border-line"
-          >
-            <StructureTree node={node} onSelect={setNode} />
-          </aside>
-        )}
-
-        <main className="relative flex-1 min-w-0">
-          <h1 className="sr-only">{doc.name}</h1>
-          <Viewport />
-          <MetricStrip metrics={metrics} docId={doc.id} />
-        </main>
-
-        {!panelsHidden && (
-          <aside
-            aria-label={`Propriétés : ${NODE_LABELS[node]}`}
-            className="absolute lg:static inset-y-0 right-0 z-20 flex flex-col w-[min(300px,100%)] lg:w-[300px] shrink-0 bg-panel border-l border-line max-lg:shadow-[-8px_0_24px_rgb(0_0_0/0.4)]"
-          >
-            <div className="lg:hidden flex items-center gap-2 px-3 py-2 border-b border-line">
-              <div className="md:hidden">
+      <div className="flex flex-col lg:flex-row flex-1 min-h-0">
+        <TabRail tab={tab} panelOpen={!panelsHidden} onSelect={selectTab} />
+        <div className="relative flex flex-1 min-h-0 min-w-0">
+          {!panelsHidden && (
+            <aside
+              data-side-panel
+              aria-label={`Réglages : ${TABS.find((t) => t.id === tab)?.label}`}
+              className="absolute lg:static inset-y-0 left-0 z-20 flex flex-col w-[min(380px,100%)] lg:w-[340px] shrink-0 bg-panel border-r border-line max-lg:shadow-[8px_0_24px_rgb(0_0_0/0.4)]"
+            >
+              <div className="md:hidden flex items-center px-3 py-2 border-b border-line">
                 <LightingControl />
               </div>
-              <select
-                aria-label="Élément à modifier"
-                value={node}
-                onChange={(e) => setNode(e.target.value as EditorNode)}
-                className="flex-1 min-w-0 h-8 px-2 text-xs text-ink bg-field rounded border border-edge hover:border-edge-hover"
-              >
-                {(Object.keys(NODE_LABELS) as EditorNode[]).map((n) => (
-                  <option key={n} value={n}>
-                    {NODE_LABELS[n]}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex-1 min-h-0 overflow-y-auto">
-              <Inspector node={node} />
-            </div>
-          </aside>
-        )}
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <Inspector tab={tab} />
+              </div>
+            </aside>
+          )}
+
+          <main className="relative flex-1 min-w-0">
+            <h1 className="sr-only">{doc.name}</h1>
+            <Viewport />
+            <MetricStrip metrics={metrics} docId={doc.id} />
+          </main>
+        </div>
       </div>
 
       <OnboardingDialog open={examplesOpen} onClose={() => setExamplesOpen(false)} />
