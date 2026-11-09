@@ -23,12 +23,12 @@ const NET_CELL = 0.14;
 const NET_X0 = 0.07;
 const NET_TOP = GOAL_H - 0.03;
 
-/** Slack of the hung net (m): roof back edge and side edges, roof belly, back and sides pulled in. */
-const SAG_BACK_EDGE = 0.2;
-const SAG_ROOF_SIDE = 0.08;
-const SAG_ROOF_MID = 0.14;
-const PINCH_BACK = 0.045;
-const BELLY_SIDE = 0.12;
+/** Slack of the hung net (m): the roof bellies, the back stays a near-flat upright rectangle. */
+const SAG_BACK_EDGE = 0.07;
+const SAG_ROOF_SIDE = 0.04;
+const SAG_ROOF_MID = 0.16;
+const PINCH_BACK = 0.008;
+const BELLY_SIDE = 0.03;
 
 let netCanvas: HTMLCanvasElement | null = null;
 /** One square cell of knotted net, white cord on transparent: tiles in both directions. */
@@ -73,7 +73,7 @@ function backPoint(u: number, v: number): THREE.Vector3 {
   const top = roofPoint(u, 1).y;
   const sv = Math.sin(Math.PI * v);
   return new THREE.Vector3(
-    GOAL_D - 0.06 * Math.sin(Math.PI * u) * sv,
+    GOAL_D - 0.02 * Math.sin(Math.PI * u) * sv,
     top * (1 - v),
     (u - 0.5) * GOAL_W * (1 - PINCH_BACK * 2 * sv)
   );
