@@ -20,6 +20,8 @@ export interface RoofDefinition {
   integralShell?: boolean;
   /** Movable panels: open/close settings and animation. */
   movable?: boolean;
+  /** The roof floats free over the facade: no band closes the gap between them. */
+  openEaves?: boolean;
   /** Short name when the style can be chosen for a single stand. */
   standLabel?: string;
   /** Extra building cost per seat (€) for a full-coverage roof. */
@@ -186,6 +188,13 @@ export const ROOF_CATALOG = {
     integralShell: true,
     costPerSeat: 1240,
   },
+  pleated_shell: {
+    label: 'Coque plissée intégrale',
+    desc: 'Une seule peau pliée du sol jusqu’au bord du toit, les plis de façade continuant sur la toiture',
+    placement: 'arena',
+    integralShell: true,
+    costPerSeat: 1180,
+  },
   historic_gable: {
     label: 'Toit à pignon historique',
     desc: 'Toit à deux pans sur fermes rivetées, fronton au centre (stades d’avant-guerre)',
@@ -283,6 +292,14 @@ export const ROOF_CATALOG = {
     desc: 'Anneau extérieur comprimé, anneau intérieur tendu & câbles radiaux',
     placement: 'arena',
     costPerSeat: 840,
+  },
+  mast_sails: {
+    label: 'Voiles tendues sur mâts',
+    desc: 'Couronne de voiles indépendantes, chacune soulevée par son propre mât derrière la façade',
+    placement: 'arena',
+    openEaves: true,
+    costPerSeat: 840,
+    peak: (roof, h) => arenaRoofY(roof, h) + 19,
   },
   tensile_net: {
     label: 'Résille & membranes tendues',

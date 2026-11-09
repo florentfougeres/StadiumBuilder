@@ -688,6 +688,11 @@ export const FACADE_PATTERN_CATALOG: SimpleCatalogEntry<FacadePatternId>[] = [
     label: 'Tressage',
     subtitle: 'Bandes diagonales de deux couleurs qui passent dessus-dessous',
   },
+  {
+    id: 'mashrabiya',
+    label: 'Moucharabieh',
+    subtitle: 'Résille géométrique d’étoiles à huit branches, comme un écran de bois ou de métal ajouré',
+  },
 ];
 
 /**

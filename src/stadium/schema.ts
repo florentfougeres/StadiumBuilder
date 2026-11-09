@@ -109,7 +109,8 @@ export type FacadePatternId =
   | 'honeycomb'
   | 'voronoi'
   | 'pixel_mosaic'
-  | 'woven_basket';
+  | 'woven_basket'
+  | 'mashrabiya';
 
 export type FloodlightRigMode = 'roof_gantry' | 'corner_masts' | 'both' | 'none';
 
@@ -137,6 +138,8 @@ export interface StandConfig {
   elevationStart: number;
   seatingType?: SeatingType;
   vipLoges?: boolean;
+  /** Storeys of glazed hospitality boxes in each tier break when `vipLoges` is on (1 to 3). */
+  vipStoreys?: 1 | 2 | 3;
   roofStyleOverride?: RoofStyle | 'inherit';
   /** Retractable stand: how far it is currently rolled back from its forward position (m, `0..15`). */
   retractShift?: number;

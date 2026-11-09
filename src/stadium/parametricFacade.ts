@@ -212,6 +212,84 @@ function buildPixelMosaic(
 }
 
 /**
+ * `mashrabiya`: a geometric screen of eight-pointed stars, each cell a square crossed by the same
+ * square turned 45°, cells sharing their edges so the strips run unbroken across the facade.
+ */
+function buildMashrabiya(
+  sampleAtArc: (s: number) => FacadeRailSample,
+  totalLen: number,
+  closed: boolean,
+  density: number,
+  depth: number,
+  mat: THREE.Material,
+  group: THREE.Group
+): THREE.Group | null {
+  const cell = Math.max(1.6, 3.4 / density);
+  const cols = Math.max(2, Math.round(totalLen / cell));
+  const step = totalLen / cols;
+  const refH = referenceHeight(sampleAtArc, totalLen) + 0.5;
+  const rows = Math.max(1, Math.floor(refH / cell));
+  const out = Math.max(0.3, depth * 0.55);
+  const strip = Math.max(0.12, cell * 0.07);
+  const at = (s: number, y: number) => {
+    const pt = sampleAtArc(closed ? ((s % totalLen) + totalLen) % totalLen : Math.max(0, Math.min(totalLen, s)));
+    return { v: new THREE.Vector3(pt.x + pt.nx * out, pt.yBottom + 0.3 + y, pt.z + pt.nz * out), h: pt.yTop - pt.yBottom - 0.5 };
+  };
+  const matrices: THREE.Matrix4[] = [];
+  const seg = (s0: number, y0: number, s1: number, y1: number) => {
+    const a = at(s0, y0);
+    const b = at(s1, y1);
+    if (Math.max(y0, y1) > Math.min(a.h, b.h)) return;
+    matrices.push(slabMatrix(a.v, b.v, 0.16, strip));
+  };
+  for (let c = 0; c < cols; c++) {
+    const s0 = c * step;
+    const sm = s0 + step / 2;
+    for (let r = 0; r < rows; r++) {
+      const y0 = r * cell;
+      const ym = y0 + cell / 2;
+      // Square: bottom and left edges (the next cells draw their own, closing the grid).
+      seg(s0, y0, s0 + step, y0);
+      seg(s0, y0, s0, y0 + cell);
+      // The same square turned 45°: a diamond whose points touch the cell edges' midpoints,
+      // inset so the two squares cross into an eight-pointed star.
+      const k = 0.5 * Math.SQRT1_2;
+      const pts: [number, number][] = [
+        [sm, ym - cell * k * 1.41],
+        [sm + step * k * 1.41, ym],
+        [sm, ym + cell * k * 1.41],
+        [sm - step * k * 1.41, ym],
+      ];
+      for (let i = 0; i < 4; i++) {
+        const [a0, b0] = pts[i];
+        const [a1, b1] = pts[(i + 1) % 4];
+        seg(a0, b0, a1, b1);
+      }
+      // Inner square of the star.
+      const q = 0.29;
+      seg(sm - step * q, ym - cell * q, sm + step * q, ym - cell * q);
+      seg(sm + step * q, ym - cell * q, sm + step * q, ym + cell * q);
+      seg(sm + step * q, ym + cell * q, sm - step * q, ym + cell * q);
+      seg(sm - step * q, ym + cell * q, sm - step * q, ym - cell * q);
+    }
+    seg(s0, rows * cell, s0 + step, rows * cell);
+  }
+  if (!closed) {
+    for (let r = 0; r < rows; r++) seg(totalLen, r * cell, totalLen, (r + 1) * cell);
+  }
+  if (!matrices.length) return null;
+  const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, matrices.length);
+  inst.name = 'FacadeMashrabiya';
+  matrices.forEach((m, i) => inst.setMatrixAt(i, m));
+  inst.instanceMatrix.needsUpdate = true;
+  inst.computeBoundingSphere();
+  inst.castShadow = true;
+  inst.receiveShadow = true;
+  group.add(inst);
+  return group;
+}
+
+/**
  * `woven_basket`: two families of diagonal strips, one per palette colour, passing over and under
  * each other at every crossing like the weave of a basket.
  */
@@ -475,6 +553,10 @@ export function buildParametricFacadeOnRail(params: {
 
   if (pattern === 'pixel_mosaic') {
     return buildPixelMosaic(sampleAtArc, totalLen, closed, safeDensity, safeDepth, palette, group);
+  }
+
+  if (pattern === 'mashrabiya') {
+    return buildMashrabiya(sampleAtArc, totalLen, closed, safeDensity, safeDepth, primaryMat, group);
   }
 
   if (pattern === 'woven_basket') {

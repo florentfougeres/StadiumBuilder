@@ -4,6 +4,7 @@ import { buildStadiumSceneGraph } from '../buildStadiumScene';
 import { createPresetDocument } from '../presets';
 import { applyShape } from '../../state/useStadiumStore';
 import type { StadiumDocument } from '../schema';
+import { computeStandSection, VIP_STOREY_M, verticalBoxStandPatch } from '../sightlines';
 
 /** Textures are drawn on a canvas: any 2D call is a no-op here. */
 if (typeof document === 'undefined') {
@@ -127,5 +128,28 @@ describe('features from the 20-stadium analysis', () => {
     applyShape(doc, 'cricket_oval');
     expect(count(scene(doc), 'RugbyPosts')).toBe(2);
     expect(doc.stands.east.rakeProfile).toBe('progressive');
+  });
+
+  it('draws a mashrabiya screen of eight-pointed stars', () => {
+    const doc = createPresetDocument('bowl_bowstring_60k');
+    doc.concourse = { width: 0, heightRatio: 0.5 };
+    doc.materials = { ...doc.materials!, envelopeStyle: 'enveloping_skin', facadePattern: 'mashrabiya' };
+    const mesh = scene(doc).getObjectByName('FacadeMashrabiya') as THREE.InstancedMesh;
+    expect(mesh.count).toBeGreaterThan(500);
+  });
+
+  it('stacks up to three storeys of glazed boxes in a tier break', () => {
+    const stand = { ...createPresetDocument('bowl_bowstring_60k').stands.west, tiers: 2 as const, vipLoges: true };
+    const one = computeStandSection({ ...stand, vipStoreys: 1 });
+    const three = computeStandSection({ ...stand, vipStoreys: 3 });
+    expect(three.topHeight - one.topHeight).toBeGreaterThan(2 * VIP_STOREY_M - 0.5);
+  });
+
+  it('turns a stand into a near-vertical stack of box balconies', () => {
+    const stand = createPresetDocument('bowl_bowstring_60k').stands.west;
+    const plain = computeStandSection(stand);
+    const boxes = computeStandSection({ ...stand, ...verticalBoxStandPatch(stand) });
+    expect(boxes.tiers.length).toBe(5);
+    expect(boxes.topHeight / boxes.totalDepth).toBeGreaterThan(1.5 * (plain.topHeight / plain.totalDepth));
   });
 });

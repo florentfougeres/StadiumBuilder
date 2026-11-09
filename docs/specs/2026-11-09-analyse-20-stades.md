@@ -144,3 +144,17 @@ Restes connus :
 - Couronne plissée qui descendrait en façade (Rabat au plus juste) : pas faite.
 - Le socle vitré ne s'applique pas quand une coursive extérieure forme la façade.
 - Plusieurs presets ont des C-values négatives dans leurs étages supérieurs, indépendamment de ces ajouts.
+
+## 5. Ajouts suivants (2026-11-09, soir)
+
+- **Motif moucharabieh** : résille d'étoiles à huit branches (stades du Qatar, Rabat).
+- **Voiles tendues sur mâts** : couronne de voiles indépendantes vrillées, chacune sur son mât ;
+  pas de bande de fermeture entre façade et voiles (`openEaves` dans le catalogue des toits).
+- **Coque plissée intégrale** : plis continus du sol jusqu'au bord intérieur du toit, dans le
+  matériau de façade (Rabat). La couronne plissée existante descendait déjà en façade.
+- **Anneau de loges** : 1 à 3 étages de loges vitrées par rupture d'étage (`vipStoreys`), dimensions
+  centralisées dans `tierBreakDims` (profil, bol, coins).
+- **Tribune verticale de loges** (La Bombonera) : bouton qui empile 5 balcons de 2 rangs à 42°.
+  Sa C-value est faible par nature (rangs très hauts près de la touche).
+
+Écartés pour l'instant : terrains d'autres sports (football américain, baseball…), stades de type Braga.

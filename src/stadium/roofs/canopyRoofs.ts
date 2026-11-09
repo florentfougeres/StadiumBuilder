@@ -3,7 +3,7 @@ import { getBowlArcRange, ringSamplesT, sampleRoundedBowlRing } from '../bowlRin
 import { createConcreteBowlMaterial, createStructurePbrMaterial, resolveStadiumMaterials } from '../materials';
 import { resolvePortalCount, StadiumDocument, RoofStyle } from '../schema';
 import { arenaRoofY } from '../roofCatalog';
-import { beamGeometry, chordAt, mergedMesh } from './roofBeams';
+import { beamGeometry, chordAt, gridSurfaceGeometry, mergedMesh } from './roofBeams';
 import { computeStadiumRingBounds } from './ringBounds';
 import { RoofBuilder, RingProfile, buildAnnularCatwalkFloodlights, buildCanopyMaterialBundle, buildCanopyRib, buildPerimeterCanopyCrown, buildRingLoft, cornerWeight, hasRoofGantryLights, warrenTrussParts } from './roofKit';
 
@@ -476,7 +476,86 @@ function buildGirderGridRoof(
 }
 
 /** Open canopies swept around the ring over the stands. */
+/**
+ * MAST SAILS (`mast_sails`): a ring of separate tensioned membranes, each a twisted four-point
+ * sail lifted at one outer corner by its own mast behind the facade and tied down at the others,
+ * gaps between neighbouring sails, like a field of umbrellas over the stands.
+ */
+function buildMastSailsRoof(doc: StadiumDocument, crossSectionClip: boolean, maxAnisotropy: number): THREE.Group {
+  const group = new THREE.Group();
+  const { ring, maxStandH, avgDepth, canopyOuterOffsetAt, exteriorSupportMinOffsetAt } = computeStadiumRingBounds(doc);
+  const roofY = arenaRoofY(doc.roof, maxStandH);
+  const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
+  const { tStart, tEnd } = getBowlArcRange(doc.shape, crossSectionClip);
+  const span = tEnd - tStart;
+  const sails = Math.max(8, Math.round((ring.perimeter * span) / 24));
+  const { surfaceMat, shadowDepthMat } = buildCanopyMaterialBundle(doc, maxAnisotropy, 1, 1, 1);
+  surfaceMat.side = THREE.DoubleSide;
+  const steel = createStructurePbrMaterial(resolveStadiumMaterials(doc).structure, maxAnisotropy);
+  const membranes: THREE.BufferGeometry[] = [];
+  const masts: THREE.BufferGeometry[] = [];
+  const cables: THREE.BufferGeometry[] = [];
+  const gap = 0.012 / Math.max(0.25, span);
+  for (let k = 0; k < sails; k++) {
+    const t0 = tStart + (k / sails) * span + gap;
+    const t1 = tStart + ((k + 1) / sails) * span - gap;
+    const n0 = sampleRoundedBowlRing(ring, t0, 0);
+    const n1 = sampleRoundedBowlRing(ring, t1, 0);
+    const out0 = canopyOuterOffsetAt(n0.nx, n0.nz, 2);
+    const out1 = canopyOuterOffsetAt(n1.nx, n1.nz, 2);
+    // Alternate the twist so neighbouring sails rise on opposite outer corners.
+    const highAt1 = k % 2 === 0;
+    const corner = (t: number, offset: number, y: number) => {
+      const p = sampleRoundedBowlRing(ring, t, offset);
+      return new THREE.Vector3(p.x, y, p.z);
+    };
+    // Low corners stay above the stand crests (the canopy level), high ones lift well clear.
+    const inner0 = corner(t0, innerOffset, roofY + (highAt1 ? 1.5 : 6));
+    const inner1 = corner(t1, innerOffset, roofY + (highAt1 ? 6 : 1.5));
+    const outer0 = corner(t0, out0, roofY + (highAt1 ? 1 : 10));
+    const outer1 = corner(t1, out1, roofY + (highAt1 ? 10 : 1));
+    membranes.push(
+      gridSurfaceGeometry(8, 8, (u, v) => {
+        const a = inner0.clone().lerp(inner1, u);
+        const b = outer0.clone().lerp(outer1, u);
+        return a.lerp(b, v);
+      }, [1, 1])
+    );
+    // Mast behind the facade under the high outer corner; stays to the sail's corners and the ground.
+    const tHigh = highAt1 ? t1 : t0;
+    const nh = highAt1 ? n1 : n0;
+    const high = highAt1 ? outer1 : outer0;
+    const footOffset = exteriorSupportMinOffsetAt(nh.nx, nh.nz) + 2;
+    const foot = corner(tHigh, footOffset, 0);
+    const top = corner(tHigh, footOffset, high.y + 9);
+    masts.push(beamGeometry(foot, top, 0.9, 0.9));
+    const lowOuter = highAt1 ? outer0 : outer1;
+    const highInner = highAt1 ? inner1 : inner0;
+    const anchor = corner(tHigh, footOffset + 16, 0);
+    cables.push(
+      beamGeometry(top, high, 0.14, 0.14),
+      beamGeometry(top, highInner, 0.14, 0.14),
+      beamGeometry(top, lowOuter, 0.14, 0.14),
+      beamGeometry(top, anchor, 0.2, 0.2)
+    );
+  }
+  const sail = mergedMesh(membranes, surfaceMat, 'RoofCanopySurface');
+  if (sail) {
+    sail.customDepthMaterial = shadowDepthMat;
+    group.add(sail);
+  }
+  for (const [parts, name] of [
+    [masts, 'MastSailsMasts'],
+    [cables, 'MastSailsCables'],
+  ] as const) {
+    const mesh = mergedMesh(parts, steel, name);
+    if (mesh) group.add(mesh);
+  }
+  return group;
+}
+
 export const CANOPY_ROOF_BUILDERS: Partial<Record<RoofStyle, RoofBuilder>> = {
+  mast_sails: buildMastSailsRoof,
   concrete_portals: buildConcretePortalsRoof,
   vaulted_ring: buildVaultedRingRoof,
   folded_plate: buildFoldedPlateRoof,

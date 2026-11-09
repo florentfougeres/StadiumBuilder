@@ -32,6 +32,42 @@ export const DEFAULT_TIER_OVERHANG_M = 1.15;
 export const OVERHANG_HEADROOM_M = 2.4;
 
 /**
+ * Settings that turn a stand into a vertical stack of box balconies (La Bombonera's « palcos »):
+ * five short tiers, each set right above the one below with glazed boxes in every break, so the
+ * stand rises almost straight up from the touchline.
+ */
+export function verticalBoxStandPatch(stand: StandConfig): Partial<StandConfig> {
+  // Boxes hold two rows at the steepest rake: from that high above the touchline the second row
+  // cannot see over the first anyway (the C-value of such stands is low by nature).
+  const rows = 2;
+  const recess = tierBreakDims(true).recess;
+  const overhang = Math.min(8.5, rows * stand.rowDepth + recess);
+  return {
+    tiers: 5,
+    rows: rows * 5,
+    vipLoges: true,
+    vipStoreys: 1,
+    rakeProfile: 'constant',
+    crossAisles: undefined,
+    tierConfigs: Array.from({ length: 5 }, (_, t) => ({ rows, slopeAngleDeg: 42, overhang: t === 0 ? 0 : overhang })),
+  };
+}
+
+/** Height (m) of each extra storey of hospitality boxes in a tier break. */
+export const VIP_STOREY_M = 3.2;
+
+/**
+ * Depth of the loggia recess, its height and the balcony fascia at a tier break: a plain break,
+ * or glazed boxes (one storey, or a ring of up to three stacked storeys of suites).
+ */
+export function tierBreakDims(hasVip: boolean, vipStoreys: number = 1): { recess: number; loggiaH: number; fasciaH: number } {
+  const storeys = Math.max(1, Math.min(3, Math.round(vipStoreys)));
+  return hasVip
+    ? { recess: 1.45 + (storeys - 1) * 0.6, loggiaH: 1.95 + (storeys - 1) * VIP_STOREY_M, fasciaH: 0.9 }
+    : { recess: 0.75, loggiaH: 0.95, fasciaH: 0.65 };
+}
+
+/**
  * Riser height of a row in tier `tierIdx` (0 = lowest). Upper tiers sit higher and further from
  * the pitch, so each one is steeper to keep a positive C-value: with a 0.40 m riser and 0.80 m
  * rows this gives roughly 27°, 30°, 32°, 35°, 37° from the lowest to the fifth tier. Shared by
@@ -233,9 +269,7 @@ export function tierRowRisers(
 export function computeStandSection(stand: StandConfig): StandSection {
   const tiers = resolveStandTiers(stand);
   const hasVip = tiers.length >= 2 && stand.vipLoges !== false;
-  const recess = hasVip ? 1.45 : 0.75;
-  const baseLoggiaH = hasVip ? 1.95 : 0.95;
-  const fasciaH = hasVip ? 0.9 : 0.65;
+  const { recess, loggiaH: baseLoggiaH, fasciaH } = tierBreakDims(hasVip, stand.vipStoreys);
   const frontWallD = 0.34;
 
   const rows: StandSectionRow[] = [];

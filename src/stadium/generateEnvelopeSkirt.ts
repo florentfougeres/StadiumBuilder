@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { roofDefinition } from './roofCatalog';
 import { getBowlArcRange, sampleRoundedBowlRing } from './bowlRing';
 import { computeStadiumRingBounds } from './roofs/ringBounds';
 import { createFacadePbrMaterial, createStructurePbrMaterial, resolveFacadePalette, resolveStadiumMaterials } from './materials';
@@ -44,7 +45,7 @@ export function generateEnvelopeSkirt(
   const group = new THREE.Group();
   group.name = 'EnvelopeSkirt';
   const mats = resolveStadiumMaterials(doc);
-  if (doc.roof.enclosed === false || hasNoRoof(doc)) return group;
+  if (doc.roof.enclosed === false || hasNoRoof(doc) || roofDefinition(doc.roof.style).openEaves) return group;
   const facadeOffset = FACADE_WALL_OFFSET;
 
   const {

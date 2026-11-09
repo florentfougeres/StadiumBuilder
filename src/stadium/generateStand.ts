@@ -81,7 +81,9 @@ import {
   getTierStartRows,
   OVERHANG_HEADROOM_M,
   resolveStandTiers,
+  tierBreakDims,
   UPPER_TIER_STEEPENING,
+  VIP_STOREY_M,
 } from './sightlines';
 
 interface RowSample {
@@ -1209,12 +1211,27 @@ function buildStraightStandMesh(
       );
 
       if (bal.hasVipGlass) {
-        const skyboxGlass = new THREE.Mesh(
-          new THREE.BoxGeometry(spanLength - 0.12, 1.8, 0.32),
-          vipGlassMat
-        );
+        // Glazing over the whole loggia height; a ring of suites shows one storey per floor slab.
+        const loggiaH = Math.max(1.8, 2 * (bal.soffitY - bal.loggiaY) - 0.15);
+        const storeys = Math.max(1, Math.round((loggiaH + 0.15 - 1.95) / VIP_STOREY_M) + 1);
+        let glassMat: THREE.Material = vipGlassMat;
+        if (storeys > 1) {
+          const tex = vipTex.clone();
+          tex.wrapT = THREE.RepeatWrapping;
+          tex.repeat.set(1, storeys);
+          tex.needsUpdate = true;
+          glassMat = vipGlassMat.clone();
+          (glassMat as THREE.MeshPhysicalMaterial).map = tex;
+          (glassMat as THREE.MeshPhysicalMaterial).emissiveMap = tex;
+        }
+        const skyboxGlass = new THREE.Mesh(new THREE.BoxGeometry(spanLength - 0.12, loggiaH, 0.32), glassMat);
         skyboxGlass.position.set(0, bal.loggiaY, bal.loggiaD);
         group.add(skyboxGlass);
+        for (let k = 1; k < storeys; k++) {
+          const slab = new THREE.Mesh(new THREE.BoxGeometry(spanLength - 0.1, 0.35, 0.9), fasciaSlabMat);
+          slab.position.set(0, bal.loggiaY - loggiaH / 2 + (k * loggiaH) / storeys, bal.loggiaD - 0.2);
+          group.add(slab);
+        }
       }
 
       // Structural tapered cantilever soffit beams underneath deep cantilevered upper tiers
@@ -2323,14 +2340,18 @@ function buildCornerVirageQuadrant(
       const vipA = activeA && standA.vipLoges !== false;
       const vipB = activeB && standB.vipLoges !== false;
       const hasVip = vipA || vipB;
-      const recessAdd = weight * (hasVip ? 1.45 : 0.75);
-      const baseLoggiaH = weight * (hasVip ? 1.95 : 0.95);
+      const dims = tierBreakDims(
+        hasVip,
+        Math.max(vipA ? standA.vipStoreys ?? 1 : 1, vipB ? standB.vipStoreys ?? 1 : 1)
+      );
+      const recessAdd = weight * dims.recess;
+      const baseLoggiaH = weight * dims.loggiaH;
       // Same projection as each neighbouring stand, blended across the corner.
       const overhang =
         (activeA ? (1 - w) * (tiersA[bIdx + 1]?.overhang ?? 0) : 0) +
         (activeB ? w * (tiersB[bIdx + 1]?.overhang ?? 0) : 0);
       const overhangDelta = -overhang;
-      const fasciaH = weight * (hasVip ? 0.9 : 0.65);
+      const fasciaH = weight * dims.fasciaH;
       return {
         rowK,
         weight,
@@ -3296,6 +3317,7 @@ function buildModernBowlSweep(
     return {
       tiers,
       hasVip: tiers >= 2 && domStand.vipLoges !== false,
+      vipStoreys: domStand.vipStoreys ?? 1,
       share: share.map((v) => v / shareSum),
       slopeTan,
       overhang,
@@ -3355,9 +3377,7 @@ function buildModernBowlSweep(
     const tierBlend = blendTierParamsAt(baseSample.nx, baseSample.nz);
     const domTiers = tierBlend.tiers;
     const domVip = tierBlend.hasVip;
-    const recOffset = domVip ? 1.45 : 0.75;
-    const baseLoggiaH = domVip ? 1.95 : 0.95;
-    const fasciaH = domVip ? 0.9 : 0.65;
+    const { recess: recOffset, loggiaH: baseLoggiaH, fasciaH } = tierBreakDims(domVip, tierBlend.vipStoreys);
 
     const activeBreakSlots =
       domTiers === 2

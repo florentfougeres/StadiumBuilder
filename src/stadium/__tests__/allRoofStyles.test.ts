@@ -42,6 +42,8 @@ const SIGNATURE: Record<RoofStyle, string | null> = {
   hypar_shells: 'HyparShellEdges',
   tree_columns: 'TreeColumns',
   stand_arch: 'StandArch',
+  mast_sails: 'MastSailsMasts',
+  pleated_shell: 'RoofCanopySurface',
   air_dome: 'AirDomeCableNet',
   cable_dome: 'CableDomeCables',
   girder_grid: 'GirderGridTrusses',

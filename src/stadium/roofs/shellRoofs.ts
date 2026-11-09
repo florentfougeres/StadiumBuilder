@@ -592,6 +592,37 @@ function buildProwShellRoof(
   return group;
 }
 
+/**
+ * PLEATED SHELL (`pleated_shell`): one folded skin from the ground to the inner rim of the roof,
+ * the facade pleats carrying on over the canopy and fading out toward the pitch, in the facade
+ * material (a white lattice gives the Rabat stadium).
+ */
+function buildPleatedShellRoof(doc: StadiumDocument, crossSectionClip: boolean, maxAnisotropy: number): THREE.Group {
+  const group = new THREE.Group();
+  const { ring, maxStandH, avgDepth, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
+  const eaveY = arenaRoofY(doc.roof, maxStandH);
+  const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
+  const pleats = 2 * Math.max(24, Math.round(ring.perimeter / 12));
+  const shell: RingProfile = (_t, nx, nz, s) => {
+    const base = canopyOuterOffsetAt(nx, nz, 2) + 1;
+    const ridge = s % 2 === 0;
+    const out = ridge ? PLEAT_DEPTH : 0;
+    // The fold keeps its depth down the facade, then flattens across the roof to the rim.
+    return [
+      { r: base + out, y: 0 },
+      { r: base + PLEAT_DEPTH - out, y: eaveY * 0.5 },
+      { r: base + out, y: eaveY },
+      { r: (base + innerOffset) / 2, y: eaveY + 2.5 + (ridge ? 1.4 : 0) },
+      { r: innerOffset, y: eaveY + 1 + (ridge ? 0.3 : 0) },
+    ];
+  };
+  const mats = resolveStadiumMaterials(doc);
+  const skin = createFacadePbrMaterial(mats.facade, doc.lighting, false, maxAnisotropy, mats.facadeGlowHex).clone();
+  skin.side = THREE.DoubleSide;
+  group.add(buildRingLoft(ring, doc.shape, crossSectionClip, pleats, shell, skin, 'RoofCanopySurface', true));
+  return group;
+}
+
 /** Integral shells: one skin forms the facade and the roof (offered with the envelopes). */
 export const SHELL_ROOF_BUILDERS: Partial<Record<RoofStyle, RoofBuilder>> = {
   enveloping_shell: buildEnvelopingShellRoof,
@@ -600,5 +631,6 @@ export const SHELL_ROOF_BUILDERS: Partial<Record<RoofStyle, RoofBuilder>> = {
   saddle_vault: buildSaddleVaultRoof,
   faceted_shell: buildFacetedShellRoof,
   pleated_crown: buildPleatedCrownRoof,
+  pleated_shell: buildPleatedShellRoof,
   prow_shell: buildProwShellRoof,
 };

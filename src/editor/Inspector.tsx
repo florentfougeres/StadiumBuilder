@@ -71,6 +71,7 @@ import {
   computeStandSightlines,
   DEFAULT_TIER_OVERHANG_M,
   resolveStandTiers,
+  verticalBoxStandPatch,
 } from '../stadium/sightlines';
 import { StandTarget, useStadiumStore } from '../state/useStadiumStore';
 import { ObjectList } from './ObjectList';
@@ -1253,6 +1254,12 @@ const StandsPanel: React.FC = () => {
             options={TIER_OPTIONS.map((t) => ({ id: t, label: String(t) }))}
           />
         </FieldRow>
+        <div className="flex items-center justify-between gap-3 text-2xs">
+          <span className="text-ink-faint">Balcons de loges empilés presque à la verticale</span>
+          <Button disabled={off} onClick={() => updateStand(target, verticalBoxStandPatch(stand))}>
+            Tribune verticale de loges
+          </Button>
+        </div>
         <SliderField
           label="Rangs"
           min={8}
@@ -1629,6 +1636,22 @@ const StandsPanel: React.FC = () => {
             checked={stand.vipLoges !== false}
             onChange={(v) => updateStand(target, { vipLoges: v })}
           />
+        )}
+        {stand.tiers >= 2 && stand.vipLoges !== false && (
+          <FieldRow label="Étages de loges">
+            <Segmented
+              label="Étages de loges"
+              size="sm"
+              disabled={off}
+              value={stand.vipStoreys ?? 1}
+              onChange={(vipStoreys) => updateStand(target, { vipStoreys })}
+              options={[
+                { id: 1, label: '1' },
+                { id: 2, label: '2' },
+                { id: 3, label: '3' },
+              ]}
+            />
+          </FieldRow>
         )}
         {separateStands && (
           <>

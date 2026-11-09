@@ -5,7 +5,7 @@ import {
   ringSegmentStarts,
 } from './bowlRing';
 import { CornerId, StadiumDocument, StandConfig, StandSide, isContinuousBowlShape } from './schema';
-import { OVERHANG_HEADROOM_M, computeStandSection } from './sightlines';
+import { OVERHANG_HEADROOM_M, computeStandSection, tierBreakDims } from './sightlines';
 
 /**
  * Cross-section of a continuous bowl anywhere on its ring.
@@ -107,9 +107,7 @@ function standSpec(stand: StandConfig): StandSpec {
     }),
     rowDepth: stand.rowDepth,
     elevation: stand.elevationStart,
-    recess: hasVip ? 1.45 : 0.75,
-    loggiaH: hasVip ? 1.95 : 0.95,
-    fasciaH: hasVip ? 0.9 : 0.65,
+    ...tierBreakDims(hasVip, stand.vipStoreys),
     topHeight: section.topHeight,
     outerD: section.totalDepth,
   };
