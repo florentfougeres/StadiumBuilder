@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoundedBowlGeometry, sampleRoundedBowlRing } from './bowlRing';
 import { buildMovablePitch } from './generateMovablePitch';
 import {
   applyTurfCloseUpDetail,
@@ -861,7 +862,9 @@ export function generatePitchGroup(
   lighting: LightingMode = 'day',
   materials?: StadiumMaterialsConfig,
   /** Front edge of the stands: the anthracite apron stops there instead of running 28 m out. */
-  apronOutline?: ApronOutline
+  apronOutline?: ApronOutline,
+  /** Cricket ground: grass outfield up to the stands, boundary rope and wicket at the centre. */
+  outfield?: RoundedBowlGeometry
 ): THREE.Group {
   const pitch = clampPitchToTrack(rawPitch);
   const { track, effectiveMarginEnd, effectiveMarginSide, totalLength, totalWidth } =
@@ -919,7 +922,9 @@ export function generatePitchGroup(
 
   // Hollow Perimeter Technical Pit Apron & Optional Sunken Safety Moat (ZERO triangles underneath PitchTurf!)
   if (!track) {
-    const pitApronMat = createTrackPbrMaterial('anthracite_apron', maxAnisotropy);
+    const pitApronMat = outfield
+      ? new THREE.MeshStandardMaterial({ color: 0x3f7a35, roughness: 0.95, metalness: 0 })
+      : createTrackPbrMaterial('anthracite_apron', maxAnisotropy);
     if (pitch.hasMoat) {
       const moatInL = totalLength + 0.56;
       const moatInW = totalWidth + 0.56;
@@ -1304,5 +1309,52 @@ export function generatePitchGroup(
     }
   }
 
+  if (outfield) root.add(buildCricketFurniture(outfield));
   return root;
+}
+
+/** Length (m) between the stumps of a cricket pitch, and its width. */
+const CRICKET_PITCH_LENGTH = 20.12;
+const CRICKET_PITCH_WIDTH = 3.05;
+
+/**
+ * Cricket ground furniture over the grass outfield: the boundary rope following the oval, the
+ * lighter square of prepared pitches at the centre and the bare wicket strip with its creases.
+ */
+function buildCricketFurniture(outfield: RoundedBowlGeometry): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'CricketGround';
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i < 160; i++) {
+    const p = sampleRoundedBowlRing(outfield, i / 160, 0);
+    pts.push(new THREE.Vector3(p.x, 0.12, p.z));
+  }
+  const rope = new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 320, 0.12, 6, true),
+    new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.6 })
+  );
+  rope.name = 'CricketBoundaryRope';
+  group.add(rope);
+
+  const flat = (w: number, d: number, color: number, y: number, name: string) => {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.92, polygonOffset: true, polygonOffsetFactor: -2 })
+    );
+    m.position.y = y;
+    m.receiveShadow = true;
+    m.name = name;
+    group.add(m);
+    return m;
+  };
+  flat(26, 22, 0x5e9a46, 0.03, 'CricketSquare');
+  flat(CRICKET_PITCH_LENGTH + 2.4, CRICKET_PITCH_WIDTH, 0xc9a56b, 0.045, 'CricketPitch');
+  // Popping and bowling creases at each end.
+  for (const sx of [-1, 1]) {
+    for (const dx of [0, 1.22]) {
+      const crease = flat(0.08, dx === 0 ? 2.64 : 3.66, 0xffffff, 0.06, 'CricketCrease');
+      crease.position.x = sx * (CRICKET_PITCH_LENGTH / 2 - dx);
+    }
+  }
+  return group;
 }

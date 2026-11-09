@@ -762,6 +762,10 @@ export interface SiteConfig {
    * its roof a raised forecourt, a grand stair down to the ground on the south axis. `0` = none.
    */
   podiumHeight: number;
+  /** Water around the stadium: a moat ringing the forecourt, or a waterfront along the east side. */
+  water: 'none' | 'moat' | 'waterfront';
+  /** Height (m) of a grassed mound banked against the facade, as a stadium set on a hill. `0` = none. */
+  mound: number;
 }
 
 export const DEFAULT_SITE: SiteConfig = {
@@ -769,6 +773,8 @@ export const DEFAULT_SITE: SiteConfig = {
   perimeterFence: false,
   entrances: true,
   podiumHeight: 0,
+  water: 'none',
+  mound: 0,
 };
 
 export function resolveSite(doc: StadiumDocument): SiteConfig {

@@ -1689,6 +1689,22 @@ export function generateSiteGroup(doc: StadiumDocument, stadiumFp: SiteFootprint
   if (podium) group.add(podium.group);
   const fp = podium?.footprint ?? stadiumFp;
   const layout = planSite(fp, site);
+  const waterfront = fp.halfX + layout.forecourt + 14;
+  const moat = { from: layout.forecourt + 4, to: layout.forecourt + 18 };
+  const moundRun = site.mound * 3;
+  // Nothing stands in the water or on the mound's slope.
+  const clear = (p: Pt) =>
+    !(site.water === 'waterfront' && p.x > waterfront - 3) &&
+    !(site.water === 'moat' && ringLevel(fp, p.x, p.z, moat.from - 2) > 1 && ringLevel(fp, p.x, p.z, moat.to + 2) < 1) &&
+    !(site.mound > 0.5 && ringLevel(fp, p.x, p.z, moundRun + 2) < 1);
+  layout.trees = layout.trees.filter(clear);
+  layout.lamps = layout.lamps.filter(clear);
+  layout.cars = layout.cars.filter(clear);
+  layout.lots = layout.lots.filter((r) => clear({ x: r.x0, z: r.z0 }) && clear({ x: r.x1, z: r.z1 }));
+  layout.blocks = layout.blocks.filter((r) => clear({ x: r.x0, z: r.z0 }) && clear({ x: r.x1, z: r.z1 }));
+  if (site.water === 'moat') group.add(buildMoat(fp, moat.from, moat.to));
+  if (site.water === 'waterfront') group.add(buildWaterfront(waterfront));
+  if (site.mound > 0.5) group.add(buildMound(fp, site.mound, moundRun));
 
   if (site.setting === 'none') {
     group.add(buildClassicGround(doc, mats.plazaSurface, maxAnisotropy));
@@ -1730,4 +1746,134 @@ export function generateSiteGroup(doc: StadiumDocument, stadiumFp: SiteFootprint
   if (site.perimeterFence) group.add(buildPerimeterFence(fp, layout));
   if (site.entrances) group.add(buildEntrances(layout, doc.colors.seatsPrimary, doc.lighting));
   return group;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Water and landform
+// ---------------------------------------------------------------------------------------------
+
+function waterMaterial(): THREE.MeshPhysicalMaterial {
+  return new THREE.MeshPhysicalMaterial({
+    color: 0x1d4a63,
+    roughness: 0.06,
+    metalness: 0.1,
+    clearcoat: 1,
+    clearcoatRoughness: 0.04,
+  });
+}
+
+/** Ribbon between two rings of the footprint, `inner` and `outer` metres out, at height `y`. */
+function ringBand(fp: SiteFootprint, inner: number, outer: number, y: number, mat: THREE.Material, name: string): THREE.Mesh {
+  const segs = 240;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (let i = 0; i <= segs; i++) {
+    const theta = (i / segs) * Math.PI * 2;
+    const a = ringPoint(fp, theta, inner);
+    const b = ringPoint(fp, theta, outer);
+    pos.push(a.x, y, a.z, b.x, y, b.z);
+    if (i < segs) {
+      const k = i * 2;
+      // Same winding as the forecourt, so the band faces up.
+      idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = name;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+/** Moat ringing the forecourt, crossed by a bridge at every gate, with stone copings. */
+function buildMoat(fp: SiteFootprint, from: number, to: number): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'SiteMoat';
+  const stone = new THREE.MeshStandardMaterial({ color: 0xb8b2a6, roughness: 0.85 });
+  group.add(
+    ringBand(fp, from, to, 0.04, waterMaterial(), 'MoatWater'),
+    ringBand(fp, from - 1.2, from, 0.12, stone, 'MoatCoping'),
+    ringBand(fp, to, to + 1.2, 0.12, stone, 'MoatCoping')
+  );
+  for (const theta of gateThetas(fp)) {
+    const a = ringPoint(fp, theta, from - 1.5);
+    const b = ringPoint(fp, theta, to + 1.5);
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(GATE_WIDTH * 0.7, 0.5, len), stone);
+    bridge.position.set((a.x + b.x) / 2, 0.3, (a.z + b.z) / 2);
+    bridge.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
+    bridge.castShadow = true;
+    bridge.receiveShadow = true;
+    bridge.name = 'MoatBridge';
+    group.add(bridge);
+  }
+  return group;
+}
+
+/** River or bay along the east side of the site, behind a stone quay. */
+function buildWaterfront(x0: number): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'SiteWaterfront';
+  const width = SITE_SIZE / 2 - x0;
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(width, SITE_SIZE).rotateX(-Math.PI / 2), waterMaterial());
+  water.position.set(x0 + width / 2, 0.04, 0);
+  water.receiveShadow = true;
+  water.name = 'WaterfrontWater';
+  const quay = new THREE.Mesh(
+    new THREE.BoxGeometry(2.4, 0.9, SITE_SIZE),
+    new THREE.MeshStandardMaterial({ color: 0xb8b2a6, roughness: 0.85 })
+  );
+  quay.position.set(x0 - 1.2, 0.2, 0);
+  quay.receiveShadow = true;
+  quay.name = 'WaterfrontQuay';
+  group.add(water, quay);
+  return group;
+}
+
+/**
+ * Grassed mound banked against the facade, `height` metres up the wall and sloping down over
+ * `run` metres, opened by a cutting at every gate so the entrances stay reachable.
+ */
+function buildMound(fp: SiteFootprint, height: number, run: number): THREE.Mesh {
+  const segs = 360;
+  const steps = 8;
+  const gates = gateThetas(fp);
+  const perimeter = 2 * Math.PI * Math.max(fp.halfX, fp.halfZ);
+  const gap = ((GATE_WIDTH * 0.75) / perimeter) * Math.PI * 2;
+  const angDist = (a: number, b: number) => {
+    const d = Math.abs(a - b) % (Math.PI * 2);
+    return Math.min(d, Math.PI * 2 - d);
+  };
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (let i = 0; i <= segs; i++) {
+    const theta = (i / segs) * Math.PI * 2;
+    // Height falls to nothing across each gate's cutting.
+    const nearest = Math.min(...gates.map((g) => angDist(theta, g)));
+    const cut = Math.max(0, Math.min(1, (nearest - gap) / gap));
+    for (let k = 0; k <= steps; k++) {
+      const f = k / steps;
+      const p = ringPoint(fp, theta, -0.5 + f * run);
+      pos.push(p.x, height * cut * 0.5 * (1 + Math.cos(Math.PI * f)) + 0.02, p.z);
+    }
+  }
+  for (let i = 0; i < segs; i++) {
+    for (let k = 0; k < steps; k++) {
+      const a = i * (steps + 1) + k;
+      const b = a + steps + 1;
+      idx.push(a, a + 1, b, b, a + 1, b + 1);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x4f7f3c, roughness: 0.96, side: THREE.DoubleSide }));
+  mesh.name = 'SiteMound';
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
 }

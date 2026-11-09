@@ -5,7 +5,12 @@ import {
   getTrackRadialOffset,
   resolveStandRoofStyle,
 } from './capacity';
-import { sampleRoundedBowlRing } from './bowlRing';
+import {
+  createRoundedBowlRing,
+  CRICKET_OUTFIELD_HALF_X,
+  CRICKET_OUTFIELD_HALF_Z,
+  sampleRoundedBowlRing,
+} from './bowlRing';
 import { generateConcourseGroup } from './generateConcourse';
 import { generateEnvelopeSkirt } from './generateEnvelopeSkirt';
 import {
@@ -269,7 +274,10 @@ export function buildStadiumSceneGraph(
     aniso,
     doc.lighting,
     doc.materials,
-    pitchApronOutline(doc)
+    pitchApronOutline(doc),
+    doc.shape === 'cricket_oval'
+      ? createRoundedBowlRing(CRICKET_OUTFIELD_HALF_X, CRICKET_OUTFIELD_HALF_Z, CRICKET_OUTFIELD_HALF_Z * 0.96)
+      : undefined
   );
   const standsGroup = generateStandsGroup(
     doc,

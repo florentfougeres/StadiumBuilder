@@ -2532,6 +2532,29 @@ const SitePanel: React.FC = () => {
           display={site.podiumHeight > 0.5 ? `${fr1(site.podiumHeight)} m` : 'Aucun'}
           onChange={(podiumHeight) => updateSite({ podiumHeight })}
         />
+        <SliderField
+          label="Butte paysagère"
+          hint="Talus engazonné adossé à la façade, comme un stade posé sur une colline ; tranchées aux entrées"
+          min={0}
+          max={16}
+          step={0.5}
+          value={site.mound}
+          display={site.mound > 0.5 ? `${fr1(site.mound)} m` : 'Aucune'}
+          onChange={(mound) => updateSite({ mound })}
+        />
+        <FieldRow label="Plan d’eau">
+          <Segmented
+            label="Plan d’eau"
+            size="sm"
+            value={site.water}
+            onChange={(water) => updateSite({ water })}
+            options={[
+              { id: 'none', label: 'Aucun' },
+              { id: 'moat', label: 'Douves' },
+              { id: 'waterfront', label: 'Bord de l’eau' },
+            ]}
+          />
+        </FieldRow>
       </PanelSection>
       <PanelSection title="Accès et sécurité">
         <ToggleField
