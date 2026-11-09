@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SeatPattern, SeatTierStyle, StadiumDocument, StandConfig } from './schema';
+import { SeatPattern, SeatTierStyle, StadiumDocument, StandConfig, StandSide } from './schema';
 
 /** A tier's seat style with every field filled in. */
 export interface ResolvedSeatTierStyle {
@@ -69,6 +69,103 @@ export function resolveSeatTierStyle(
     share: Math.max(0, Math.min(1, own.share ?? 0.25)),
     text: own.text ?? '',
   };
+}
+
+const STAND_SIDES: readonly StandSide[] = ['north', 'south', 'east', 'west'];
+
+/** `style` without `keys` (every field when `keys` is absent); `undefined` once nothing is left. */
+function withoutKeys(
+  style: SeatTierStyle | undefined,
+  keys?: readonly (keyof SeatTierStyle)[]
+): SeatTierStyle | undefined {
+  if (!style || !keys) return undefined;
+  const next: SeatTierStyle = { ...style };
+  for (const key of keys) delete next[key];
+  return Object.values(next).some((v) => v !== undefined) ? next : undefined;
+}
+
+/** A per-tier list, or `undefined` once every tier is empty. */
+const tidyTiers = (list: (SeatTierStyle | undefined)[]) => (list.some(Boolean) ? list : undefined);
+
+/**
+ * Paints `patch` on the seats `scope` covers (`sides` for the per-stand scopes, `tierIndex` for the
+ * per-tier ones): sets it at that level and removes the same fields from every level that would
+ * otherwise win over it there, so what was painted last is what shows. `null` removes the level
+ * and everything narrower inside it, handing those seats back to the broader levels.
+ */
+export function paintSeatStyle(
+  doc: StadiumDocument,
+  scope: SeatStyleScope,
+  sides: readonly StandSide[],
+  tierIndex: number,
+  patch: Partial<SeatTierStyle> | null
+): void {
+  const keys = patch ? (Object.keys(patch) as (keyof SeatTierStyle)[]) : undefined;
+  const merge = (prev: SeatTierStyle | undefined) => (patch === null ? undefined : { ...prev, ...patch });
+  const reach = scope === 'stadium' || scope === 'tier' ? STAND_SIDES : sides;
+
+  if (scope === 'stadium') {
+    doc.seatStyle = merge(doc.seatStyle);
+    doc.seatTierStyles = doc.seatTierStyles && tidyTiers(doc.seatTierStyles.map((s) => withoutKeys(s, keys)));
+  } else if (scope === 'tier') {
+    const list = [...(doc.seatTierStyles ?? [])];
+    list[tierIndex] = merge(list[tierIndex]);
+    doc.seatTierStyles = tidyTiers(list);
+  }
+
+  for (const side of reach) {
+    const stand = doc.stands[side];
+    let seatStyle = stand.seatStyle;
+    const seatTiers = [...(stand.seatTiers ?? [])];
+    switch (scope) {
+      case 'stadium':
+        seatStyle = withoutKeys(seatStyle, keys);
+        for (let t = 0; t < seatTiers.length; t++) seatTiers[t] = withoutKeys(seatTiers[t], keys);
+        break;
+      case 'tier': {
+        // A whole-stand style wins over a tier painted on every stand: its fields move down to the
+        // stand's other tiers, so they keep their look while this tier takes the new paint.
+        const moved = seatStyle && (keys ?? (Object.keys(seatStyle) as (keyof SeatTierStyle)[]));
+        if (seatStyle && moved?.length) {
+          for (let t = 0; t < MAX_TIERS; t++) {
+            if (t === tierIndex) continue;
+            const own: SeatTierStyle = { ...seatTiers[t] };
+            for (const key of moved) {
+              if (own[key] === undefined && seatStyle[key] !== undefined) {
+                (own as Record<string, unknown>)[key] = seatStyle[key];
+              }
+            }
+            seatTiers[t] = Object.values(own).some((v) => v !== undefined) ? own : undefined;
+          }
+          seatStyle = withoutKeys(seatStyle, moved);
+        }
+        seatTiers[tierIndex] = withoutKeys(seatTiers[tierIndex], keys);
+        break;
+      }
+      case 'stand':
+        seatStyle = merge(seatStyle);
+        for (let t = 0; t < seatTiers.length; t++) seatTiers[t] = withoutKeys(seatTiers[t], keys);
+        break;
+      case 'stand_tier':
+        seatTiers[tierIndex] = merge(seatTiers[tierIndex]);
+        break;
+    }
+    doc.stands[side] = { ...stand, seatStyle, seatTiers: tidyTiers(seatTiers) };
+  }
+}
+
+/** Removes `keys` from every seat style level, so the club colours show through again. */
+export function stripSeatStyles(doc: StadiumDocument, keys: readonly (keyof SeatTierStyle)[]): void {
+  doc.seatStyle = withoutKeys(doc.seatStyle, keys);
+  doc.seatTierStyles = doc.seatTierStyles && tidyTiers(doc.seatTierStyles.map((s) => withoutKeys(s, keys)));
+  for (const side of STAND_SIDES) {
+    const stand = doc.stands[side];
+    doc.stands[side] = {
+      ...stand,
+      seatStyle: withoutKeys(stand.seatStyle, keys),
+      seatTiers: stand.seatTiers && tidyTiers(stand.seatTiers.map((s) => withoutKeys(s, keys))),
+    };
+  }
 }
 
 /** Where a seat sits in its tier, for its colour. */

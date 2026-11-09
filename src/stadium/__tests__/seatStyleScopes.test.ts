@@ -52,28 +52,35 @@ describe('seat style store actions', () => {
     expect(doc.stands.north.seatStyle).toBeUndefined();
   });
 
-  it('clears only the levels narrower than the one edited', () => {
-    const { updateSeatStyle, clearNarrowerSeatStyles } = useStadiumStore.getState();
-    updateSeatStyle('tier', 'all', 0, { color: '#101010' });
+  it('paints over the levels that would win, so the last paint shows', () => {
+    const { updateSeatStyle } = useStadiumStore.getState();
+    updateSeatStyle('stand_tier', 'north', 0, { color: '#303030', pattern: 'stripes' });
     updateSeatStyle('stand', 'north', 0, { color: '#202020' });
-    updateSeatStyle('stand_tier', 'north', 0, { color: '#303030' });
-    updateSeatStyle('stand_tier', 'north', 1, { color: '#404040' });
-
-    clearNarrowerSeatStyles('stand', 'north', 0);
     let doc = useStadiumStore.getState().doc;
-    expect(doc.stands.north.seatStyle?.color).toBe('#202020');
-    expect(doc.stands.north.seatTiers).toBeUndefined();
+    // The cell keeps its stripes but takes the stand's new colour.
+    expect(doc.stands.north.seatTiers?.[0]).toEqual({ pattern: 'stripes' });
+    expect(resolveSeatTierStyle(doc, doc.stands.north, 0).color).toBe('#202020');
 
-    updateSeatStyle('stand_tier', 'north', 1, { color: '#404040' });
-    clearNarrowerSeatStyles('tier', 'all', 0);
+    // A tier painted on every stand wins on that tier, the stand keeps its colour elsewhere.
+    updateSeatStyle('tier', 'all', 1, { color: '#101010' });
     doc = useStadiumStore.getState().doc;
-    expect(doc.seatTierStyles?.[0]?.color).toBe('#101010');
-    expect(doc.stands.north.seatStyle).toBeUndefined();
-    expect(doc.stands.north.seatTiers?.[1]?.color).toBe('#404040');
+    expect(resolveSeatTierStyle(doc, doc.stands.north, 1).color).toBe('#101010');
+    expect(resolveSeatTierStyle(doc, doc.stands.north, 0).color).toBe('#202020');
+    expect(resolveSeatTierStyle(doc, doc.stands.north, 2).color).toBe('#202020');
 
-    clearNarrowerSeatStyles('stadium', 'all', 0);
+    updateSeatStyle('stadium', 'all', 0, { color: '#000000' });
     doc = useStadiumStore.getState().doc;
-    expect(doc.seatTierStyles).toBeUndefined();
-    expect(doc.stands.north.seatTiers).toBeUndefined();
+    for (const side of ['north', 'south', 'east', 'west'] as const) {
+      for (const t of [0, 1, 2]) expect(resolveSeatTierStyle(doc, doc.stands[side], t).color).toBe('#000000');
+    }
+    expect(resolveSeatTierStyle(doc, doc.stands.north, 0).pattern).toBe('stripes');
+  });
+
+  it('returns every seat to the club colours when they change', () => {
+    const { updateSeatStyle, setClubColors } = useStadiumStore.getState();
+    updateSeatStyle('stand', 'east', 0, { color: '#123456', pattern: 'mosaic' });
+    setClubColors({ seatsPrimary: '#ff0000', seatsSecondary: '#ffffff' });
+    const doc = useStadiumStore.getState().doc;
+    expect(resolveSeatTierStyle(doc, doc.stands.east, 0)).toMatchObject({ color: '#ff0000', pattern: 'mosaic' });
   });
 });

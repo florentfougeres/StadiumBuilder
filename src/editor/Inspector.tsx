@@ -72,7 +72,7 @@ import {
 } from '../stadium/schema';
 import { isIntegralShell, isMovableRoof, roofDefinition, ROOF_STYLES } from '../stadium/roofCatalog';
 import { OFFERED_SHAPES, shapeDefinition } from '../stadium/shapeCatalog';
-import { resolveSeatTierStyle, SeatStyleScope, seatStyleAt } from '../stadium/seatPattern';
+import { ResolvedSeatTierStyle, resolveSeatTierStyle, SeatStyleScope, seatStyleAt } from '../stadium/seatPattern';
 import {
   computeStandSightlines,
   DEFAULT_TIER_OVERHANG_M,
@@ -461,12 +461,12 @@ const ColorField: React.FC<{
   </FieldRow>
 );
 
-const SEAT_PATTERN_OPTIONS: { id: SeatPattern; label: string }[] = [
-  { id: 'solid', label: 'Uni' },
-  { id: 'mosaic', label: 'Mosaïque aléatoire' },
-  { id: 'gradient', label: 'Dégradé vers le haut' },
-  { id: 'stripes', label: 'Rayures de rangées' },
-  { id: 'lettering', label: 'Inscription' },
+const SEAT_PATTERN_OPTIONS: { id: SeatPattern; label: string; title: string }[] = [
+  { id: 'solid', label: 'Uni', title: 'Une seule couleur' },
+  { id: 'mosaic', label: 'Mosaïque', title: 'Sièges de la seconde couleur semés au hasard' },
+  { id: 'gradient', label: 'Dégradé', title: 'De plus en plus de sièges de la seconde couleur vers le haut' },
+  { id: 'stripes', label: 'Rayures', title: 'Bandes de trois rangées en alternance' },
+  { id: 'lettering', label: 'Texte', title: 'Un mot écrit avec les sièges' },
 ];
 
 /**
@@ -557,140 +557,272 @@ const CrossAisleList: React.FC<{
   );
 };
 
-const TIER_NAMES = ['bas', 'deuxième', 'troisième', 'quatrième', 'cinquième'];
+/** Seats a selection in the seat colour grid covers: everything, one stand, one tier everywhere, or one cell. */
+type SeatSelection =
+  | { kind: 'all' }
+  | { kind: 'stand'; side: StandSide }
+  | { kind: 'tier'; tier: number }
+  | { kind: 'cell'; side: StandSide; tier: number };
 
-/**
- * Colour and pattern of the seats, set at one of four levels: the whole stadium, one tier on every
- * stand, one whole stand, one tier of one stand. A narrower level wins over a broader one. With
- * every stand selected only the two stadium-wide levels are offered.
- */
-const SeatTiersEditor: React.FC<{ editAll: boolean; side: StandSide }> = ({ editAll, side }) => {
-  const doc = useStadiumStore((s) => s.doc);
-  const target = useStadiumStore((s) => s.activeStandTab);
-  const updateSeatStyle = useStadiumStore((s) => s.updateSeatStyle);
-  const clearNarrower = useStadiumStore((s) => s.clearNarrowerSeatStyles);
-  const stand = doc.stands[side];
-  const sides = Object.keys(STAND_LABELS) as StandSide[];
-  const standName = STAND_LABELS[side].toLowerCase();
-  const scopeOptions: { id: SeatStyleScope; label: string }[] = [
-    { id: 'stadium', label: 'Tout le stade' },
-    { id: 'tier', label: editAll ? 'Chaque étage' : 'Cet étage partout' },
-    ...(editAll
-      ? []
-      : [
-          { id: 'stand' as const, label: `Tribune ${standName} entière` },
-          { id: 'stand_tier' as const, label: `Étages de la tribune ${standName}` },
-        ]),
-  ];
-  const [chosen, setScope] = useState<SeatStyleScope>(() =>
-    sides.some((s) => doc.stands[s].seatTiers?.some(Boolean))
-      ? 'stand_tier'
-      : sides.some((s) => doc.stands[s].seatStyle)
-        ? 'stand'
-        : doc.seatTierStyles?.some(Boolean)
-          ? 'tier'
-          : 'stadium'
-  );
-  const scope = scopeOptions.some((o) => o.id === chosen) ? chosen : 'tier';
-  const perTier = scope === 'tier' || scope === 'stand_tier';
-  // All stands: as many tiers as the tallest stand has, shown with the displayed stand's values.
-  const tierCount = editAll
-    ? Math.max(...sides.map((s) => (doc.stands[s].enabled ? doc.stands[s].tiers : 0)), 1)
-    : Math.max(1, stand.tiers);
-  const narrowerSet = (t: number): boolean => {
-    const standLevels = (s: StandSide) => doc.stands[s].seatTiers?.some(Boolean) || !!doc.stands[s].seatStyle;
-    switch (scope) {
-      case 'stadium':
-        return !!doc.seatTierStyles?.some(Boolean) || sides.some(standLevels);
-      case 'tier':
-        return sides.some((s) => !!doc.stands[s].seatStyle || !!doc.stands[s].seatTiers?.[t]);
-      case 'stand':
-        return !!stand.seatTiers?.some(Boolean);
-      case 'stand_tier':
+const SEAT_SELECTION_SCOPE: Record<SeatSelection['kind'], SeatStyleScope> = {
+  all: 'stadium',
+  stand: 'stand',
+  tier: 'tier',
+  cell: 'stand_tier',
+};
+
+const SEAT_GRID_SIDES: StandSide[] = ['north', 'south', 'east', 'west'];
+
+const selectionOf = (target: StandTarget): SeatSelection =>
+  target === 'all' ? { kind: 'all' } : { kind: 'stand', side: target };
+
+const inSelection = (sel: SeatSelection, side: StandSide, tier: number) =>
+  sel.kind === 'all' ||
+  (sel.kind === 'stand' && sel.side === side) ||
+  (sel.kind === 'tier' && sel.tier === tier) ||
+  (sel.kind === 'cell' && sel.side === side && sel.tier === tier);
+
+/** Which of an 8 × 4 sample of seats (back row on top) take the pattern's second colour. */
+function swatchAccents(style: ResolvedSeatTierStyle): boolean[] {
+  const cols = 8;
+  const rows = 4;
+  return Array.from({ length: cols * rows }, (_, i) => {
+    const row = Math.floor(i / cols);
+    const fromFront = rows - 1 - row;
+    const h = Math.abs(Math.sin(i * 12.9898 + 78.233) * 43758.5453) % 1;
+    switch (style.pattern) {
+      case 'mosaic':
+        return h < style.share;
+      case 'gradient':
+        return h < fromFront / (rows - 1);
+      case 'stripes':
+        return fromFront % 2 === 1;
+      case 'lettering':
+        // A block of "letters" across the middle of the tier.
+        return style.text.trim() !== '' && row >= 1 && row <= 2 && i % cols >= 2 && i % cols <= 5 && (i + row) % 2 === 0;
+      default:
         return false;
     }
-  };
-  const blocks = perTier ? Array.from({ length: tierCount }, (_, t) => t) : [0];
+  });
+}
+
+/** A tier's seats in miniature: its colour and pattern, as the 3D model paints them. */
+const SeatSwatch: React.FC<{ style: ResolvedSeatTierStyle }> = ({ style }) => (
+  <svg viewBox="0 0 8 4" preserveAspectRatio="none" aria-hidden className="block w-full h-full" shapeRendering="crispEdges">
+    <rect width="8" height="4" fill={style.color} />
+    {swatchAccents(style).map((accent, i) =>
+      accent ? <rect key={i} x={i % 8} y={Math.floor(i / 8)} width="1" height="1" fill={style.accent} /> : null
+    )}
+  </svg>
+);
+
+/**
+ * Seat colours: the club colours, then a stands × tiers grid showing every tier as painted. Pick a
+ * cell, a stand (column), a tier (row) or everything, and paint it: the paint covers whatever the
+ * selection held before, so the grid always shows what the stadium looks like.
+ */
+const SeatColorsEditor: React.FC = () => {
+  const doc = useStadiumStore((s) => s.doc);
+  const activeStand = useStadiumStore((s) => s.activeStandTab);
+  const updateSeatStyle = useStadiumStore((s) => s.updateSeatStyle);
+  const setClubColors = useStadiumStore((s) => s.setClubColors);
+  const [sel, setSel] = useState<SeatSelection>(() => selectionOf(activeStand));
+  useEffect(() => setSel(selectionOf(activeStand)), [activeStand]);
+
+  const tierCount = Math.max(1, ...SEAT_GRID_SIDES.map((s) => (doc.stands[s].enabled ? doc.stands[s].tiers : 0)));
+  const hasTier = (side: StandSide, t: number) => doc.stands[side].enabled && t < doc.stands[side].tiers;
+  // A selection on a tier that no longer exists falls back to the whole stadium.
+  const selection: SeatSelection = (sel.kind === 'tier' || sel.kind === 'cell') && sel.tier >= tierCount ? { kind: 'all' } : sel;
+  const scope = SEAT_SELECTION_SCOPE[selection.kind];
+
+  // The editor shows the first seats of the selection, as they are painted now.
+  const sampleSide =
+    selection.kind === 'stand' || selection.kind === 'cell'
+      ? selection.side
+      : (SEAT_GRID_SIDES.find((s) => hasTier(s, selection.kind === 'tier' ? selection.tier : 0)) ?? 'south');
+  const sampleTier = selection.kind === 'tier' || selection.kind === 'cell' ? selection.tier : 0;
+  const style = resolveSeatTierStyle(doc, doc.stands[sampleSide], sampleTier);
+  const target: StandTarget = selection.kind === 'stand' || selection.kind === 'cell' ? selection.side : 'all';
+  const paint = (patch: Partial<SeatTierStyle> | null) => updateSeatStyle(scope, target, sampleTier, patch);
+  const own =
+    selection.kind === 'all'
+      ? Boolean(doc.seatStyle || doc.seatTierStyles?.some(Boolean)) ||
+        SEAT_GRID_SIDES.some((s) => doc.stands[s].seatStyle || doc.stands[s].seatTiers?.some(Boolean))
+      : seatStyleAt(doc, doc.stands[sampleSide], sampleTier, scope) !== undefined;
+
+  const selectionName =
+    selection.kind === 'all'
+      ? 'Tous les sièges du stade'
+      : selection.kind === 'stand'
+        ? `Tribune ${STAND_LABELS[selection.side].toLowerCase()}, tous ses étages`
+        : selection.kind === 'tier'
+          ? `Étage ${selection.tier + 1}, sur toutes les tribunes`
+          : `Tribune ${STAND_LABELS[selection.side].toLowerCase()}, étage ${selection.tier + 1}`;
+
+  const headerClass = (active: boolean) =>
+    `min-h-7 px-1 text-2xs leading-tight ${choiceClass(active)} ${active ? 'font-medium' : 'text-ink-muted'}`;
+
   return (
     <>
-      <SelectField label="Appliquer à" value={scope} options={scopeOptions} onChange={setScope} />
-      <p className="text-2xs leading-snug text-ink-faint">
-        Du plus général au plus précis : stade, étage, tribune, étage d’une tribune. Le réglage le plus précis
-        l’emporte.
-      </p>
-      {blocks.map((t) => {
-        const style = resolveSeatTierStyle(doc, stand, t, scope);
-        const own = seatStyleAt(doc, stand, t, scope) !== undefined;
-        const set = (patch: Partial<SeatTierStyle>) => updateSeatStyle(scope, target, t, patch);
-        const title = perTier
-          ? tierCount === 1
-            ? 'Sièges'
-            : `Étage ${t + 1} (${TIER_NAMES[t] ?? t + 1})`
-          : scope === 'stadium'
-            ? 'Tous les sièges'
-            : `Tribune ${standName}`;
-        return (
-          <SubGroup key={`${scope}-${t}`} title={title}>
-            <SelectField
-              label="Motif"
-              value={style.pattern}
-              options={SEAT_PATTERN_OPTIONS}
-              onChange={(pattern) => set({ pattern })}
-            />
-            <ColorField label="Couleur" value={style.color} onChange={(color) => set({ color })} />
-            {style.pattern !== 'solid' && (
-              <ColorField
-                label={style.pattern === 'lettering' ? 'Couleur des lettres' : 'Couleur du motif'}
-                value={style.accent}
-                onChange={(accent) => set({ accent })}
-              />
-            )}
-            {style.pattern === 'mosaic' && (
-              <SliderField
-                label="Sièges de la couleur du motif"
-                value={style.share}
-                min={0.02}
-                max={0.6}
-                step={0.01}
-                scale={100}
-                display={`${Math.round(style.share * 100)} %`}
-                onChange={(share) => set({ share })}
-              />
-            )}
-            {style.pattern === 'lettering' && (
-              <TextField
-                label="Texte"
-                value={style.text}
-                placeholder="Ex. ALLEZ"
-                maxLength={24}
-                hint="Écrit avec les sièges, en capitales, au centre de la tribune"
-                onChange={(text) => set({ text })}
-              />
-            )}
-            {narrowerSet(t) && (
-              <p className="text-2xs leading-snug text-ink-faint">
-                Des réglages plus précis remplacent celui-ci sur une partie des sièges.{' '}
+      <SubGroup title="Couleurs du club">
+        <div className="grid grid-cols-2 gap-1" role="group" aria-label="Couleurs du club">
+          {SEAT_CLUB_PALETTES.map((pal) => {
+            const current =
+              doc.colors.seatsPrimary.toLowerCase() === pal.primary.toLowerCase() &&
+              doc.colors.seatsSecondary.toLowerCase() === pal.secondary.toLowerCase();
+            return (
+              <button
+                key={pal.id}
+                type="button"
+                aria-pressed={current}
+                onClick={() => setClubColors({ seatsPrimary: pal.primary, seatsSecondary: pal.secondary })}
+                className={`flex items-center gap-2 min-h-8 px-2 py-1.5 text-left text-xs leading-snug ${choiceClass(current)} ${
+                  current ? 'font-medium' : ''
+                }`}
+              >
+                <SeatPaletteChip primary={pal.primary} secondary={pal.secondary} />
+                <span className="flex-1 min-w-0">{pal.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <ColorField
+          label="Couleur principale"
+          value={doc.colors.seatsPrimary}
+          onChange={(seatsPrimary) => setClubColors({ seatsPrimary })}
+        />
+        <ColorField
+          label="Couleur secondaire"
+          value={doc.colors.seatsSecondary}
+          onChange={(seatsSecondary) => setClubColors({ seatsSecondary })}
+        />
+        <p className="text-2xs leading-snug text-ink-faint">
+          Repeint tous les sièges, un étage sur deux. Sert aussi aux tifos, banderoles et entrées.
+        </p>
+      </SubGroup>
+
+      <SubGroup title="Tribune par tribune, étage par étage">
+        <div
+          className="grid gap-1"
+          style={{ gridTemplateColumns: `2.75rem repeat(${SEAT_GRID_SIDES.length}, minmax(0, 1fr))` }}
+          role="group"
+          aria-label="Choisir les sièges à peindre"
+        >
+          <button
+            type="button"
+            aria-pressed={selection.kind === 'all'}
+            onClick={() => setSel({ kind: 'all' })}
+            className={headerClass(selection.kind === 'all')}
+          >
+            Tout
+          </button>
+          {SEAT_GRID_SIDES.map((side) => {
+            const active = selection.kind === 'stand' && selection.side === side;
+            return (
+              <button
+                key={side}
+                type="button"
+                aria-pressed={active}
+                disabled={!doc.stands[side].enabled}
+                title={`Toute la tribune ${STAND_LABELS[side].toLowerCase()}`}
+                onClick={() => setSel({ kind: 'stand', side })}
+                className={`${headerClass(active)} disabled:opacity-40 disabled:pointer-events-none`}
+              >
+                {STAND_LABELS[side]}
+              </button>
+            );
+          })}
+          {Array.from({ length: tierCount }, (_, i) => tierCount - 1 - i).map((t) => {
+            const rowActive = selection.kind === 'tier' && selection.tier === t;
+            return (
+              <React.Fragment key={t}>
                 <button
                   type="button"
-                  onClick={() => clearNarrower(scope, target, t)}
-                  className="underline underline-offset-2 hover:text-ink"
+                  aria-pressed={rowActive}
+                  title={`Étage ${t + 1} de toutes les tribunes`}
+                  onClick={() => setSel({ kind: 'tier', tier: t })}
+                  className={headerClass(rowActive)}
                 >
-                  Les effacer
+                  Ét. {t + 1}
                 </button>
-              </p>
-            )}
-            {own && (
-              <button
-                type="button"
-                onClick={() => updateSeatStyle(scope, target, t, null)}
-                className="text-2xs text-ink-faint underline underline-offset-2 hover:text-ink"
-              >
-                {scope === 'stadium' ? 'Revenir aux couleurs du club' : 'Reprendre le réglage plus général'}
-              </button>
-            )}
-          </SubGroup>
-        );
-      })}
+                {SEAT_GRID_SIDES.map((side) => {
+                  if (!hasTier(side, t)) return <span key={side} aria-hidden className="min-h-7 rounded border border-dashed border-line" />;
+                  const picked = inSelection(selection, side, t);
+                  const exact = selection.kind === 'cell' && selection.side === side && selection.tier === t;
+                  return (
+                    <button
+                      key={side}
+                      type="button"
+                      aria-pressed={exact}
+                      aria-label={`Tribune ${STAND_LABELS[side].toLowerCase()}, étage ${t + 1}`}
+                      onClick={() => setSel({ kind: 'cell', side, tier: t })}
+                      className={`relative min-h-7 overflow-hidden rounded outline-offset-1 transition-[outline-color] duration-100 ${
+                        picked ? 'outline outline-2 outline-accent' : 'outline outline-1 outline-edge hover:outline-edge-hover'
+                      }`}
+                    >
+                      <span className="absolute inset-0">
+                        <SeatSwatch style={resolveSeatTierStyle(doc, doc.stands[side], t)} />
+                      </span>
+                    </button>
+                  );
+                })}
+              </React.Fragment>
+            );
+          })}
+        </div>
+        <p className="text-2xs leading-snug text-ink-faint">
+          Clique une case, une tribune, un étage ou « Tout », puis peins : la sélection prend la nouvelle couleur
+          partout.
+        </p>
+      </SubGroup>
+
+      <SubGroup title={selectionName}>
+        <div className="space-y-1.5">
+          <span className="block text-xs text-ink-muted">Motif</span>
+          <Segmented
+            label="Motif"
+            size="sm"
+            value={style.pattern}
+            onChange={(pattern) => paint({ pattern })}
+            options={SEAT_PATTERN_OPTIONS}
+          />
+        </div>
+        <ColorField label="Couleur" value={style.color} onChange={(color) => paint({ color })} />
+        {style.pattern !== 'solid' && (
+          <ColorField
+            label={style.pattern === 'lettering' ? 'Couleur des lettres' : 'Couleur du motif'}
+            value={style.accent}
+            onChange={(accent) => paint({ accent })}
+          />
+        )}
+        {style.pattern === 'mosaic' && (
+          <SliderField
+            label="Sièges de la couleur du motif"
+            value={style.share}
+            min={0.02}
+            max={0.6}
+            step={0.01}
+            scale={100}
+            display={`${Math.round(style.share * 100)} %`}
+            onChange={(share) => paint({ share })}
+          />
+        )}
+        {style.pattern === 'lettering' && (
+          <TextField
+            label="Texte"
+            value={style.text}
+            placeholder="Ex. ALLEZ"
+            maxLength={24}
+            hint="Écrit avec les sièges, en capitales, au centre de chaque étage choisi"
+            onChange={(text) => paint({ text })}
+          />
+        )}
+        {own && (
+          <Button onClick={() => paint(null)}>
+            {selection.kind === 'all' ? 'Revenir aux couleurs du club' : 'Effacer ce réglage'}
+          </Button>
+        )}
+      </SubGroup>
     </>
   );
 };
@@ -1209,7 +1341,6 @@ const StandsPanel: React.FC = () => {
   const resetStandTiersUniform = useStadiumStore((s) => s.resetStandTiersUniform);
   const convertStandToKopWall = useStadiumStore((s) => s.convertStandToKopWall);
   const updateMaterials = useStadiumStore((s) => s.updateMaterials);
-  const updateColors = useStadiumStore((s) => s.updateColors);
   const metrics = useMemo(() => calculateStadiumMetrics(doc), [doc]);
   const mats = useMemo(() => resolveStadiumMaterials(doc), [doc]);
 
@@ -1268,7 +1399,55 @@ const StandsPanel: React.FC = () => {
           options={STAND_TABS}
         />
       </div>
-      <PanelSection title="Résumé" persistKey="stands:summary">
+      <PanelSection title="Gradins" persistKey="stands:terraces">
+        <FieldRow label="Étages">
+          <Segmented
+            label="Nombre d’étages"
+            size="sm"
+            disabled={off}
+            value={stand.tiers}
+            onChange={(t) => updateStand(target, { tiers: t })}
+            options={TIER_OPTIONS.map((t) => ({ id: t, label: String(t) }))}
+          />
+        </FieldRow>
+        <SliderField
+          label="Rangs"
+          min={8}
+          max={108}
+          step={1}
+          disabled={off}
+          value={stand.rows}
+          display={`${stand.rows} · ${Math.round(stand.rows / stand.tiers)} par étage`}
+          onChange={(v) => updateStand(target, { rows: v })}
+        />
+        <SliderField
+          label="Pente"
+          hint="28° est la norme courante ; au-delà de 35° la tribune devient un mur"
+          min={16}
+          max={42}
+          step={0.5}
+          disabled={off}
+          value={slope}
+          display={`${fr1(slope)}°`}
+          onChange={(v) => updateStand(target, { slopeAngleDeg: v })}
+        />
+        <SliderField
+          label={doc.pitch.hasTrack ? 'Recul depuis la piste' : 'Recul depuis le terrain'}
+          hint={
+            doc.pitch.hasTrack
+              ? 'Mesuré depuis le bord extérieur de la piste : 0 m pose le pied de la tribune contre la piste'
+              : undefined
+          }
+          min={doc.pitch.hasTrack ? 0 : MIN_PITCH_SETBACK}
+          max={20}
+          step={0.5}
+          disabled={off}
+          value={stand.distanceToPitch}
+          display={`${fr1(stand.distanceToPitch)} m`}
+          onChange={(v) => updateStand(target, { distanceToPitch: v })}
+        />
+      </PanelSection>
+      <PanelSection title="Visibilité et évacuation" persistKey="stands:summary">
         <FieldRow
           label="Évacuation"
           hint="Étage le plus lent, 79 personnes par mètre et par minute (Green Guide : 8 min au plus)"
@@ -1294,306 +1473,6 @@ const StandsPanel: React.FC = () => {
         </div>
         <SightlineProfile points={sightlines.points} />
       </PanelSection>
-      <PanelSection title="Gradins" persistKey="stands:terraces">
-        <FieldRow label="Étages">
-          <Segmented
-            label="Nombre d’étages"
-            size="sm"
-            disabled={off}
-            value={stand.tiers}
-            onChange={(t) => updateStand(target, { tiers: t })}
-            options={TIER_OPTIONS.map((t) => ({ id: t, label: String(t) }))}
-          />
-        </FieldRow>
-        <div className="flex items-center justify-between gap-3 text-2xs">
-          <span className="text-ink-faint">Balcons de loges empilés presque à la verticale</span>
-          <Button disabled={off} onClick={() => updateStand(target, verticalBoxStandPatch(stand))}>
-            Tribune verticale de loges
-          </Button>
-        </div>
-        <SliderField
-          label="Rangs"
-          min={8}
-          max={108}
-          step={1}
-          disabled={off}
-          value={stand.rows}
-          display={`${stand.rows} · ${Math.round(stand.rows / stand.tiers)} par étage`}
-          onChange={(v) => updateStand(target, { rows: v })}
-        />
-        <SliderField
-          label="Pente"
-          hint="28° est la norme courante ; au-delà de 35° la tribune devient un mur"
-          min={16}
-          max={42}
-          step={0.5}
-          disabled={off}
-          value={slope}
-          display={`${fr1(slope)}°`}
-          onChange={(v) => updateStand(target, { slopeAngleDeg: v })}
-        />
-        <FieldRow
-          label="Pente des gradins"
-          hint="Progressive : rangs bas plus plats, rangs hauts plus raides, même hauteur totale. Garde une bonne visibilité à chaque rang"
-        >
-          <Segmented
-            label="Pente des gradins"
-            size="sm"
-            disabled={off}
-            value={stand.rakeProfile ?? 'constant'}
-            onChange={(rakeProfile) => updateStand(target, { rakeProfile })}
-            options={[
-              { id: 'constant', label: 'Constante' },
-              { id: 'progressive', label: 'Progressive' },
-            ]}
-          />
-        </FieldRow>
-        <SliderField
-          label={doc.pitch.hasTrack ? 'Recul depuis la piste' : 'Recul depuis le terrain'}
-          hint={
-            doc.pitch.hasTrack
-              ? 'Mesuré depuis le bord extérieur de la piste : 0 m pose le pied de la tribune contre la piste'
-              : undefined
-          }
-          min={doc.pitch.hasTrack ? 0 : MIN_PITCH_SETBACK}
-          max={20}
-          step={0.5}
-          disabled={off}
-          value={stand.distanceToPitch}
-          display={`${fr1(stand.distanceToPitch)} m`}
-          onChange={(v) => updateStand(target, { distanceToPitch: v })}
-        />
-        <SliderField
-          label="Hauteur du premier rang"
-          hint="Au-dessus du terrain. 0 m : premier rang au ras de la pelouse, à l'anglaise. Plus haut : un mur de front plus haut, et la tribune démarre au-dessus"
-          min={0}
-          max={10}
-          step={0.1}
-          disabled={off}
-          value={stand.elevationStart}
-          display={`${fr1(stand.elevationStart)} m`}
-          onChange={(v) => updateStand(target, { elevationStart: v })}
-        />
-        <SliderField
-          label="Profondeur de rang"
-          min={0.72}
-          max={0.95}
-          step={0.01}
-          disabled={off}
-          value={stand.rowDepth}
-          display={`${Math.round(stand.rowDepth * 100)} cm`}
-          scale={100}
-          onChange={(v) => updateStand(target, { rowDepth: v })}
-        />
-      </PanelSection>
-      {stand.tiers >= 2 && (
-        <PanelSection title="Étage par étage" defaultOpen={false} persistKey="stands:tiers">
-            <SliderField
-              label="Avancée en encorbellement"
-              hint="Avance les étages supérieurs au-dessus des derniers rangs de l’étage inférieur ; la dalle remonte pour garder 2,4 m au-dessus des rangs abrités"
-              min={0}
-              max={7.5}
-              step={0.25}
-              disabled={off}
-              value={tierOverhang}
-              display={tierOverhang > 0 ? `+${fr1(tierOverhang)} m` : 'Aligné'}
-              onChange={(v) => updateStand(target, { tierOverhang: v })}
-            />
-          <div className="flex items-center justify-between text-2xs">
-            <span className="text-ink-faint">
-              {hasAsymmetricTiers
-                ? 'Profil indépendant actif par étage'
-                : 'Réglage séparé des rangs, pentes et surplombs'}
-            </span>
-            {hasAsymmetricTiers && (
-              <Button disabled={off} onClick={() => resetStandTiersUniform(target)}>
-                Réuniformiser
-              </Button>
-            )}
-          </div>
-          <div className="space-y-2">
-            {resolvedTiers.map((tSpec) => (
-              <div
-                key={tSpec.tierIndex}
-                className="p-2.5 rounded border border-line bg-canvas/50 space-y-2"
-              >
-                <div className="flex items-baseline justify-between text-xs">
-                  <span className="font-medium text-ink">
-                    Étage {tSpec.tierIndex + 1}
-                    {tSpec.tierIndex === 0
-                      ? ' (bas)'
-                      : tSpec.tierIndex === resolvedTiers.length - 1
-                      ? ' (haut)'
-                      : ''}
-                  </span>
-                  <span className="text-2xs text-ink-faint tabular-nums">
-                    {tSpec.rows} rangs · {fr1(tSpec.slopeAngleDeg)}° · marche{' '}
-                    {Math.round(tSpec.riserHeight * 100)} cm
-                  </span>
-                </div>
-                <SliderField
-                  label={`Rangs (étage ${tSpec.tierIndex + 1})`}
-                  min={4}
-                  max={60}
-                  step={1}
-                  disabled={off}
-                  value={tSpec.rows}
-                  display={`${tSpec.rows} rangs`}
-                  onChange={(r) =>
-                    updateStandTier(target, tSpec.tierIndex, { rows: r })
-                  }
-                />
-                <SliderField
-                  label={`Pente (étage ${tSpec.tierIndex + 1})`}
-                  min={16}
-                  max={42}
-                  step={0.5}
-                  disabled={off}
-                  value={tSpec.slopeAngleDeg}
-                  display={`${fr1(tSpec.slopeAngleDeg)}°`}
-                  onChange={(ang) =>
-                    updateStandTier(target, tSpec.tierIndex, { slopeAngleDeg: ang })
-                  }
-                />
-                {tSpec.tierIndex > 0 && (
-                  <SliderField
-                    label={`Encorbellement (étage ${tSpec.tierIndex + 1})`}
-                    min={0}
-                    max={7.5}
-                    step={0.25}
-                    disabled={off}
-                    value={tSpec.overhang}
-                    display={tSpec.overhang > 0 ? `+${fr1(tSpec.overhang)} m` : '0,0 m'}
-                    onChange={(ov) =>
-                      updateStandTier(target, tSpec.tierIndex, { overhang: ov })
-                    }
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-        </PanelSection>
-      )}
-      <PanelSection title="Circulations" persistKey="stands:circulation">
-        <CrossAisleList
-          aisles={crossAisles}
-          tierCount={resolvedTiers.length}
-          disabled={off}
-          onChange={(list) =>
-            updateStand(target, {
-              crossAisles: list,
-              crossAisle: undefined,
-              crossAisleRatio: undefined,
-              crossAisleWidth: undefined,
-            })
-          }
-        />
-        <SubGroup title="Vomitoires">
-          <SliderField
-            label="Nombre de vomitoires"
-            hint="Ouvertures réelles découpées dans les gradins vers les coursives"
-            min={0}
-            max={10}
-            step={1}
-            disabled={off}
-            value={vomSpec.count}
-            display={vomSpec.count === 0 ? 'Aucun' : `${vomSpec.count} ouvertures`}
-            onChange={(v) => updateStand(target, { vomitoryCount: v })}
-          />
-          <FieldRow
-            label="Rangées par étage"
-            hint="Plusieurs rangées de vomitoires superposées dans un même étage, pour un étage très haut comme un mur de Kop"
-          >
-            <Segmented
-              label="Rangées de vomitoires par étage"
-              size="sm"
-              disabled={off || vomSpec.count === 0}
-              value={vomSpec.levels}
-              onChange={(v) => updateStand(target, { vomitoryLevels: v })}
-              options={([1, 2, 3, 4] as const).map((n) => ({ id: n, label: String(n) }))}
-            />
-          </FieldRow>
-          {vomSpec.count > 0 && vomSpec.levels > 1 && (
-            <>
-              {resolvedTiers.some((t) => vomitoryLevelsOfTier(stand, t.rows) < vomSpec.levels) && (
-                <p className="text-2xs text-ink-muted">
-                  {resolvedTiers
-                    .map((t) => ({ t, n: vomitoryLevelsOfTier(stand, t.rows) }))
-                    .filter(({ n }) => n < vomSpec.levels)
-                    .map(({ t, n }) => `${resolvedTiers.length > 1 ? `Étage ${t.tierIndex + 1}` : 'L’étage'} : ${n} rangée${n > 1 ? 's' : ''} (${t.rows} rangs)`)
-                    .join(' · ')}
-                  {` — il faut ${VOMITORY_ROWS_PER_LEVEL} rangs par rangée de vomitoires.`}
-                </p>
-              )}
-              <ToggleField
-                label="En quinconce"
-                hint="Chaque rangée de vomitoires décalée d’une demi-travée par rapport à celle du dessous"
-                disabled={off}
-                checked={vomSpec.staggered}
-                onChange={(vomitoryStaggered) => updateStand(target, { vomitoryStaggered })}
-              />
-            </>
-          )}
-          <SliderField
-            label="Position verticale"
-            min={0.2}
-            max={0.8}
-            step={0.05}
-            scale={100}
-            disabled={off || vomSpec.count === 0}
-            value={vomSpec.rowRatio}
-            display={`${Math.round(vomSpec.rowRatio * 100)} % ${vomSpec.levels > 1 ? 'de chaque rangée' : 'de l’étage'}`}
-            onChange={(v) => updateStand(target, { vomitoryRowRatio: v })}
-          />
-          <SliderField
-            label="Décalage latéral"
-            min={-0.25}
-            max={0.25}
-            step={0.05}
-            scale={100}
-            disabled={off || vomSpec.count === 0}
-            value={vomSpec.offsetRatio}
-            display={
-              Math.abs(vomSpec.offsetRatio) < 0.01
-                ? 'Centré'
-                : `${vomSpec.offsetRatio > 0 ? '+' : ''}${Math.round(vomSpec.offsetRatio * 100)} %`
-            }
-            onChange={(v) => updateStand(target, { vomitoryOffsetRatio: v })}
-          />
-        </SubGroup>
-        <SubGroup title="Escaliers">
-          <SliderField
-            label="Escaliers radiaux"
-            min={0}
-            max={16}
-            step={1}
-            disabled={off}
-            value={stand.aisleCount}
-            display={stand.aisleCount === 0 ? 'Aucun' : `${stand.aisleCount} volées`}
-            onChange={(v) => updateStand(target, { aisleCount: v })}
-          />
-          <SliderField
-            label="Largeur d’escalier"
-            min={0.9}
-            max={2.4}
-            step={0.1}
-            disabled={off || stand.aisleCount === 0}
-            value={stand.aisleWidth}
-            display={`${fr1(stand.aisleWidth)} m`}
-            onChange={(v) => updateStand(target, { aisleWidth: v })}
-          />
-          <FieldRow
-            label="Évacuation"
-            hint="Étage le plus lent, 79 personnes par mètre et par minute (Green Guide : 8 min au plus)"
-          >
-            <span
-              className={`tabular-nums ${sm.evacuationMinutes > 8 ? 'text-danger' : 'text-ink'}`}
-            >
-              {off ? '—' : `${fr1(sm.evacuationMinutes)} min`}
-            </span>
-          </FieldRow>
-        </SubGroup>
-      </PanelSection>
       <PanelSection title="Sièges" persistKey="stands:seats">
         <OptionList
           label="Type de places"
@@ -1607,63 +1486,15 @@ const StandsPanel: React.FC = () => {
           }
           options={SEATING_TYPE_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
         />
-        <SliderField
-          label="Largeur de siège"
-          min={0.46}
-          max={0.62}
-          step={0.01}
-          disabled={off}
-          value={stand.seatWidth}
-          display={`${Math.round(stand.seatWidth * 100)} cm`}
-          scale={100}
-          onChange={(v) => updateStand(target, { seatWidth: v })}
-        />
         <GalleryPicker
           label="Finition des sièges"
           value={mats.seatFinish}
           onChange={(seatFinish) => updateMaterials({ seatFinish })}
           options={materialGallery(SEAT_MATERIAL_CATALOG)}
         />
-        <ToggleField
-          label="Sièges 3D individuels"
-          hint="Désactive pour un rendu plus léger sur les machines modestes"
-          checked={mats.seats3d !== false}
-          onChange={(seats3d) => updateMaterials({ seats3d })}
-        />
-        <SubGroup title="Couleurs">
-          <div className="grid grid-cols-2 gap-1" role="group" aria-label="Couleurs de club">
-            {SEAT_CLUB_PALETTES.map((pal) => {
-              const current =
-                doc.colors.seatsPrimary.toLowerCase() === pal.primary.toLowerCase() &&
-                doc.colors.seatsSecondary.toLowerCase() === pal.secondary.toLowerCase();
-              return (
-                <button
-                  key={pal.id}
-                  type="button"
-                  aria-pressed={current}
-                  onClick={() => updateColors({ seatsPrimary: pal.primary, seatsSecondary: pal.secondary })}
-                  className={`flex items-center gap-2 min-h-8 px-2 py-1.5 text-left text-xs leading-snug ${choiceClass(current)} ${
-                    current ? 'font-medium' : ''
-                  }`}
-                >
-                  <SeatPaletteChip primary={pal.primary} secondary={pal.secondary} />
-                  <span className="flex-1 min-w-0">{pal.label}</span>
-                </button>
-              );
-            })}
-          </div>
-          <ColorField
-            label="Couleur principale"
-            value={doc.colors.seatsPrimary}
-            onChange={(v) => updateColors({ seatsPrimary: v })}
-          />
-          <ColorField
-            label="Couleur secondaire"
-            value={doc.colors.seatsSecondary}
-            onChange={(v) => updateColors({ seatsSecondary: v })}
-          />
-          <SeatTiersEditor editAll={editAll} side={side} />
-        </SubGroup>
+      </PanelSection>
+      <PanelSection title="Couleurs des sièges" persistKey="stands:colors">
+        <SeatColorsEditor />
       </PanelSection>
       <PanelSection title="Équipements et habillage" persistKey="stands:fittings">
         <ToggleField
@@ -1730,79 +1561,13 @@ const StandsPanel: React.FC = () => {
           </>
         )}
       </PanelSection>
-      {(separateStands || !editAll) && (
-        <PanelSection
-          title={separateStands ? 'Toit, structure et façade' : 'Tribune mobile et façade'}
-          persistKey="stands:structure"
-        >
-          {!editAll && (
-            <SliderField
-              label="Tribune mobile : recul"
-              hint="Tribune montée sur rails, reculée pour dégager une piste ou avancée au bord du terrain"
-              disabled={off}
-              min={0}
-              max={15}
-              step={0.5}
-              value={stand.retractShift ?? 0}
-              display={`${fr1(stand.retractShift ?? 0)} m`}
-              onChange={(v) =>
-                updateStand(target, {
-                  retractShift: v,
-                  distanceToPitch: Math.max(0, stand.distanceToPitch - (stand.retractShift ?? 0) + v),
-                })
-              }
-            />
-          )}
-          {separateStands && (
-            <>
-              <SelectField
-                label="Toiture"
-                disabled={off}
-                value={stand.roofStyleOverride ?? 'inherit'}
-                onChange={(v) =>
-                  updateStand(target, { roofStyleOverride: v === 'inherit' ? undefined : v })
-                }
-                options={STAND_ROOF_OVERRIDES}
-              />
-              <SelectField
-                label="Structure"
-                disabled={off}
-                value={stand.structureMaterialOverride ?? 'inherit'}
-                onChange={(v) =>
-                  updateStand(target, {
-                    structureMaterialOverride: v === 'inherit' ? undefined : v,
-                  })
-                }
-                options={[
-                  { id: 'inherit', label: 'Comme le stade' },
-                  ...STRUCTURE_MATERIAL_CATALOG.map((o) => ({ id: o.id, label: o.label })),
-                ]}
-              />
-            </>
-          )}
-          <SelectField
-            label="Façade"
-            disabled={off}
-            value={stand.envelopeStyleOverride ?? 'inherit'}
-            onChange={(v) => updateStand(target, { envelopeStyleOverride: v === 'inherit' ? undefined : v })}
-            options={[
-              { id: 'inherit', label: 'Comme le stade' },
-              ...ENVELOPE_STYLE_CATALOG.map((o) => ({ id: o.id, label: o.label })),
-            ]}
-          />
-          <SelectField
-            label="Revêtement de façade"
-            disabled={off}
-            value={stand.facadeMaterialOverride ?? 'inherit'}
-            onChange={(v) => updateStand(target, { facadeMaterialOverride: v === 'inherit' ? undefined : v })}
-            options={[
-              { id: 'inherit', label: 'Comme le stade' },
-              ...FACADE_MATERIAL_CATALOG.map((o) => ({ id: o.id, label: o.label })),
-            ]}
-          />
-        </PanelSection>
-      )}
       <PanelSection title="Public" persistKey="stands:crowd">
+        <ToggleField
+          label="Sièges 3D individuels"
+          hint="Désactive pour un rendu plus léger sur les machines modestes"
+          checked={mats.seats3d !== false}
+          onChange={(seats3d) => updateMaterials({ seats3d })}
+        />
         <ToggleField
           label="Spectateurs dans les tribunes"
           hint="Désactivé, les sièges restent vides"
@@ -1823,48 +1588,322 @@ const StandsPanel: React.FC = () => {
           onChange={(crowdAttendance) => updateMaterials({ crowdAttendance })}
         />
       </PanelSection>
-      <PanelSection title="Raccourcis" defaultOpen={false} persistKey="stands:shortcuts">
-        <div className="flex flex-wrap gap-2 pt-1">
-          <Button
+      <AdvancedSection tab="stands">
+        <SubGroup title="Profil des gradins">
+          <FieldRow
+            label="Pente des gradins"
+            hint="Progressive : rangs bas plus plats, rangs hauts plus raides, même hauteur totale. Garde une bonne visibilité à chaque rang"
+          >
+            <Segmented
+              label="Pente des gradins"
+              size="sm"
+              disabled={off}
+              value={stand.rakeProfile ?? 'constant'}
+              onChange={(rakeProfile) => updateStand(target, { rakeProfile })}
+              options={[
+                { id: 'constant', label: 'Constante' },
+                { id: 'progressive', label: 'Progressive' },
+              ]}
+            />
+          </FieldRow>
+          <SliderField
+            label="Hauteur du premier rang"
+            hint="Au-dessus du terrain. 0 m : premier rang au ras de la pelouse, à l'anglaise. Plus haut : un mur de front plus haut, et la tribune démarre au-dessus"
+            min={0}
+            max={10}
+            step={0.1}
             disabled={off}
-            onClick={() =>
-              updateStand('all', {
-                rows: stand.rows,
-                tiers: stand.tiers,
-                slopeAngleDeg: slope,
-                rowDepth: stand.rowDepth,
-                riserHeight: stand.riserHeight,
-                seatWidth: stand.seatWidth,
-                distanceToPitch: stand.distanceToPitch,
-                aisleCount: stand.aisleCount,
-                aisleWidth: stand.aisleWidth,
-                vomitoryCount: stand.vomitoryCount,
-                vomitoryRowRatio: stand.vomitoryRowRatio,
-                vomitoryOffsetRatio: stand.vomitoryOffsetRatio,
-                vomitoryLevels: stand.vomitoryLevels,
-                vomitoryStaggered: stand.vomitoryStaggered,
-                tierOverhang: stand.tierOverhang,
-                tierConfigs: stand.tierConfigs
-                  ? stand.tierConfigs.map((tc) => ({ ...tc }))
-                  : undefined,
+            value={stand.elevationStart}
+            display={`${fr1(stand.elevationStart)} m`}
+            onChange={(v) => updateStand(target, { elevationStart: v })}
+          />
+          <SliderField
+            label="Profondeur de rang"
+            min={0.72}
+            max={0.95}
+            step={0.01}
+            disabled={off}
+            value={stand.rowDepth}
+            display={`${Math.round(stand.rowDepth * 100)} cm`}
+            scale={100}
+            onChange={(v) => updateStand(target, { rowDepth: v })}
+          />
+          <SliderField
+            label="Largeur de siège"
+            min={0.46}
+            max={0.62}
+            step={0.01}
+            disabled={off}
+            value={stand.seatWidth}
+            display={`${Math.round(stand.seatWidth * 100)} cm`}
+            scale={100}
+            onChange={(v) => updateStand(target, { seatWidth: v })}
+          />
+        </SubGroup>
+        {stand.tiers >= 2 && (
+          <SubGroup title="Étage par étage">
+              <SliderField
+                label="Avancée en encorbellement"
+                hint="Avance les étages supérieurs au-dessus des derniers rangs de l’étage inférieur ; la dalle remonte pour garder 2,4 m au-dessus des rangs abrités"
+                min={0}
+                max={7.5}
+                step={0.25}
+                disabled={off}
+                value={tierOverhang}
+                display={tierOverhang > 0 ? `+${fr1(tierOverhang)} m` : 'Aligné'}
+                onChange={(v) => updateStand(target, { tierOverhang: v })}
+              />
+            <div className="flex items-center justify-between text-2xs">
+              <span className="text-ink-faint">
+                {hasAsymmetricTiers
+                  ? 'Profil indépendant actif par étage'
+                  : 'Réglage séparé des rangs, pentes et surplombs'}
+              </span>
+              {hasAsymmetricTiers && (
+                <Button disabled={off} onClick={() => resetStandTiersUniform(target)}>
+                  Réuniformiser
+                </Button>
+              )}
+            </div>
+            <div className="space-y-2">
+              {resolvedTiers.map((tSpec) => (
+                <div
+                  key={tSpec.tierIndex}
+                  className="p-2.5 rounded border border-line bg-canvas/50 space-y-2"
+                >
+                  <div className="flex items-baseline justify-between text-xs">
+                    <span className="font-medium text-ink">
+                      Étage {tSpec.tierIndex + 1}
+                      {tSpec.tierIndex === 0
+                        ? ' (bas)'
+                        : tSpec.tierIndex === resolvedTiers.length - 1
+                        ? ' (haut)'
+                        : ''}
+                    </span>
+                    <span className="text-2xs text-ink-faint tabular-nums">
+                      {tSpec.rows} rangs · {fr1(tSpec.slopeAngleDeg)}° · marche{' '}
+                      {Math.round(tSpec.riserHeight * 100)} cm
+                    </span>
+                  </div>
+                  <SliderField
+                    label={`Rangs (étage ${tSpec.tierIndex + 1})`}
+                    min={4}
+                    max={60}
+                    step={1}
+                    disabled={off}
+                    value={tSpec.rows}
+                    display={`${tSpec.rows} rangs`}
+                    onChange={(r) =>
+                      updateStandTier(target, tSpec.tierIndex, { rows: r })
+                    }
+                  />
+                  <SliderField
+                    label={`Pente (étage ${tSpec.tierIndex + 1})`}
+                    min={16}
+                    max={42}
+                    step={0.5}
+                    disabled={off}
+                    value={tSpec.slopeAngleDeg}
+                    display={`${fr1(tSpec.slopeAngleDeg)}°`}
+                    onChange={(ang) =>
+                      updateStandTier(target, tSpec.tierIndex, { slopeAngleDeg: ang })
+                    }
+                  />
+                  {tSpec.tierIndex > 0 && (
+                    <SliderField
+                      label={`Encorbellement (étage ${tSpec.tierIndex + 1})`}
+                      min={0}
+                      max={7.5}
+                      step={0.25}
+                      disabled={off}
+                      value={tSpec.overhang}
+                      display={tSpec.overhang > 0 ? `+${fr1(tSpec.overhang)} m` : '0,0 m'}
+                      onChange={(ov) =>
+                        updateStandTier(target, tSpec.tierIndex, { overhang: ov })
+                      }
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          </SubGroup>
+        )}
+        <SubGroup title="Circulations">
+          <CrossAisleList
+            aisles={crossAisles}
+            tierCount={resolvedTiers.length}
+            disabled={off}
+            onChange={(list) =>
+              updateStand(target, {
+                crossAisles: list,
+                crossAisle: undefined,
+                crossAisleRatio: undefined,
+                crossAisleWidth: undefined,
               })
             }
-          >
-            Appliquer aux 4 tribunes
-          </Button>
-          <Button
-            disabled={off}
-            title={
-              tallestOther > 0
-                ? `Un seul étage monté jusqu’à ${fr1(tallestOther)} m, la hauteur de la plus haute tribune`
-                : 'Un seul étage pleine hauteur'
-            }
-            onClick={() => convertStandToKopWall(target)}
-          >
-            Transformer en kop
-          </Button>
-        </div>
-      </PanelSection>
+          />
+          <SubGroup title="Vomitoires">
+            <SliderField
+              label="Nombre de vomitoires"
+              hint="Ouvertures réelles découpées dans les gradins vers les coursives"
+              min={0}
+              max={10}
+              step={1}
+              disabled={off}
+              value={vomSpec.count}
+              display={vomSpec.count === 0 ? 'Aucun' : `${vomSpec.count} ouvertures`}
+              onChange={(v) => updateStand(target, { vomitoryCount: v })}
+            />
+            <FieldRow
+              label="Rangées par étage"
+              hint="Plusieurs rangées de vomitoires superposées dans un même étage, pour un étage très haut comme un mur de Kop"
+            >
+              <Segmented
+                label="Rangées de vomitoires par étage"
+                size="sm"
+                disabled={off || vomSpec.count === 0}
+                value={vomSpec.levels}
+                onChange={(v) => updateStand(target, { vomitoryLevels: v })}
+                options={([1, 2, 3, 4] as const).map((n) => ({ id: n, label: String(n) }))}
+              />
+            </FieldRow>
+            {vomSpec.count > 0 && vomSpec.levels > 1 && (
+              <>
+                {resolvedTiers.some((t) => vomitoryLevelsOfTier(stand, t.rows) < vomSpec.levels) && (
+                  <p className="text-2xs text-ink-muted">
+                    {resolvedTiers
+                      .map((t) => ({ t, n: vomitoryLevelsOfTier(stand, t.rows) }))
+                      .filter(({ n }) => n < vomSpec.levels)
+                      .map(({ t, n }) => `${resolvedTiers.length > 1 ? `Étage ${t.tierIndex + 1}` : 'L’étage'} : ${n} rangée${n > 1 ? 's' : ''} (${t.rows} rangs)`)
+                      .join(' · ')}
+                    {` — il faut ${VOMITORY_ROWS_PER_LEVEL} rangs par rangée de vomitoires.`}
+                  </p>
+                )}
+                <ToggleField
+                  label="En quinconce"
+                  hint="Chaque rangée de vomitoires décalée d’une demi-travée par rapport à celle du dessous"
+                  disabled={off}
+                  checked={vomSpec.staggered}
+                  onChange={(vomitoryStaggered) => updateStand(target, { vomitoryStaggered })}
+                />
+              </>
+            )}
+            <SliderField
+              label="Position verticale"
+              min={0.2}
+              max={0.8}
+              step={0.05}
+              scale={100}
+              disabled={off || vomSpec.count === 0}
+              value={vomSpec.rowRatio}
+              display={`${Math.round(vomSpec.rowRatio * 100)} % ${vomSpec.levels > 1 ? 'de chaque rangée' : 'de l’étage'}`}
+              onChange={(v) => updateStand(target, { vomitoryRowRatio: v })}
+            />
+            <SliderField
+              label="Décalage latéral"
+              min={-0.25}
+              max={0.25}
+              step={0.05}
+              scale={100}
+              disabled={off || vomSpec.count === 0}
+              value={vomSpec.offsetRatio}
+              display={
+                Math.abs(vomSpec.offsetRatio) < 0.01
+                  ? 'Centré'
+                  : `${vomSpec.offsetRatio > 0 ? '+' : ''}${Math.round(vomSpec.offsetRatio * 100)} %`
+              }
+              onChange={(v) => updateStand(target, { vomitoryOffsetRatio: v })}
+            />
+          </SubGroup>
+          <SubGroup title="Escaliers">
+            <SliderField
+              label="Escaliers radiaux"
+              min={0}
+              max={16}
+              step={1}
+              disabled={off}
+              value={stand.aisleCount}
+              display={stand.aisleCount === 0 ? 'Aucun' : `${stand.aisleCount} volées`}
+              onChange={(v) => updateStand(target, { aisleCount: v })}
+            />
+            <SliderField
+              label="Largeur d’escalier"
+              min={0.9}
+              max={2.4}
+              step={0.1}
+              disabled={off || stand.aisleCount === 0}
+              value={stand.aisleWidth}
+              display={`${fr1(stand.aisleWidth)} m`}
+              onChange={(v) => updateStand(target, { aisleWidth: v })}
+            />
+          </SubGroup>
+        </SubGroup>
+        {!editAll && (
+          <SubGroup title="Tribune mobile">
+              <SliderField
+                label="Recul sur rails"
+                hint="Tribune montée sur rails, reculée pour dégager une piste ou avancée au bord du terrain"
+                disabled={off}
+                min={0}
+                max={15}
+                step={0.5}
+                value={stand.retractShift ?? 0}
+                display={`${fr1(stand.retractShift ?? 0)} m`}
+                onChange={(v) =>
+                  updateStand(target, {
+                    retractShift: v,
+                    distanceToPitch: Math.max(0, stand.distanceToPitch - (stand.retractShift ?? 0) + v),
+                  })
+                }
+              />
+          </SubGroup>
+        )}
+        <SubGroup title="Transformations">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              disabled={off}
+              onClick={() =>
+                updateStand('all', {
+                  rows: stand.rows,
+                  tiers: stand.tiers,
+                  slopeAngleDeg: slope,
+                  rowDepth: stand.rowDepth,
+                  riserHeight: stand.riserHeight,
+                  seatWidth: stand.seatWidth,
+                  distanceToPitch: stand.distanceToPitch,
+                  aisleCount: stand.aisleCount,
+                  aisleWidth: stand.aisleWidth,
+                  vomitoryCount: stand.vomitoryCount,
+                  vomitoryRowRatio: stand.vomitoryRowRatio,
+                  vomitoryOffsetRatio: stand.vomitoryOffsetRatio,
+                  vomitoryLevels: stand.vomitoryLevels,
+                  vomitoryStaggered: stand.vomitoryStaggered,
+                  tierOverhang: stand.tierOverhang,
+                  tierConfigs: stand.tierConfigs
+                    ? stand.tierConfigs.map((tc) => ({ ...tc }))
+                    : undefined,
+                })
+              }
+            >
+              Copier cette tribune sur les 4
+            </Button>
+            <Button
+              disabled={off}
+              title={
+                tallestOther > 0
+                  ? `Un seul étage monté jusqu’à ${fr1(tallestOther)} m, la hauteur de la plus haute tribune`
+                  : 'Un seul étage pleine hauteur'
+              }
+              onClick={() => convertStandToKopWall(target)}
+            >
+              Transformer en kop
+            </Button>
+              <Button disabled={off} onClick={() => updateStand(target, verticalBoxStandPatch(stand))}>
+                Tribune verticale de loges
+              </Button>
+          </div>
+        </SubGroup>
+      </AdvancedSection>
     </>
   );
 };
@@ -1876,9 +1915,11 @@ const RoofPanel: React.FC = () => {
   const roof = doc.roof;
   const shape = doc.shape;
   const updateRoof = useStadiumStore((s) => s.updateRoof);
+  const updateStand = useStadiumStore((s) => s.updateStand);
   const updateMaterials = useStadiumStore((s) => s.updateMaterials);
   const mats = useMemo(() => resolveStadiumMaterials(doc), [doc]);
   const none = roof.style === 'none';
+  const separateStands = !isContinuousBowlShape(shape);
   const covered = roof.coveredSides ?? COVERED_SIDE_ORDER;
   const skyMode = roof.skylightMode ?? 'none';
   const skyRatio = roof.skylightRatio ?? 0.35;
@@ -2066,28 +2107,44 @@ const RoofPanel: React.FC = () => {
           onChange={(patch) => updateRoof({ retractable: { ...roof.retractable, ...patch } })}
         />
       )}
-      {isContinuousBowlShape(shape) && !none && (
-        <PanelSection title="Tribunes couvertes">
-          <div className="grid grid-cols-4 gap-1" role="group" aria-label="Tribunes couvertes">
-            {COVERED_SIDE_ORDER.map((side) => {
-              const on = covered.includes(side);
-              return (
-                <button
-                  key={side}
-                  type="button"
-                  aria-pressed={on}
-                  onClick={() => toggleSide(side)}
-                  className={`min-h-7 py-1 text-xs leading-tight ${choiceClass(on)} ${on ? 'font-medium' : ''}`}
-                >
-                  {STAND_LABELS[side]}
-                </button>
-              );
-            })}
-          </div>
-          <p className="text-2xs text-ink-faint">
-            Pour un toit seulement sur la tribune principale, ou sur les deux tribunes latérales.
-          </p>
+      {separateStands ? (
+        <PanelSection title="Tribune par tribune">
+          {SEAT_GRID_SIDES.map((side) => (
+            <SelectField
+              key={side}
+              label={`Tribune ${STAND_LABELS[side].toLowerCase()}`}
+              disabled={!doc.stands[side].enabled}
+              value={doc.stands[side].roofStyleOverride ?? 'inherit'}
+              onChange={(v) => updateStand(side, { roofStyleOverride: v === 'inherit' ? undefined : v })}
+              options={STAND_ROOF_OVERRIDES}
+            />
+          ))}
+          <p className="text-2xs text-ink-faint">« Comme le stade » suit le système de toiture choisi plus haut.</p>
         </PanelSection>
+      ) : (
+        !none && (
+          <PanelSection title="Tribunes couvertes">
+          <div className="grid grid-cols-4 gap-1" role="group" aria-label="Tribunes couvertes">
+              {COVERED_SIDE_ORDER.map((side) => {
+                const on = covered.includes(side);
+                return (
+                  <button
+                    key={side}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggleSide(side)}
+                    className={`min-h-7 py-1 text-xs leading-tight ${choiceClass(on)} ${on ? 'font-medium' : ''}`}
+                  >
+                    {STAND_LABELS[side]}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-2xs text-ink-faint">
+              Pour un toit seulement sur la tribune principale, ou sur les deux tribunes latérales.
+            </p>
+          </PanelSection>
+        )
       )}
       <PanelSection title="Couverture">
         <GalleryPicker
@@ -2315,6 +2372,20 @@ const RoofPanel: React.FC = () => {
             onChange={(structure) => updateMaterials({ structure })}
             options={materialGallery(STRUCTURE_MATERIAL_CATALOG)}
           />
+          {separateStands &&
+            SEAT_GRID_SIDES.map((side) => (
+              <SelectField
+                key={side}
+                label={`Tribune ${STAND_LABELS[side].toLowerCase()}`}
+                disabled={!doc.stands[side].enabled}
+                value={doc.stands[side].structureMaterialOverride ?? 'inherit'}
+                onChange={(v) => updateStand(side, { structureMaterialOverride: v === 'inherit' ? undefined : v })}
+                options={[
+                  { id: 'inherit', label: 'Comme le stade' },
+                  ...STRUCTURE_MATERIAL_CATALOG.map((o) => ({ id: o.id, label: o.label })),
+                ]}
+              />
+            ))}
         </SubGroup>
       </AdvancedSection>
     </>
@@ -2526,6 +2597,7 @@ const FacadePanel: React.FC = () => {
   const depth = mats.facadeDepth ?? 0.85;
   const setEnvelope = useStadiumStore((s) => s.setEnvelope);
   const updateRoof = useStadiumStore((s) => s.updateRoof);
+  const updateStand = useStadiumStore((s) => s.updateStand);
   const shell = isIntegralShell(doc.roof.style) ? doc.roof.style : null;
   const envelope = shell ?? mats.envelopeStyle ?? 'enveloping_skin';
 
@@ -2735,6 +2807,36 @@ const FacadePanel: React.FC = () => {
             onChange={(facadeBulge) => updateMaterials({ facadeBulge })}
           />
         )}
+        </SubGroup>
+        <SubGroup title="Tribune par tribune">
+          {SEAT_GRID_SIDES.map((side) => {
+            const stand = doc.stands[side];
+            const name = STAND_LABELS[side];
+            return (
+              <div key={side} className="space-y-1.5">
+                <SelectField
+                  label={`${name} : enveloppe`}
+                  disabled={!stand.enabled}
+                  value={stand.envelopeStyleOverride ?? 'inherit'}
+                  onChange={(v) => updateStand(side, { envelopeStyleOverride: v === 'inherit' ? undefined : v })}
+                  options={[
+                    { id: 'inherit', label: 'Comme le stade' },
+                    ...ENVELOPE_STYLE_CATALOG.map((o) => ({ id: o.id, label: o.label })),
+                  ]}
+                />
+                <SelectField
+                  label={`${name} : revêtement`}
+                  disabled={!stand.enabled}
+                  value={stand.facadeMaterialOverride ?? 'inherit'}
+                  onChange={(v) => updateStand(side, { facadeMaterialOverride: v === 'inherit' ? undefined : v })}
+                  options={[
+                    { id: 'inherit', label: 'Comme le stade' },
+                    ...FACADE_MATERIAL_CATALOG.map((o) => ({ id: o.id, label: o.label })),
+                  ]}
+                />
+              </div>
+            );
+          })}
         </SubGroup>
       </AdvancedSection>
     </>
