@@ -34,7 +34,10 @@ import {
   resolveCornerPylonFrame,
   resolveCounterweightTrusses,
   resolveFloodlightRig,
+  PROW_LIFT,
+  PROW_REACH,
   resolvePortalCount,
+  resolveProwRise,
   resolveSpanningGirderCount,
   resolveSuspendedMasts,
   resolveWaveAmplitude,
@@ -1291,6 +1294,98 @@ function buildRetractableRoof(
       maxAnisotropy,
     })
   );
+  return group;
+}
+
+/**
+ * ARCHED RETRACTABLE (`arched_retractable`): a convex fixed roof whose opening is closed by
+ * panels sliding along two longitudinal lattice arches; each arch springs from a pair of
+ * concrete towers outside the facade, capped by round platforms (Johan Cruijff ArenA).
+ */
+function buildArchedRetractableRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const { group, bounds, roofY, innerOffset, outerOffset, primaryStructMat } =
+    buildPerimeterCanopyCrown(doc, crossSectionClip, maxAnisotropy, {
+      segments: 192,
+      // Convex shell rolling down from the opening to the eave.
+      surface:
+        ({ roofY: y }) =>
+        (_t, f) =>
+          y + 1.2 + 4.5 * Math.cos((Math.PI / 2) * f),
+    });
+  const { ring } = bounds;
+  if (doc.shape !== 'horseshoe') {
+    group.add(
+      buildRetractablePanels(doc, {
+        ring,
+        roofY: roofY + 4,
+        innerOffset,
+        outerOffset,
+        primaryStructMat,
+        crossSectionClip,
+        maxAnisotropy,
+      })
+    );
+  }
+
+  // The arches run along the long (x) axis above the long edges of the opening.
+  let openHalfZ = 0;
+  let outerHalfX = 0;
+  for (let i = 0; i < 64; i++) {
+    openHalfZ = Math.max(openHalfZ, Math.abs(sampleRoundedBowlRing(ring, i / 64, innerOffset).z));
+    outerHalfX = Math.max(outerHalfX, Math.abs(sampleRoundedBowlRing(ring, i / 64, outerOffset).x));
+  }
+  const towerX = outerHalfX + 6;
+  const springY = roofY + 7;
+  const rise = Math.min(22, towerX * 0.16);
+  const depth = 4.5;
+  const white = createStructurePbrMaterial('white_steel', maxAnisotropy);
+  const concrete = createConcreteBowlMaterial(maxAnisotropy);
+  const archParts: THREE.BufferGeometry[] = [];
+  const towerParts: THREE.BufferGeometry[] = [];
+  const bays = 36;
+  for (const zSign of crossSectionClip ? [-1] : [-1, 1]) {
+    const z = zSign * (openHalfZ + 2);
+    const at = (u: number, top: boolean, side: number) => {
+      const x = -towerX + 2 * towerX * u;
+      const y = springY + rise * (1 - (x / towerX) ** 2) + (top ? depth : 0);
+      // Triangular section: two bottom chords, one top chord.
+      return new THREE.Vector3(x, y, z + (top ? 0 : side * 1.8));
+    };
+    for (let k = 0; k < bays; k++) {
+      const u0 = k / bays;
+      const u1 = (k + 1) / bays;
+      archParts.push(beamGeometry(at(u0, true, 0), at(u1, true, 0), 0.9, 0.9));
+      for (const side of [-1, 1]) {
+        archParts.push(beamGeometry(at(u0, false, side), at(u1, false, side), 0.8, 0.8));
+        archParts.push(beamGeometry(at(k % 2 ? u1 : u0, false, side), at(k % 2 ? u0 : u1, true, 0), 0.35, 0.35));
+      }
+      archParts.push(beamGeometry(at(u0, false, -1), at(u0, false, 1), 0.3, 0.3));
+    }
+    // Towers: concrete shaft, white column cage and a round platform at the springing.
+    for (const xSign of [-1, 1]) {
+      const x = xSign * towerX;
+      const shaft = new THREE.CylinderGeometry(3, 3.4, springY - 6, 20);
+      shaft.translate(x, (springY - 6) / 2, z);
+      towerParts.push(shaft);
+      for (let c = 0; c < 4; c++) {
+        const a = (c / 4) * Math.PI * 2 + Math.PI / 4;
+        const cx = x + Math.cos(a) * 2.2;
+        const cz = z + Math.sin(a) * 2.2;
+        archParts.push(beamGeometry(new THREE.Vector3(cx, springY - 7, cz), new THREE.Vector3(cx, springY + 2, cz), 0.6, 0.6));
+      }
+      const disk = new THREE.CylinderGeometry(4.6, 4.6, 0.8, 28);
+      disk.translate(x, springY + 2.4, z);
+      archParts.push(disk);
+    }
+  }
+  const arches = mergedMesh(archParts, white, 'ArchedRetractableArches');
+  if (arches) group.add(arches);
+  const towers = mergedMesh(towerParts, concrete, 'ArchedRetractableTowers');
+  if (towers) group.add(towers);
   return group;
 }
 
@@ -4223,6 +4318,216 @@ function buildPleatedCrownRoof(
   return group;
 }
 
+/** Overhang (m) of a `serrated_canopy` fold tip beyond the canopy rear edge. */
+const SERRATED_TIP = 6;
+
+/**
+ * SERRATED CANOPY (`serrated_canopy`): a translucent membrane folded into deep pleats running
+ * from the pitch to the outside, their ridges cantilevering past the facade in a saw-toothed rim
+ * propped by a zigzag of white inclined struts (new Nicosia stadium project).
+ */
+function buildSerratedCanopyRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const group = new THREE.Group();
+  const { ring, maxStandH, avgDepth, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
+  const { surfaceMat, shadowDepthMat } = buildCanopyMaterialBundle(doc, maxAnisotropy, 24, 4, 1);
+  const roofY = maxStandH + Math.max(4, doc.roof.heightOffset);
+  const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
+  // ~5 m between a ridge and the next valley; even, so the folds close around the bowl.
+  const folds = 2 * Math.max(24, Math.round(ring.perimeter / 10));
+  // The fold deepens outward: a flat front edge, 2.6 m deep pleats at the rim.
+  const pleat: RingProfile = (_t, nx, nz, s) => {
+    const ridge = s % 2 === 0;
+    const outer = canopyOuterOffsetAt(nx, nz, 3.8);
+    const pts: { r: number; y: number }[] = [];
+    for (let k = 0; k <= 6; k++) {
+      const f = k / 6;
+      pts.push({
+        r: innerOffset + (outer - innerOffset) * f,
+        y: roofY + 0.8 + 1.4 * f + (ridge ? 0.3 + 2.3 * f : 0),
+      });
+    }
+    pts.push(
+      ridge
+        ? { r: outer + SERRATED_TIP, y: roofY + 5.3 }
+        : { r: outer + 1.2, y: roofY + 2.3 }
+    );
+    return pts;
+  };
+  const skin = buildRingLoft(ring, doc.shape, crossSectionClip, folds, pleat, surfaceMat, 'RoofCanopySurface', true);
+  skin.customDepthMaterial = shadowDepthMat;
+  skin.renderOrder = 2;
+  group.add(skin);
+  group.add(
+    buildAnnularCatwalkFloodlights(
+      ring,
+      doc.shape,
+      innerOffset,
+      roofY + 0.5,
+      doc.lighting,
+      crossSectionClip,
+      hasRoofGantryLights(doc)
+    )
+  );
+
+  // Ridge beams, a front fascia, and the zigzag of struts from a ring beam on the facade top to
+  // every fold tip.
+  const { tStart, tEnd, closed } = getBowlArcRange(doc.shape, crossSectionClip);
+  const segs = Math.max(8, Math.round(folds * Math.max(0.25, tEnd - tStart)));
+  const count = closed ? segs : segs + 1;
+  const footY = Math.max(4, roofY - 8);
+  const samples = Array.from({ length: count }, (_, s) => {
+    const t = tStart + (s / segs) * (tEnd - tStart);
+    const n = sampleRoundedBowlRing(ring, t, 0);
+    const line = pleat(t, n.nx, n.nz, s).map((pt) => {
+      const p = sampleRoundedBowlRing(ring, t, pt.r);
+      return new THREE.Vector3(p.x, pt.y - 0.2, p.z);
+    });
+    const f = sampleRoundedBowlRing(ring, t, canopyOuterOffsetAt(n.nx, n.nz, 3.8) + 0.6);
+    return { line, foot: new THREE.Vector3(f.x, footY, f.z) };
+  });
+  const frame: THREE.BufferGeometry[] = [];
+  const struts: THREE.BufferGeometry[] = [];
+  for (let s = 0; s < count; s++) {
+    const { line, foot } = samples[s];
+    const next = closed ? samples[(s + 1) % count] : samples[s + 1];
+    if (next) {
+      frame.push(beamGeometry(line[0], next.line[0], 0.6, 0.9));
+      if (s % 2 === 1) frame.push(beamGeometry(foot, next.foot, 0.7, 0.7));
+    }
+    if (s % 2 !== 0) continue;
+    for (let k = 0; k < line.length - 1; k++) frame.push(beamGeometry(line[k], line[k + 1], 0.3, 0.45));
+    const tip = line[line.length - 1];
+    for (const side of [-1, 1]) {
+      const v = samples[closed ? (s + side + count) % count : s + side];
+      if (v) struts.push(beamGeometry(v.foot, tip, 0.55, 0.55));
+    }
+  }
+  const white = createStructurePbrMaterial('white_steel', maxAnisotropy);
+  const frameMesh = mergedMesh(frame, white, 'SerratedCanopyRidges');
+  if (frameMesh) group.add(frameMesh);
+  const strutMesh = mergedMesh(struts, white, 'SerratedCanopyStruts');
+  if (strutMesh) group.add(strutMesh);
+  return group;
+}
+
+/**
+ * PROW SHELL (`prow_shell`): one dark faceted shell whose roof is a single slope, low on the
+ * south and climbing to a ridge along the north, the west end of the ridge thrusting out over
+ * the forecourt as a prow; the middle of the slope is a translucent ETFE field (U.S. Bank
+ * Stadium).
+ */
+function buildProwShellRoof(
+  doc: StadiumDocument,
+  crossSectionClip: boolean,
+  maxAnisotropy: number
+): THREE.Group {
+  const group = new THREE.Group();
+  const { ring, maxStandH, avgDepth, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
+  const roofY = maxStandH + Math.max(4, doc.roof.heightOffset);
+  const rise = resolveProwRise(roofY);
+  const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
+  // Widest footprint around each normal, plus margin: straight facets must clear every facade.
+  const shellOuter = (nx: number, nz: number) => {
+    const a = Math.atan2(nz, nx);
+    let outer = 0;
+    for (let k = -3; k <= 3; k++) outer = Math.max(outer, canopyOuterOffsetAt(Math.cos(a + k * 0.06), Math.sin(a + k * 0.06), 3.8));
+    return outer + 4;
+  };
+  let halfX = 1;
+  let halfZ = 1;
+  for (let i = 0; i < 64; i++) {
+    const n = sampleRoundedBowlRing(ring, i / 64, 0);
+    const p = sampleRoundedBowlRing(ring, i / 64, shellOuter(n.nx, n.nz));
+    halfX = Math.max(halfX, Math.abs(p.x));
+    halfZ = Math.max(halfZ, Math.abs(p.z));
+  }
+  // The roof plane: low eave on the south (+z), ridge on the north (-z).
+  const slopeY = (z: number) => roofY + 2 + rise * (0.5 - 0.5 * Math.max(-1, Math.min(1, z / halfZ)));
+  // Prow weight: grows toward the north-west end of the ridge.
+  const prowAt = (x: number, z: number) =>
+    Math.max(0, -x / halfX) ** 5 * Math.min(1, Math.max(0, 0.5 - 0.5 * (z / halfZ)) * 1.6);
+  const facets = 2 * Math.max(16, Math.round(ring.perimeter / 24));
+  const shell: RingProfile = (t, nx, nz, s) => {
+    const outer = shellOuter(nx, nz);
+    const e = sampleRoundedBowlRing(ring, t, outer);
+    const p = prowAt(e.x, e.z);
+    const eaveY = slopeY(e.z) + PROW_LIFT * p;
+    const fold = s % 2 === 0 ? 1.6 : 0;
+    const inner = sampleRoundedBowlRing(ring, t, innerOffset);
+    return [
+      { r: outer + 2, y: 0 },
+      { r: outer + 3 + fold + 2 * p, y: eaveY * 0.42 },
+      { r: outer + 1 + PROW_REACH * p, y: eaveY },
+      { r: innerOffset, y: slopeY(inner.z) },
+    ];
+  };
+  const zinc = createFacadePbrMaterial('black_zinc_cladding', doc.lighting, false, maxAnisotropy);
+  const mesh = buildRingLoft(ring, doc.shape, crossSectionClip, facets, shell, zinc, 'RoofCanopySurface', true);
+  group.add(mesh);
+
+  // Facet seams.
+  const pos = mesh.geometry.getAttribute('position');
+  const seams: THREE.BufferGeometry[] = [];
+  const v = (i: number) => new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
+  for (let i = 0; i < pos.count; i += 3) {
+    seams.push(beamGeometry(v(i), v(i + 1), 0.2, 0.2), beamGeometry(v(i + 1), v(i + 2), 0.2, 0.2));
+  }
+  const steel = createStructurePbrMaterial('galvanized_steel', maxAnisotropy);
+  const seamMesh = mergedMesh(seams, steel, 'ProwShellSeams');
+  if (seamMesh) group.add(seamMesh);
+
+  // ETFE field closing the opening, on the same slope, with purlins across it.
+  const { tStart, tEnd } = getBowlArcRange(doc.shape, crossSectionClip);
+  const contour = Array.from({ length: 160 }, (_, i) => {
+    const p = sampleRoundedBowlRing(ring, tStart + (i / 160) * (tEnd - tStart), innerOffset);
+    return new THREE.Vector2(p.x, p.z);
+  });
+  const tris = THREE.ShapeUtils.triangulateShape(contour, []);
+  const capPos = contour.flatMap((p) => [p.x, slopeY(p.y) - 0.1, p.y]);
+  const capGeo = new THREE.BufferGeometry();
+  capGeo.setAttribute('position', new THREE.Float32BufferAttribute(capPos, 3));
+  capGeo.setAttribute(
+    'uv',
+    new THREE.Float32BufferAttribute(contour.flatMap((p) => [p.x / 12, p.y / 12]), 2)
+  );
+  capGeo.setIndex(tris.flat());
+  capGeo.computeVertexNormals();
+  const { surfaceMat, shadowDepthMat } = buildCanopyMaterialBundle(doc, maxAnisotropy, 1, 1, 1);
+  surfaceMat.side = THREE.DoubleSide;
+  const cap = new THREE.Mesh(capGeo, surfaceMat);
+  cap.name = 'ProwShellEtfe';
+  cap.customDepthMaterial = shadowDepthMat;
+  cap.castShadow = true;
+  cap.receiveShadow = true;
+  cap.renderOrder = 2;
+  group.add(cap);
+
+  const purlins: THREE.BufferGeometry[] = [];
+  const zs = contour.map((p) => p.y);
+  const zMin = Math.min(...zs);
+  const zMax = Math.max(...zs);
+  for (let z = zMin + 8; z < zMax - 2; z += 10) {
+    const xs: number[] = [];
+    for (let i = 0; i < contour.length; i++) {
+      const a = contour[i];
+      const b = contour[(i + 1) % contour.length];
+      if ((a.y - z) * (b.y - z) < 0) xs.push(a.x + ((z - a.y) / (b.y - a.y)) * (b.x - a.x));
+    }
+    xs.sort((m, n) => m - n);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      const y = slopeY(z) - 0.9;
+      purlins.push(beamGeometry(new THREE.Vector3(xs[k], y, z), new THREE.Vector3(xs[k + 1], y, z), 0.9, 1.6));
+    }
+  }
+  const purlinMesh = mergedMesh(purlins, steel, 'ProwShellPurlins');
+  if (purlinMesh) group.add(purlinMesh);
+  return group;
+}
+
 /** Rise (m) of a `saucer_dome` from its rim to its front edge. */
 const SAUCER_CROWN = 6;
 
@@ -4667,6 +4972,8 @@ const SIGNATURE_ROOF_BUILDERS: Partial<
   dished_canopy: buildDishedCanopyRoof,
   faceted_shell: buildFacetedShellRoof,
   pleated_crown: buildPleatedCrownRoof,
+  serrated_canopy: buildSerratedCanopyRoof,
+  prow_shell: buildProwShellRoof,
   saucer_dome: buildSaucerDomeRoof,
   rising_canopy: buildRisingCanopyRoof,
   crossed_arches: buildCrossedArchesRoof,
@@ -4772,6 +5079,11 @@ function buildRoofAssembly(
 
     if (doc.roof.style === 'suspended_masts') {
       root.add(buildSuspendedMastsRoof(doc, crossSectionClip, maxAnisotropy));
+      return root;
+    }
+
+    if (doc.roof.style === 'arched_retractable') {
+      root.add(buildArchedRetractableRoof(doc, crossSectionClip, maxAnisotropy));
       return root;
     }
 

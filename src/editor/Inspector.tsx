@@ -33,6 +33,7 @@ import {
   getEffectiveSunkenDepth,
   IntegralShellStyle,
   isIntegralShell,
+  isMovableRoof,
   getMaxPitchLengthForTrack,
   isContinuousBowlShape,
   CORNER_PYLON_MAX_HEIGHT,
@@ -243,6 +244,16 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
     desc: 'Toit et façade d’un seul tenant en facettes triangulaires de métal',
   },
   {
+    id: 'serrated_canopy',
+    label: 'Auvent plissé dentelé',
+    desc: 'Membrane translucide plissée vers l’extérieur, rive en dents de scie sur béquilles en V',
+  },
+  {
+    id: 'prow_shell',
+    label: 'Coque en proue',
+    desc: 'Toit à un seul pan avec champ ETFE, façade sombre à facettes et proue en surplomb',
+  },
+  {
     id: 'pleated_crown',
     label: 'Couronne plissée',
     desc: 'Façade métallique plissée en losanges intégrée au toit vitré',
@@ -341,6 +352,11 @@ export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
     id: 'retractable',
     label: 'Toit rétractable motorisé',
     desc: 'Panneaux mobiles : coulissants, pivotants, à volets ou membrane repliable',
+  },
+  {
+    id: 'arched_retractable',
+    label: 'Arches sur tours & toit coulissant',
+    desc: 'Deux arches treillis longitudinales sur tours d’angle, panneaux coulissant entre elles',
   },
   {
     id: 'petal_iris',
@@ -2149,7 +2165,7 @@ const RoofPanel: React.FC = () => {
           />
         </PanelSection>
       )}
-      {(roof.style === 'retractable' || roof.style === 'petal_iris') && (
+      {isMovableRoof(roof.style) && (
         <RetractableRoofSection
           retractable={resolveRetractable(roof)}
           iris={roof.style === 'petal_iris'}

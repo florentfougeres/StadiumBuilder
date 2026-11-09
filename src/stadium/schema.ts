@@ -43,6 +43,7 @@ export type RoofStyle =
   | 'timber_lattice'
   | 'wave_canopy'
   | 'petal_iris'
+  | 'arched_retractable'
   | 'historic_gable'
   | 'sawtooth'
   | 'butterfly'
@@ -56,6 +57,8 @@ export type RoofStyle =
   | 'dished_canopy'
   | 'faceted_shell'
   | 'pleated_crown'
+  | 'serrated_canopy'
+  | 'prow_shell'
   | 'saucer_dome'
   | 'rising_canopy'
   | 'crossed_arches';
@@ -75,10 +78,16 @@ export const INTEGRAL_SHELL_STYLES = [
   'faceted_shell',
   'saddle_vault',
   'pleated_crown',
+  'prow_shell',
   'timber_lattice',
 ] as const satisfies readonly RoofStyle[];
 
 export type IntegralShellStyle = (typeof INTEGRAL_SHELL_STYLES)[number];
+
+/** Roofs with movable panels (open/close settings and animation). */
+export function isMovableRoof(style: RoofStyle): boolean {
+  return style === 'retractable' || style === 'petal_iris' || style === 'arched_retractable';
+}
 
 export function isIntegralShell(style: RoofStyle): style is IntegralShellStyle {
   return (INTEGRAL_SHELL_STYLES as readonly RoofStyle[]).includes(style);
@@ -449,6 +458,15 @@ export function resolveSpanningGirderCount(roof: RoofConfig): number {
 /** Concrete portal ribs of a `concrete_portals` roof (Parc des Princes: 50). */
 export function resolvePortalCount(roof: RoofConfig): number {
   return Math.max(24, Math.min(72, Math.round(roof.portalCount ?? 50)));
+}
+
+/** `prow_shell`: lift (m) and outward reach (m) of the prow at the north-west end of the ridge. */
+export const PROW_LIFT = 10;
+export const PROW_REACH = 16;
+
+/** Rise (m) of a `prow_shell` roof slope from its low south eave to its north ridge. */
+export function resolveProwRise(roofY: number): number {
+  return Math.max(12, Math.min(28, roofY * 0.6));
 }
 
 /** Peak rise (m) of a `wave_canopy` roof line above its lowest point. */

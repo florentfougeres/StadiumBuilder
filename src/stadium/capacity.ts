@@ -7,7 +7,9 @@ import {
   getTrackGeometry,
   isContinuousBowlShape,
   resolveAllCorners,
+  PROW_LIFT,
   resolveCornerPylonFrame,
+  resolveProwRise,
   resolveFloodlightRig,
   resolveStandVomitories,
   vomitoryLevelsOfTier,
@@ -573,8 +575,17 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 8).toFixed(1))
       : doc.roof.style === 'saucer_dome' || doc.roof.style === 'girder_grid'
       ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 7.5).toFixed(1))
+      : doc.roof.style === 'prow_shell'
+      ? (() => {
+          const roofY = maxStandHeight + Math.max(4, doc.roof.heightOffset);
+          return Number((roofY + 2 + resolveProwRise(roofY) + PROW_LIFT).toFixed(1));
+        })()
+      : doc.roof.style === 'serrated_canopy'
+      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 5.3).toFixed(1))
       : doc.roof.style === 'faceted_shell'
       ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 4.5).toFixed(1))
+      : doc.roof.style === 'arched_retractable'
+      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 32).toFixed(1))
       : doc.roof.style === 'twin_arch'
       ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 29).toFixed(1))
       : Number((maxStandHeight + doc.roof.heightOffset).toFixed(1));
@@ -708,6 +719,12 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
     case 'rising_canopy':
       baseCostPerSeat += 980 * doc.roof.coverageRatio;
       break;
+    case 'serrated_canopy':
+      baseCostPerSeat += 980 * doc.roof.coverageRatio;
+      break;
+    case 'prow_shell':
+      baseCostPerSeat += 1450;
+      break;
     case 'pleated_crown':
     case 'faceted_shell':
       baseCostPerSeat += 1240 * doc.roof.coverageRatio;
@@ -752,6 +769,7 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
       break;
     case 'retractable':
     case 'petal_iris':
+    case 'arched_retractable':
       baseCostPerSeat += 1350 * doc.roof.coverageRatio;
       break;
     case 'fixed_dome':

@@ -22,6 +22,7 @@ import {
   FloodlightRigMode,
   IntegralShellStyle,
   isIntegralShell,
+  isMovableRoof,
   LightingMode,
   PitchConfig,
   PlacedObject,
@@ -217,8 +218,7 @@ export function applyShape(d: StadiumDocument, shape: StadiumShape): void {
     d.stands.east.enabled = false;
     if (
       d.roof.style === 'truss' ||
-      d.roof.style === 'retractable' ||
-      d.roof.style === 'petal_iris'
+      isMovableRoof(d.roof.style)
     ) {
       d.roof.style = 'cantilever';
     }
