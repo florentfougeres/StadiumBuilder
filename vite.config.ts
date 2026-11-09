@@ -14,7 +14,7 @@ function thumbnailWriter(): Plugin {
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use('/__thumbnails/', (req, res) => {
-        const match = /^\/(presets|shapes|roofs|envelopes)\/([a-z0-9_]+)$/.exec(req.url ?? '');
+        const match = /^\/(presets|shapes|roofs|envelopes|patterns)\/([a-z0-9_]+)$/.exec(req.url ?? '');
         if (req.method !== 'POST' || !match) {
           res.statusCode = 400;
           res.end();

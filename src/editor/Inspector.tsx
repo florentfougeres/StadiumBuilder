@@ -31,6 +31,7 @@ import {
   CornerMode,
   EnvelopeProfile,
   EnvelopeStyle,
+  FacadeMaterialId,
   getEffectiveSunkenDepth,
   SUNKEN_MAX_DEPTH,
   getMaxPitchLengthForTrack,
@@ -453,22 +454,49 @@ const SeatPaletteChip: React.FC<{ primary: string; secondary: string }> = ({
   </svg>
 );
 
+const HEX_COLOR = /^#?([0-9a-f]{6})$/i;
+
+/**
+ * A colour: the swatch opens the system picker, and the code beside it can be typed or pasted
+ * (a club's official colour), applied on Enter or when the field loses focus.
+ */
 const ColorField: React.FC<{
   label: string;
   value: string;
   onChange: (value: string) => void;
-}> = ({ label, value, onChange }) => (
-  <FieldRow label={label}>
-    <span className="text-2xs text-ink-faint uppercase tabular-nums">{value}</span>
-    <input
-      type="color"
-      aria-label={label}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-6 h-6 p-0 rounded border border-line-strong bg-transparent cursor-pointer"
-    />
-  </FieldRow>
-);
+}> = ({ label, value, onChange }) => {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    const match = draft === null ? null : HEX_COLOR.exec(draft.trim());
+    if (match && `#${match[1]}`.toLowerCase() !== value.toLowerCase()) onChange(`#${match[1].toLowerCase()}`);
+    setDraft(null);
+  };
+  return (
+    <FieldRow label={label}>
+      <input
+        type="text"
+        aria-label={`${label}, code hexadécimal`}
+        spellCheck={false}
+        maxLength={7}
+        value={draft ?? value.toUpperCase()}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setDraft(null);
+        }}
+        className="w-[4.75rem] h-7 px-2 rounded border border-transparent bg-transparent text-2xs text-ink-muted uppercase tabular-nums text-right outline-none hover:border-edge-hover focus:border-accent focus:bg-field focus:text-ink"
+      />
+      <input
+        type="color"
+        aria-label={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-7 h-7 p-0 rounded border border-line-strong bg-transparent cursor-pointer"
+      />
+    </FieldRow>
+  );
+};
 
 const SEAT_PATTERN_OPTIONS: { id: SeatPattern; label: string; title: string }[] = [
   { id: 'solid', label: 'Uni', title: 'Une seule couleur' },
@@ -921,6 +949,8 @@ const STAND_ROOF_OVERRIDES: { id: RoofStyle | 'inherit'; label: string }[] = [
 ];
 
 const fr = (n: number) => n.toLocaleString('fr-FR');
+/** A signed figure with the true minus sign (−), as the metric deltas show it. */
+const signedFr = (n: number) => (n < 0 ? `−${fr(-n)}` : fr(n));
 const fr1 = (n: number) =>
   n.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
@@ -949,13 +979,15 @@ const ROOF_GALLERY: GalleryOption<RoofStyle>[] = ROOF_OPTIONS.filter((o) => !isI
   image: thumbnailUrl('roofs', o.id),
 }));
 
+const ENVELOPE_STYLE_GALLERY: GalleryOption<EnvelopeStyle>[] = ENVELOPE_STYLE_CATALOG.map((o) => ({
+  id: o.id,
+  label: o.label,
+  detail: o.subtitle,
+  image: thumbnailUrl('envelopes', o.id),
+}));
+
 const ENVELOPE_GALLERY: GalleryOption<EnvelopeStyle | RoofStyle>[] = [
-  ...ENVELOPE_STYLE_CATALOG.map((o) => ({
-    id: o.id,
-    label: o.label,
-    detail: o.subtitle,
-    image: thumbnailUrl('envelopes', o.id),
-  })),
+  ...ENVELOPE_STYLE_GALLERY,
   ...ROOF_OPTIONS.filter((o) => isIntegralShell(o.id)).map((o) => ({
     id: o.id as RoofStyle,
     label: o.label,
@@ -963,6 +995,13 @@ const ENVELOPE_GALLERY: GalleryOption<EnvelopeStyle | RoofStyle>[] = [
     image: thumbnailUrl('roofs', o.id),
   })),
 ];
+
+const FACADE_PATTERN_GALLERY = FACADE_PATTERN_CATALOG.map((o) => ({
+  id: o.id,
+  label: o.label,
+  detail: o.subtitle,
+  image: thumbnailUrl('patterns', o.id),
+}));
 
 /** A material catalog as gallery tiles, each pictured by its rendered texture. */
 function materialGallery<T extends string>(
@@ -1050,7 +1089,11 @@ const ShapePanel: React.FC = () => {
             onChange={setCornerRoundness}
           />
         )}
-        {isContinuousBowlShape(doc.shape) && <RingCutsFields />}
+        {isContinuousBowlShape(doc.shape) && (
+          <SubGroup title="Variantes de l’anneau">
+            <RingCutsFields />
+          </SubGroup>
+        )}
         {doc.shape === 'tilted_bowl' && (
           <p className="text-2xs text-ink-faint">
             La pente vient des rangs des tribunes nord (haute) et sud (basse) ; les virages suivent.
@@ -1090,6 +1133,20 @@ const ShapePanel: React.FC = () => {
             options={isContinuousBowlShape(doc.shape) ? BOWL_CORNER_JOIN_OPTIONS : CORNER_JOIN_OPTIONS}
           />
         )}
+      </PanelSection>
+      <AdvancedSection tab="shape">
+        <SubGroup title="Coins un par un">
+          {CORNER_COMPASS_GRID.map((corner) => (
+            <SelectField
+              key={corner.id}
+              label={corner.label}
+              disabled={lockedCorner(corner.id)}
+              value={lockedCorner(corner.id) ? 'open' : resolvedCorners[corner.id]}
+              onChange={(mode) => setCornerMode(corner.id, mode)}
+              options={cornerOptions}
+            />
+          ))}
+        </SubGroup>
         <SubGroup title="Accès véhicule">
           <p className="text-2xs text-ink-faint">
             Ouverture sous les gradins du coin, pour les secours et les camions.
@@ -1107,20 +1164,6 @@ const ShapePanel: React.FC = () => {
               />
             );
           })}
-        </SubGroup>
-      </PanelSection>
-      <AdvancedSection tab="shape">
-        <SubGroup title="Coins un par un">
-          {CORNER_COMPASS_GRID.map((corner) => (
-            <SelectField
-              key={corner.id}
-              label={corner.label}
-              disabled={lockedCorner(corner.id)}
-              value={lockedCorner(corner.id) ? 'open' : resolvedCorners[corner.id]}
-              onChange={(mode) => setCornerMode(corner.id, mode)}
-              options={cornerOptions}
-            />
-          ))}
         </SubGroup>
         <SubGroup title="Enfouissement">
           <SliderField
@@ -1337,6 +1380,8 @@ const PitchPanel: React.FC = () => {
               onChange={(frontFenceHeight) => setFrontFence({ frontFenceHeight })}
             />
           )}
+        </SubGroup>
+        <SubGroup title="Revêtement de la piste et des abords du terrain">
           <GalleryPicker
             label="Piste et abords"
             value={mats.trackSurface}
@@ -1516,19 +1561,21 @@ const StandsPanel: React.FC = () => {
           label="Évacuation"
           hint="Étage le plus lent, 79 personnes par mètre et par minute (Green Guide : 8 min au plus)"
         >
-          <span className={`text-xs tabular-nums ${sm.evacuationMinutes > 8 ? 'text-danger' : 'text-ink'}`}>
+          <span className={`text-xs tabular-nums ${!off && sm.evacuationMinutes > 8 ? 'text-warn font-medium' : 'text-ink'}`}>
             {off ? '—' : `${fr1(sm.evacuationMinutes)} min`}
           </span>
         </FieldRow>
         <div className="flex items-baseline justify-between text-xs">
           <span className="text-ink-muted">C-value minimale</span>
-          <span className="text-ink tabular-nums">{sightlines.minCValueMm} mm</span>
+          <span className={`tabular-nums ${sightlines.minCValueMm < 60 ? 'text-warn font-medium' : 'text-ink'}`}>
+            {signedFr(sightlines.minCValueMm)} mm
+          </span>
         </div>
         <div className="flex items-baseline justify-between text-xs">
           <span className="text-ink-muted">Visibilité</span>
-          <span className="text-ink">
+          <span className={sightlines.grade === 'Critique' ? 'text-warn font-medium' : 'text-ink'}>
             {sightlines.grade}
-            <span className="text-ink-faint tabular-nums"> · moy. {sightlines.avgCValueMm} mm</span>
+            <span className="font-normal text-ink-faint tabular-nums"> · moy. {signedFr(sightlines.avgCValueMm)} mm</span>
           </span>
         </div>
         <div className="flex items-baseline justify-between text-xs">
@@ -1557,10 +1604,10 @@ const StandsPanel: React.FC = () => {
           options={materialGallery(SEAT_MATERIAL_CATALOG)}
         />
       </PanelSection>
-      <PanelSection title="Couleurs des sièges" persistKey="stands:colors">
+      <PanelSection title="Couleurs des sièges" defaultOpen={false} persistKey="stands:colors">
         <SeatColorsEditor />
       </PanelSection>
-      <PanelSection title="Équipements et habillage" persistKey="stands:fittings">
+      <PanelSection title="Équipements et habillage" defaultOpen={false} persistKey="stands:fittings">
         <ToggleField
           label="Bancs de touche intégrés"
           hint="Abris des équipes encastrés dans le mur de front, de part et d’autre de la ligne médiane"
@@ -1632,7 +1679,7 @@ const StandsPanel: React.FC = () => {
           </>
         )}
       </PanelSection>
-      <PanelSection title="Public" persistKey="stands:crowd">
+      <PanelSection title="Public" defaultOpen={false} persistKey="stands:crowd">
         <ToggleField
           label="Sièges 3D individuels"
           hint="Désactive pour un rendu plus léger sur les machines modestes"
@@ -2032,6 +2079,29 @@ const RoofPanel: React.FC = () => {
           onChange={(style) => updateRoof({ style })}
           options={ROOF_GALLERY}
         />
+        {!separateStands && !none && (
+          <FieldRow
+            label="Tribunes couvertes"
+            hint="Pour un toit seulement sur la tribune principale, ou sur les deux tribunes latérales"
+          >
+            <div className="grid grid-cols-4 gap-1 w-44" role="group" aria-label="Tribunes couvertes">
+              {COVERED_SIDE_ORDER.map((side) => {
+                const on = covered.includes(side);
+                return (
+                  <button
+                    key={side}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggleSide(side)}
+                    className={`min-h-7 px-1 text-2xs leading-tight ${choiceClass(on)} ${on ? 'font-medium' : ''}`}
+                  >
+                    {STAND_LABELS[side]}
+                  </button>
+                );
+              })}
+            </div>
+          </FieldRow>
+        )}
       </PanelSection>
       {roof.style === 'suspended_masts' && (
         <PanelSection title="Mâts et haubans">
@@ -2192,31 +2262,7 @@ const RoofPanel: React.FC = () => {
           ))}
           <p className="text-2xs text-ink-faint">« Comme le stade » suit le système de toiture choisi plus haut.</p>
         </PanelSection>
-      ) : (
-        !none && (
-          <PanelSection title="Tribunes couvertes">
-          <div className="grid grid-cols-4 gap-1" role="group" aria-label="Tribunes couvertes">
-              {COVERED_SIDE_ORDER.map((side) => {
-                const on = covered.includes(side);
-                return (
-                  <button
-                    key={side}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() => toggleSide(side)}
-                    className={`min-h-7 py-1 text-xs leading-tight ${choiceClass(on)} ${on ? 'font-medium' : ''}`}
-                  >
-                    {STAND_LABELS[side]}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-2xs text-ink-faint">
-              Pour un toit seulement sur la tribune principale, ou sur les deux tribunes latérales.
-            </p>
-          </PanelSection>
-        )
-      )}
+      ) : null}
       <PanelSection title="Couverture">
         <GalleryPicker
           label="Matériau de couverture"
@@ -2363,35 +2409,6 @@ const RoofPanel: React.FC = () => {
             onChange={(enclosureGlazed) => updateRoof({ enclosureGlazed })}
           />
           <SelectField
-            label="Canopée sur le parvis"
-            disabled={none}
-            value={roof.forecourtCanopy?.side ?? 'none'}
-            onChange={(side) =>
-              updateRoof({
-                forecourtCanopy: side === 'none' ? undefined : { depth: 40, ...roof.forecourtCanopy, side },
-              })
-            }
-            options={[
-              { id: 'none', label: 'Aucune' },
-              { id: 'north', label: 'Nord' },
-              { id: 'south', label: 'Sud' },
-              { id: 'east', label: 'Est' },
-              { id: 'west', label: 'Ouest' },
-            ]}
-          />
-          {roof.forecourtCanopy && (
-            <SliderField
-              label="Avancée sur le parvis"
-              hint="Le toit continue au-dessus de la place, ouvert sur les côtés et porté par des poteaux"
-              min={8}
-              max={FORECOURT_CANOPY_MAX_DEPTH}
-              step={1}
-              value={roof.forecourtCanopy.depth}
-              display={`${roof.forecourtCanopy.depth} m`}
-              onChange={(depth) => updateRoof({ forecourtCanopy: { ...roof.forecourtCanopy!, depth } })}
-            />
-          )}
-          <SelectField
             label="Mur vitré géant"
             disabled={none || roof.enclosed === false}
             value={roof.glassWall?.side ?? 'none'}
@@ -2434,6 +2451,37 @@ const RoofPanel: React.FC = () => {
                 />
               )}
             </>
+          )}
+        </SubGroup>
+        <SubGroup title="Au-dessus du parvis">
+          <SelectField
+            label="Canopée sur le parvis"
+            disabled={none}
+            value={roof.forecourtCanopy?.side ?? 'none'}
+            onChange={(side) =>
+              updateRoof({
+                forecourtCanopy: side === 'none' ? undefined : { depth: 40, ...roof.forecourtCanopy, side },
+              })
+            }
+            options={[
+              { id: 'none', label: 'Aucune' },
+              { id: 'north', label: 'Nord' },
+              { id: 'south', label: 'Sud' },
+              { id: 'east', label: 'Est' },
+              { id: 'west', label: 'Ouest' },
+            ]}
+          />
+          {roof.forecourtCanopy && (
+            <SliderField
+              label="Avancée sur le parvis"
+              hint="Le toit continue au-dessus de la place, ouvert sur les côtés et porté par des poteaux"
+              min={8}
+              max={FORECOURT_CANOPY_MAX_DEPTH}
+              step={1}
+              value={roof.forecourtCanopy.depth}
+              display={`${roof.forecourtCanopy.depth} m`}
+              onChange={(depth) => updateRoof({ forecourtCanopy: { ...roof.forecourtCanopy!, depth } })}
+            />
           )}
         </SubGroup>
         <SubGroup title="Charpente">
@@ -2659,6 +2707,77 @@ function RetractableRoofSection({
   );
 }
 
+/**
+ * One stand at a time can take its own envelope and cladding: pick the stand, then choose from the
+ * same pictured galleries as the whole stadium, « Comme le stade » first.
+ */
+const FacadeStandOverrides: React.FC<{ envelope: EnvelopeStyle | RoofStyle; facade: FacadeMaterialId }> = ({
+  envelope,
+  facade,
+}) => {
+  const doc = useStadiumStore((s) => s.doc);
+  const updateStand = useStadiumStore((s) => s.updateStand);
+  const activeStand = useStadiumStore((s) => s.activeStandTab);
+  const [side, setSide] = useState<StandSide>(activeStand === 'all' ? 'south' : activeStand);
+  const stand = doc.stands[side];
+  const stadiumEnvelope = ENVELOPE_GALLERY.find((o) => o.id === envelope);
+  const stadiumFacade = FACADE_MATERIAL_CATALOG.find((o) => o.id === facade);
+  const customised = SEAT_GRID_SIDES.filter((s) => {
+    const st = doc.stands[s];
+    return (
+      (st.envelopeStyleOverride ?? 'inherit') !== 'inherit' || (st.facadeMaterialOverride ?? 'inherit') !== 'inherit'
+    );
+  });
+
+  return (
+    <>
+      <Segmented
+        label="Tribune à habiller"
+        size="sm"
+        value={side}
+        onChange={setSide}
+        options={SEAT_GRID_SIDES.map((s) => ({ id: s, label: STAND_LABELS[s] }))}
+      />
+      {!stand.enabled && <p className="text-2xs text-ink-faint">Cette tribune est désactivée (onglet Tribunes).</p>}
+      <GalleryPicker<EnvelopeStyle | 'inherit'>
+        label={`Enveloppe de la tribune ${STAND_LABELS[side].toLowerCase()}`}
+        disabled={!stand.enabled}
+        value={stand.envelopeStyleOverride ?? 'inherit'}
+        onChange={(v) => updateStand(side, { envelopeStyleOverride: v === 'inherit' ? undefined : v })}
+        options={[
+          {
+            id: 'inherit',
+            label: 'Comme le stade',
+            detail: stadiumEnvelope?.label,
+            image: stadiumEnvelope?.image,
+          },
+          ...ENVELOPE_STYLE_GALLERY,
+        ]}
+      />
+      <GalleryPicker<FacadeMaterialId | 'inherit'>
+        label={`Revêtement de la tribune ${STAND_LABELS[side].toLowerCase()}`}
+        disabled={!stand.enabled}
+        value={stand.facadeMaterialOverride ?? 'inherit'}
+        onChange={(v) => updateStand(side, { facadeMaterialOverride: v === 'inherit' ? undefined : v })}
+        options={[
+          {
+            id: 'inherit',
+            label: 'Comme le stade',
+            detail: stadiumFacade?.label,
+            preview: <MaterialPreview materialId={facade} fill />,
+          },
+          ...materialGallery(FACADE_MATERIAL_CATALOG),
+        ]}
+      />
+      <p className="text-2xs text-ink-faint">
+        {customised.length === 0
+          ? 'Toutes les tribunes suivent la façade du stade.'
+          : `Habillage propre : ${customised.map((s) => STAND_LABELS[s]).join(', ')}.`}
+      </p>
+    </>
+  );
+};
+
 const FacadePanel: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const updateMaterials = useStadiumStore((s) => s.updateMaterials);
@@ -2801,15 +2920,11 @@ const FacadePanel: React.FC = () => {
       </PanelSection>
       <AdvancedSection tab="facade">
         <SubGroup title="Relief paramétrique">
-        <OptionList
+        <GalleryPicker
           label="Motif géométrique 3D"
           value={pattern}
           onChange={(facadePattern) => updateMaterials({ facadePattern })}
-          options={FACADE_PATTERN_CATALOG.map((o) => ({
-            id: o.id,
-            label: o.label,
-            detail: o.subtitle,
-          }))}
+          options={FACADE_PATTERN_GALLERY}
         />
         {(pattern === 'pixel_mosaic' || pattern === 'woven_basket') && (
           <>
@@ -2880,34 +2995,7 @@ const FacadePanel: React.FC = () => {
         )}
         </SubGroup>
         <SubGroup title="Tribune par tribune">
-          {SEAT_GRID_SIDES.map((side) => {
-            const stand = doc.stands[side];
-            const name = STAND_LABELS[side];
-            return (
-              <div key={side} className="space-y-1.5">
-                <SelectField
-                  label={`${name} : enveloppe`}
-                  disabled={!stand.enabled}
-                  value={stand.envelopeStyleOverride ?? 'inherit'}
-                  onChange={(v) => updateStand(side, { envelopeStyleOverride: v === 'inherit' ? undefined : v })}
-                  options={[
-                    { id: 'inherit', label: 'Comme le stade' },
-                    ...ENVELOPE_STYLE_CATALOG.map((o) => ({ id: o.id, label: o.label })),
-                  ]}
-                />
-                <SelectField
-                  label={`${name} : revêtement`}
-                  disabled={!stand.enabled}
-                  value={stand.facadeMaterialOverride ?? 'inherit'}
-                  onChange={(v) => updateStand(side, { facadeMaterialOverride: v === 'inherit' ? undefined : v })}
-                  options={[
-                    { id: 'inherit', label: 'Comme le stade' },
-                    ...FACADE_MATERIAL_CATALOG.map((o) => ({ id: o.id, label: o.label })),
-                  ]}
-                />
-              </div>
-            );
-          })}
+          <FacadeStandOverrides envelope={envelope} facade={mats.facade} />
         </SubGroup>
       </AdvancedSection>
     </>
@@ -2947,7 +3035,7 @@ const SitePanel: React.FC = () => {
           options={materialGallery(PLAZA_MATERIAL_CATALOG)}
         />
       </PanelSection>
-      <PanelSection title="Socle">
+      <PanelSection title="Relief et eau">
         <SliderField
           label="Hauteur du socle"
           hint="Podium de commerces et parkings autour du stade, grand escalier au sud"

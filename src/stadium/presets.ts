@@ -135,7 +135,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-dugout-1',
           type: 'dugout',
-          name: 'Bancs de touche Officiels',
+          name: 'Bancs de touche officiels',
           position: [0, 0, 38],
           rotation: [0, Math.PI, 0],
           scale: [1, 1, 1],
@@ -143,7 +143,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-screen-1',
           type: 'screen',
-          name: 'Écran Géant Ouest',
+          name: 'Écran géant Ouest',
           position: [0, 0, 0],
           rotation: [0, 0, 0],
           scale: [1.15, 1.15, 1],
@@ -153,7 +153,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-screen-2',
           type: 'screen',
-          name: 'Écran Géant Est',
+          name: 'Écran géant Est',
           position: [0, 0, 0],
           rotation: [0, 0, 0],
           scale: [1.15, 1.15, 1],
@@ -251,7 +251,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-screen-caul',
           type: 'screen',
-          name: 'Écran Suspendu Est',
+          name: 'Écran suspendu Est',
           position: [0, 0, 0],
           rotation: [0, 0, 0],
           scale: [1.1, 1.1, 1],
@@ -341,7 +341,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-dugout-oly',
           type: 'dugout',
-          name: 'Bancs Officiels',
+          name: 'Bancs officiels',
           position: [0, 0, 49.2],
           rotation: [0, Math.PI, 0],
           scale: [1.1, 1, 1],
@@ -349,7 +349,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-esp-oly',
           type: 'esplanade',
-          name: 'Parvis Principal Sud',
+          name: 'Parvis principal Sud',
           position: [0, 0, 138],
           rotation: [0, 0, 0],
           scale: [1.8, 1, 1.2],
@@ -529,7 +529,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-dugout-urb',
           type: 'dugout',
-          name: 'Bancs Officiels',
+          name: 'Bancs officiels',
           position: [0, 0, 37.5],
           rotation: [0, Math.PI, 0],
           scale: [1.1, 1, 1],
@@ -537,7 +537,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-esp-urb',
           type: 'esplanade',
-          name: 'Parvis Urbain Principal',
+          name: 'Parvis urbain principal',
           position: [0, 0, 114],
           rotation: [0, 0, 0],
           scale: [1.7, 1, 1.15],
@@ -637,7 +637,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-park-mega',
           type: 'parking',
-          name: 'Parking Spectateurs Est',
+          name: 'Parking spectateurs Est',
           position: [128, 0, 46],
           rotation: [0, -Math.PI / 2, 0],
           scale: [1.3, 1, 1.2],
@@ -829,7 +829,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-shop-mod',
           type: 'shop',
-          name: 'Boutique Officielle',
+          name: 'Boutique officielle',
           position: [-46, 0, 78],
           rotation: [0, 0, 0],
           scale: [1, 1, 1],
@@ -925,7 +925,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-flood-trd-1',
           type: 'floodlight',
-          name: 'Pylône Angle Nord-Ouest',
+          name: 'Pylône d’angle Nord-Ouest',
           position: [-65, 0, -45],
           rotation: [0, Math.PI * 0.25, 0],
           scale: [1, 1.05, 1],
@@ -933,7 +933,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-flood-trd-2',
           type: 'floodlight',
-          name: 'Pylône Angle Nord-Est',
+          name: 'Pylône d’angle Nord-Est',
           position: [65, 0, -45],
           rotation: [0, -Math.PI * 0.25, 0],
           scale: [1, 1.05, 1],
@@ -941,7 +941,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-shop-trd',
           type: 'shop',
-          name: 'Boutique du Stade',
+          name: 'Boutique du stade',
           position: [-46, 0, 82],
           rotation: [0, 0, 0],
           scale: [1, 1, 1],
@@ -1038,7 +1038,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-screen-hs',
           type: 'screen',
-          name: 'Écran Monumental Pignon Est',
+          name: 'Écran monumental pignon Est',
           position: [69, 14, 0],
           rotation: [0, -Math.PI / 2, 0],
           scale: [1.35, 1.35, 1],
@@ -1046,7 +1046,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-esp-hs',
           type: 'esplanade',
-          name: 'Parvis Ouvert Est',
+          name: 'Parvis ouvert Est',
           position: [92, 0, 0],
           rotation: [0, Math.PI / 2, 0],
           scale: [1.3, 1, 1.15],
@@ -1156,7 +1156,7 @@ const BASE_PRESETS: PresetDefinition[] = [
             {
               id: 'obj-flood-kop-1',
               type: 'floodlight',
-              name: 'Mât d’Éclairage Nord-Ouest',
+              name: 'Mât d’éclairage Nord-Ouest',
               position: [-66, 0, -46],
               rotation: [0, Math.PI * 0.25, 0],
               scale: [1, 1.05, 1],
@@ -1164,7 +1164,7 @@ const BASE_PRESETS: PresetDefinition[] = [
             {
               id: 'obj-flood-kop-2',
               type: 'floodlight',
-              name: 'Mât d’Éclairage Sud-Ouest',
+              name: 'Mât d’éclairage Sud-Ouest',
               position: [-66, 0, 46],
               rotation: [0, Math.PI * 0.75, 0],
               scale: [1, 1.05, 1],
@@ -1596,7 +1596,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-screen-open-w',
           type: 'screen',
-          name: 'Écran Virage Ouest',
+          name: 'Écran virage Ouest',
           position: [0, 0, 0],
           rotation: [0, 0, 0],
           scale: [1, 1, 1],
@@ -1606,7 +1606,7 @@ const BASE_PRESETS: PresetDefinition[] = [
         {
           id: 'obj-screen-open-e',
           type: 'screen',
-          name: 'Écran Virage Est',
+          name: 'Écran virage Est',
           position: [0, 0, 0],
           rotation: [0, 0, 0],
           scale: [1, 1, 1],

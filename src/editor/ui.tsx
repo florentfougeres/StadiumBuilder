@@ -248,7 +248,7 @@ export function Segmented<T extends string | number>({
             aria-checked={active}
             title={o.title}
             onClick={() => onChange(o.id)}
-            className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 rounded text-center leading-tight transition-colors duration-100 ${nowrap ? 'whitespace-nowrap' : ''} ${
+            className={`flex-1 ${size === 'sm' ? 'min-w-7' : 'min-w-0'} flex items-center justify-center gap-1.5 rounded text-center leading-tight transition-colors duration-100 ${nowrap ? 'whitespace-nowrap' : ''} ${
               size === 'sm' ? 'min-h-6 py-0.5 px-1.5 text-2xs' : 'min-h-7 py-1 px-2 text-xs'
             } ${
               active ? 'bg-raised text-ink font-medium shadow-thumb' : 'text-ink-muted hover:text-ink hover:bg-hover'

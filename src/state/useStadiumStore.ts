@@ -55,8 +55,8 @@ import {
 import { cloneDocument, HistoryState, pushHistorySnapshot } from './history';
 
 const OBJECT_TYPE_LABELS: Record<PlacedObjectType, string> = {
-  screen: 'Écran Géant LED',
-  halo_screen: 'Écran Halo Central',
+  screen: 'Écran géant LED',
+  halo_screen: 'Écran halo central',
   inclined_mast: 'Mât incliné',
   monumental_arch: 'Arche monumentale',
   monumental_gate: 'Porte monumentale',
@@ -64,14 +64,14 @@ const OBJECT_TYPE_LABELS: Record<PlacedObjectType, string> = {
   galleon: 'Galion',
   tower: 'Tour',
   footbridge: 'Passerelle',
-  floodlight: 'Pylône d’Éclairage',
-  dugout: 'Bancs de Touche',
-  locker_room: 'Vestiaires & Médias',
-  shop: 'Boutique Officielle',
-  parking: 'Parking Spectateurs',
-  esplanade: 'Esplanade & Parvis',
-  fence: 'Clôture Périmétrique',
-  custom_roof: 'Auvent Modulaire',
+  floodlight: 'Pylône d’éclairage',
+  dugout: 'Bancs de touche',
+  locker_room: 'Vestiaires & médias',
+  shop: 'Boutique officielle',
+  parking: 'Parking spectateurs',
+  esplanade: 'Esplanade & parvis',
+  fence: 'Clôture périmétrique',
+  custom_roof: 'Auvent modulaire',
 };
 
 const OBJECT_DEFAULT_SPAWN: Record<PlacedObjectType, [number, number, number]> = {

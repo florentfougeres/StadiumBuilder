@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { roofDefinition } from '../stadium/roofCatalog';
 import { shapeDefinition } from '../stadium/shapeCatalog';
-import { ENVELOPE_STYLE_CATALOG, resolveStadiumMaterials } from '../stadium/materials';
+import { ENVELOPE_STYLE_CATALOG, FACADE_PATTERN_CATALOG, resolveStadiumMaterials } from '../stadium/materials';
 import { buildStadiumSceneGraph, disposeObject3D } from '../stadium/buildStadiumScene';
 import { BLANK_PRESET_ID, createBlankDocument, createNeutralBaseDocument, createPresetDocument, STADIUM_PRESETS } from '../stadium/presets';
 import { RoofStyle, StadiumDocument, StadiumShape } from '../stadium/schema';
@@ -12,7 +12,7 @@ export const THUMB_W = 360;
 export const THUMB_H = 220;
 
 /** Families of pre-rendered images shipped in public/; each file is `<dir>/<id>.webp`. */
-export type ThumbnailDir = 'presets' | 'shapes' | 'roofs' | 'envelopes';
+export type ThumbnailDir = 'presets' | 'shapes' | 'roofs' | 'envelopes' | 'patterns';
 
 export function thumbnailUrl(dir: ThumbnailDir, id: string): string {
   return `${import.meta.env.BASE_URL}${dir}/${id}.webp`;
@@ -23,6 +23,8 @@ export interface ThumbnailJob {
   doc: StadiumDocument;
   /** Camera height as a share of the framing radius; higher reads the footprint better. */
   elevation?: number;
+  /** Camera distance as a share of the framing radius; below 1 closes in on the facade. */
+  distance?: number;
 }
 
 /** Renders each document off-screen with one shared renderer, yielding between stadiums. */
@@ -72,8 +74,11 @@ export async function renderThumbnails(
       );
       const bowlSize = bowl.getSize(new THREE.Vector3());
       const radius = Math.max(bowlSize.x, bowlSize.z, 120) * 0.9;
-      camera.position.set(radius * 0.95, radius * (job.elevation ?? 0.62), radius * 1.05);
-      camera.lookAt(0, bowlSize.y * 0.15, 0);
+      const reach = radius * (job.distance ?? 1);
+      camera.position.set(reach * 0.95, radius * (job.elevation ?? 0.62), reach * 1.05);
+      // Closer views aim at the near facade rather than the pitch centre.
+      const aim = 1 - (job.distance ?? 1);
+      camera.lookAt(radius * 0.5 * aim, bowlSize.y * (0.15 + aim * 0.35), radius * 0.5 * aim);
 
       renderer.render(scene, camera);
       await onThumb(job.id, renderer.domElement);
@@ -141,6 +146,19 @@ export function thumbnailJobs(
       doc.materials = { ...resolveStadiumMaterials(doc), envelopeStyle: e.id };
       doc.concourse = { heightRatio: 0.5, ...doc.concourse, width: Math.max(doc.concourse?.width ?? 0, 8) };
       return { id: e.id, doc, elevation: 0.42 };
+    }),
+    // Close on a plain skin, so the relief itself is what reads.
+    patterns: FACADE_PATTERN_CATALOG.map((p) => {
+      const doc = optionBase();
+      doc.materials = {
+        ...resolveStadiumMaterials(doc),
+        envelopeStyle: 'enveloping_skin',
+        facadePattern: p.id,
+        // A deep relief, so the pattern reads at tile size.
+        facadeDepth: 1.6,
+      };
+      doc.concourse = { heightRatio: 0.5, ...doc.concourse, width: Math.max(doc.concourse?.width ?? 0, 8) };
+      return { id: p.id, doc, elevation: 0.24, distance: 0.72 };
     }),
   };
 }

@@ -26,28 +26,56 @@ import { HALO_LIMITS, ObjectMount, PlacedObjectType, resolveHaloSize, StandSide 
 import { useStadiumStore } from '../state/useStadiumStore';
 import { IconButton, NumberField, PanelSection, Segmented, SelectField, SliderField, choiceClass } from './ui';
 
-const ADDABLE_ASSETS: {
+interface AddableAsset {
   type: PlacedObjectType;
   label: string;
   icon: React.ReactNode;
-}[] = [
-  { type: 'screen', label: 'Écran géant', icon: <MonitorPlay className="w-3.5 h-3.5" /> },
-  { type: 'halo_screen', label: 'Écran central suspendu', icon: <CircleDot className="w-3.5 h-3.5" /> },
-  { type: 'inclined_mast', label: 'Mât incliné', icon: <MoveUpRight className="w-3.5 h-3.5" /> },
-  { type: 'monumental_arch', label: 'Arche d’entrée', icon: <Landmark className="w-3.5 h-3.5" /> },
-  { type: 'monumental_gate', label: 'Porte monumentale', icon: <DoorOpen className="w-3.5 h-3.5" /> },
-  { type: 'lighthouse', label: 'Phare', icon: <TowerControl className="w-3.5 h-3.5" /> },
-  { type: 'galleon', label: 'Galion', icon: <Sailboat className="w-3.5 h-3.5" /> },
-  { type: 'tower', label: 'Tour', icon: <Castle className="w-3.5 h-3.5" /> },
-  { type: 'footbridge', label: 'Passerelle', icon: <Spline className="w-3.5 h-3.5" /> },
-  { type: 'floodlight', label: 'Projecteur', icon: <Lightbulb className="w-3.5 h-3.5" /> },
-  { type: 'dugout', label: 'Bancs de touche', icon: <Users className="w-3.5 h-3.5" /> },
-  { type: 'locker_room', label: 'Vestiaires', icon: <Building2 className="w-3.5 h-3.5" /> },
-  { type: 'shop', label: 'Boutique', icon: <ShoppingBag className="w-3.5 h-3.5" /> },
-  { type: 'parking', label: 'Parking', icon: <Car className="w-3.5 h-3.5" /> },
-  { type: 'esplanade', label: 'Esplanade', icon: <Trees className="w-3.5 h-3.5" /> },
-  { type: 'fence', label: 'Clôture', icon: <Fence className="w-3.5 h-3.5" /> },
-  { type: 'custom_roof', label: 'Toit libre', icon: <Tent className="w-3.5 h-3.5" /> },
+}
+
+/** What a stadium really has, by family; the follies come last, set apart. */
+const ADDABLE_GROUPS: { title: string; items: AddableAsset[] }[] = [
+  {
+    title: 'Écrans et éclairage',
+    items: [
+      { type: 'screen', label: 'Écran géant', icon: <MonitorPlay className="w-3.5 h-3.5" /> },
+      { type: 'halo_screen', label: 'Écran central suspendu', icon: <CircleDot className="w-3.5 h-3.5" /> },
+      { type: 'floodlight', label: 'Projecteur', icon: <Lightbulb className="w-3.5 h-3.5" /> },
+    ],
+  },
+  {
+    title: 'Bord du terrain',
+    items: [
+      { type: 'dugout', label: 'Bancs de touche', icon: <Users className="w-3.5 h-3.5" /> },
+      { type: 'locker_room', label: 'Vestiaires', icon: <Building2 className="w-3.5 h-3.5" /> },
+    ],
+  },
+  {
+    title: 'Abords',
+    items: [
+      { type: 'shop', label: 'Boutique', icon: <ShoppingBag className="w-3.5 h-3.5" /> },
+      { type: 'parking', label: 'Parking', icon: <Car className="w-3.5 h-3.5" /> },
+      { type: 'esplanade', label: 'Esplanade', icon: <Trees className="w-3.5 h-3.5" /> },
+      { type: 'fence', label: 'Clôture', icon: <Fence className="w-3.5 h-3.5" /> },
+      { type: 'footbridge', label: 'Passerelle', icon: <Spline className="w-3.5 h-3.5" /> },
+      { type: 'custom_roof', label: 'Auvent libre', icon: <Tent className="w-3.5 h-3.5" /> },
+    ],
+  },
+  {
+    title: 'Repères architecturaux',
+    items: [
+      { type: 'inclined_mast', label: 'Mât incliné', icon: <MoveUpRight className="w-3.5 h-3.5" /> },
+      { type: 'monumental_arch', label: 'Arche d’entrée', icon: <Landmark className="w-3.5 h-3.5" /> },
+      { type: 'monumental_gate', label: 'Porte monumentale', icon: <DoorOpen className="w-3.5 h-3.5" /> },
+    ],
+  },
+  {
+    title: 'Fantaisies',
+    items: [
+      { type: 'lighthouse', label: 'Phare', icon: <TowerControl className="w-3.5 h-3.5" /> },
+      { type: 'galleon', label: 'Galion', icon: <Sailboat className="w-3.5 h-3.5" /> },
+      { type: 'tower', label: 'Tour', icon: <Castle className="w-3.5 h-3.5" /> },
+    ],
+  },
 ];
 
 /** Equipment that sets itself up (centred halo, stand-mounted screen) instead of being dropped by click. */
@@ -307,8 +335,11 @@ export const ObjectList: React.FC<{ footer?: React.ReactNode }> = ({ footer }) =
         </PanelSection>
       )}
       <PanelSection title="Ajouter">
-        <div className="grid grid-cols-2 gap-1">
-          {ADDABLE_ASSETS.map((item) => (
+        {ADDABLE_GROUPS.map((group) => (
+          <div key={group.title} className="space-y-1.5">
+            <h3 className="text-2xs font-medium text-ink-faint">{group.title}</h3>
+            <div className="grid grid-cols-2 gap-1">
+          {group.items.map((item) => (
             <button
               key={item.type}
               type="button"
@@ -325,7 +356,9 @@ export const ObjectList: React.FC<{ footer?: React.ReactNode }> = ({ footer }) =
               <Plus aria-hidden className="w-3 h-3 shrink-0 text-ink-faint group-hover:text-accent-ink" />
             </button>
           ))}
-        </div>
+            </div>
+          </div>
+        ))}
         <p className="text-2xs text-ink-faint">
           {placingType
             ? 'Clique dans la scène à l’endroit voulu pour le poser · Échap pour annuler.'
