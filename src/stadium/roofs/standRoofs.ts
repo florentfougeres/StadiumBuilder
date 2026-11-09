@@ -639,6 +639,60 @@ export function buildSingleStandRoofGroup(
     return standRoofGroup;
   }
 
+  if (style === 'stand_arch') {
+    // One tubular arch over the stand, its feet on the ground past each end; the roof hangs from it
+    // on cables and follows its curve, so the stand reads as a crescent from the side.
+    const rise = Math.max(4, roofSpan * 0.05);
+    const deckY = (x: number) => roofHeight + rise * (1 - Math.pow((2 * x) / roofSpan, 2));
+    const segs = Math.max(12, Math.round(roofSpan / 6));
+    const deckParts: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < segs; i++) {
+      const x0 = -roofSpan / 2 + (i * roofSpan) / segs;
+      const x1 = x0 + roofSpan / segs;
+      const a = new THREE.Vector3(x0, deckY(x0), midZ);
+      const b = new THREE.Vector3(x1, deckY(x1), midZ);
+      deckParts.push(beamGeometry(a, b, roofDepth, 0.28));
+    }
+    const deck = mergedMesh(deckParts, membraneMat, 'RoofCanopySurface');
+    if (deck) {
+      deck.customDepthMaterial = shadowDepthMat;
+      standRoofGroup.add(deck);
+    }
+
+    // The arch: feet on the ground behind the stand ends, within its length so neighbouring
+    // stands keep clear; it leans forward to a crown over the front third of the roof.
+    const archZ = frontZ + roofDepth * 0.35;
+    const footX = roofSpan / 2 - 1.5;
+    const footZ = groundSupportZ + 2;
+    const crownY = roofHeight + rise + Math.max(14, roofSpan * 0.16);
+    const archAt = (u: number) =>
+      new THREE.Vector3(u * footX, crownY * (1 - u * u), archZ + (footZ - archZ) * u * u);
+    const archPts = Array.from({ length: 41 }, (_, i) => archAt(-1 + i / 20));
+    const arch = new THREE.Mesh(
+      new THREE.TubeGeometry(new THREE.CatmullRomCurve3(archPts), 80, 1.1, 10, false),
+      primaryStructMat
+    );
+    arch.name = 'StandArch';
+    arch.castShadow = true;
+    standRoofGroup.add(arch);
+
+    // Hangers from the arch to the front and rear edges of the deck.
+    const hangers: THREE.BufferGeometry[] = [];
+    const hangerCount = Math.max(6, Math.round(roofSpan / 9));
+    for (let i = 1; i < hangerCount; i++) {
+      const x = -roofSpan / 2 + (i * roofSpan) / hangerCount;
+      const top = archAt(x / footX);
+      if (top.y <= deckY(x) + 1) continue;
+      for (const z of [frontZ + 0.5, rearZ - 0.5]) {
+        hangers.push(beamGeometry(top, new THREE.Vector3(x, deckY(x), z), 0.12, 0.12));
+      }
+    }
+    const hangerMesh = mergedMesh(hangers, secondarySteelMat, 'StandArchHangers');
+    if (hangerMesh) standRoofGroup.add(hangerMesh);
+    standRoofGroup.add(buildStraightCatwalkFloodlights(roofSpan, frontZ, roofHeight, doc.lighting, gantryLights));
+    return standRoofGroup;
+  }
+
   if (style === 'tree_columns') {
     // Flat canopy on branching "tree" columns: each trunk rises from the crest, forks into three
     // limbs, and each limb into twigs that pick up the deck at spread points, so the canopy needs

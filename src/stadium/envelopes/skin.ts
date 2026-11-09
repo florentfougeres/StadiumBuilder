@@ -99,7 +99,7 @@ export function buildCurtainWallArticulation(params: {
 }
 
 /** Outward offset (m) of a plain skin at height fraction `vf` for the chosen silhouette, or null when upright. */
-function skinSilhouette(mats: StadiumMaterialsConfig): ((h: number, vf: number) => number) | null {
+export function skinSilhouette(mats: StadiumMaterialsConfig): ((h: number, vf: number) => number) | null {
   const profile = mats.envelopeProfile ?? 'straight';
   if (profile === 'bulging') return (h, vf) => FACADE_WALL_OFFSET + Math.sin(vf * Math.PI) * Math.min(7, h * 0.17);
   if (profile === 'tent') return (h, vf) => FACADE_WALL_OFFSET + Math.pow(1 - vf, 1.5) * Math.min(16, h * 0.55);

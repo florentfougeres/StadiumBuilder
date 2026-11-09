@@ -8,7 +8,7 @@ import {
   resolveStadiumMaterials,
   resolveFacadePalette,
 } from './materials';
-import { buildEnvelopeDressing } from './envelopes';
+import { buildEnvelopeDressing, facadeBaseGlow, facadeStripes } from './envelopes';
 import { buildParametricFacadeOnRail } from './parametricFacade';
 import { StadiumDocument } from './schema';
 
@@ -126,6 +126,16 @@ export function generateConcourseGroup(
         })
       : null;
   if (articulation) group.add(articulation);
+  // Stripes and foot glow of a plain skin, on the concourse when it is the outer face.
+  if ((mats.envelopeStyle ?? 'enveloping_skin') === 'enveloping_skin') {
+    const upright = () => 0.35;
+    for (const accent of [
+      facadeStripes(facadeSamples, closed, mats.facadeStripeSpacing ?? 0, upright),
+      facadeBaseGlow(facadeSamples, closed, mats.facadeBaseGlow === true, doc.lighting !== 'day', upright),
+    ]) {
+      if (accent) group.add(accent);
+    }
+  }
 
   // Floor slabs projecting slightly from the facade at each concourse level.
   const minHeight = Math.min(...samples.map((s) => s.height));

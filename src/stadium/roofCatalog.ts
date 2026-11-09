@@ -221,6 +221,13 @@ export const ROOF_CATALOG = {
     standLabel: 'Coques paraboloïdes',
     costPerSeat: 880,
   },
+  stand_arch: {
+    label: 'Arche par tribune',
+    desc: 'Une arche tubulaire au-dessus de chaque tribune, toit suspendu en croissant (tribunes séparées)',
+    placement: 'stand',
+    standLabel: 'Arche porteuse',
+    costPerSeat: 820,
+  },
   tree_columns: {
     label: 'Colonnes arborescentes',
     desc: 'Auvent plat porté par des poteaux qui se ramifient en branches (tribunes séparées)',

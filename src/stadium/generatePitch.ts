@@ -1160,13 +1160,22 @@ export function generatePitchGroup(
     root.add(createRunningTrackGroup(pitch, mats, maxAnisotropy));
   }
 
-  // Two FIFA Goals with woven hexagonal nets
-  const netTex = createGoalNetTexture();
-  const westGoal = createGoalGroup(-1, netTex);
-  westGoal.position.set(-pitch.length / 2, 0.03, 0);
-  const eastGoal = createGoalGroup(1, netTex);
-  eastGoal.position.set(pitch.length / 2, 0.03, 0);
-  root.add(westGoal, eastGoal);
+  if (outfield) {
+    // A cricket ground hosts rugby in winter: H-shaped posts on the dead-ball lines, no goals.
+    for (const sx of [-1, 1]) {
+      const posts = createRugbyPosts();
+      posts.position.x = (sx * pitch.length) / 2;
+      root.add(posts);
+    }
+  } else {
+    // Two FIFA Goals with woven hexagonal nets
+    const netTex = createGoalNetTexture();
+    const westGoal = createGoalGroup(-1, netTex);
+    westGoal.position.set(-pitch.length / 2, 0.03, 0);
+    const eastGoal = createGoalGroup(1, netTex);
+    eastGoal.position.set(pitch.length / 2, 0.03, 0);
+    root.add(westGoal, eastGoal);
+  }
 
   // Corner Flags with 3D Pennants
   const flagPoleGeo = new THREE.CylinderGeometry(0.025, 0.025, 1.55, 6);
@@ -1311,6 +1320,27 @@ export function generatePitchGroup(
 
   if (outfield) root.add(buildCricketFurniture(outfield));
   return root;
+}
+
+/** Rugby posts: uprights 5.6 m apart, crossbar 3 m up, padded at the foot. */
+function createRugbyPosts(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'RugbyPosts';
+  const white = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.4 });
+  const pad = new THREE.MeshStandardMaterial({ color: 0x1d4ed8, roughness: 0.8 });
+  for (const sz of [-1, 1]) {
+    const upright = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 14, 10), white);
+    upright.position.set(0, 7, sz * 2.8);
+    const padding = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 1.9, 12), pad);
+    padding.position.set(0, 0.95, sz * 2.8);
+    upright.castShadow = true;
+    group.add(upright, padding);
+  }
+  const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 5.6, 10).rotateX(Math.PI / 2), white);
+  bar.position.y = 3;
+  bar.castShadow = true;
+  group.add(bar);
+  return group;
 }
 
 /** Length (m) between the stumps of a cricket pitch, and its width. */

@@ -123,3 +123,24 @@ d'une autre couleur sur tout le stade (San Siro).
 
 Chaque lot ajoute un preset générique inspiré du stade (sans nom de marque) et un test de
 construction de scène, comme dans la spec du 2026-11-03.
+
+---
+
+## 4. Statut (2026-11-09, fin de journée)
+
+Fait :
+- **A** Sièges à 4 échelles (stade, étage partout, tribune, étage d'une tribune).
+- **B1** Aiguille centrale pour le toit replié au centre · **B2** pylônes porteurs autour des toits rétractables ·
+  **B3** toit « Arche par tribune » (arche tubulaire, toit en croissant suspendu) ·
+  **B4** déjà possible : coque intégrale, coque à facettes et coque en proue descendent jusqu'au sol sur les
+  formes rectangulaires (`compact_urban`, `rounded_rectangle`) ; seule la couronne plissée s'arrête au toit.
+- **C** Façade et revêtement par tribune · escaliers extérieurs · colonnes palmier · profil « soucoupe » ·
+  mosaïque de pixels et tressage avec palette · socle vitré en retrait · bandes verticales sombres et anneau
+  lumineux en pied (sur la façade ou sur la coursive extérieure).
+- **D** Ovale de cricket (outfield, corde, carré, wicket, poteaux de rugby, gradins à pente progressive).
+- **E** Douves, bord de l'eau, butte paysagère avec tranchées aux entrées.
+
+Restes connus :
+- Couronne plissée qui descendrait en façade (Rabat au plus juste) : pas faite.
+- Le socle vitré ne s'applique pas quand une coursive extérieure forme la façade.
+- Plusieurs presets ont des C-values négatives dans leurs étages supérieurs, indépendamment de ces ajouts.

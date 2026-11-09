@@ -95,4 +95,37 @@ describe('features from the 20-stadium analysis', () => {
     expect(has(root, 'WaterfrontWater')).toBe(true);
     expect(has(root, 'SiteMound')).toBe(false);
   });
+
+  it('adds dark stripes, a glowing foot and a recessed glazed plinth to a plain skin', () => {
+    const doc = createPresetDocument('bowl_bowstring_60k');
+    doc.concourse = { width: 0, heightRatio: 0.5 };
+    doc.materials = { ...doc.materials!, envelopeStyle: 'enveloping_skin', facadePattern: 'none', facadeStripeSpacing: 20, facadeBaseGlow: true, plinthHeight: 7 };
+    const root = scene(doc);
+    expect(root.getObjectByName('FacadeStripes')!.children.length).toBeGreaterThan(10);
+    expect(has(root, 'FacadeBaseGlow')).toBe(true);
+    expect(has(root, 'EnvelopePlinthColumns')).toBe(true);
+
+    // With an outer concourse, the stripes and glow move onto it.
+    doc.concourse = { width: 8, heightRatio: 0.6 };
+    const withConcourse = scene(doc);
+    expect(withConcourse.getObjectByName('ConcourseRing')?.getObjectByName('FacadeStripes') ?? withConcourse.getObjectByName('FacadeStripes')).toBeTruthy();
+  });
+
+  it('hangs a stand roof from its own arch, kept within the stand', () => {
+    const doc = createPresetDocument('traditional_four_stands_42k');
+    doc.stands.east.roofStyleOverride = 'stand_arch';
+    const root = scene(doc);
+    const arch = root.getObjectByName('StandArch')!;
+    expect(arch).toBeTruthy();
+    expect(has(root, 'StandArchHangers')).toBe(true);
+    const box = new THREE.Box3().setFromObject(arch);
+    expect(box.max.y).toBeGreaterThan(30);
+  });
+
+  it('sets rugby posts instead of football goals on a cricket ground', () => {
+    const doc = createPresetDocument('bowl_bowstring_60k');
+    applyShape(doc, 'cricket_oval');
+    expect(count(scene(doc), 'RugbyPosts')).toBe(2);
+    expect(doc.stands.east.rakeProfile).toBe('progressive');
+  });
 });

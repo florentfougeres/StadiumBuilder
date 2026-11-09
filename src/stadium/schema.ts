@@ -669,6 +669,12 @@ export interface StadiumMaterialsConfig {
   facadeGlowHex?: string;
   /** Parametric 3D geometric relief pattern overlaid on the exterior facade. */
   facadePattern?: FacadePatternId;
+  /** Height (m) of a glazed plinth set back under the envelope, on a row of columns (`0` = none). */
+  plinthHeight?: number;
+  /** Dark vertical stripes running up the facade, as on a calabash (`0` = none, else metres apart). */
+  facadeStripeSpacing?: number;
+  /** Warm light band glowing along the foot of the facade, like embers under a pot. */
+  facadeBaseGlow?: boolean;
   /** Colours of the `pixel_mosaic` panels and `woven_basket` strips; absent uses the club colours. */
   facadePalette?: string[];
   /** Parametric pattern repetition density (`0.4..2.2`). */

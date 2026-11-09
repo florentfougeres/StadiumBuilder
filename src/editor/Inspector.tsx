@@ -2395,6 +2395,41 @@ const FacadePanel: React.FC = () => {
             options={ENVELOPE_PROFILE_OPTIONS}
           />
         )}
+        <SliderField
+          label="Socle vitré en retrait"
+          hint={
+            (doc.concourse?.width ?? 0) > 0.5
+              ? 'Sans coursive extérieure seulement : c’est elle qui forme la façade ici'
+              : 'Hall vitré au pied du stade, l’enveloppe avance au-dessus sur une rangée de poteaux'
+          }
+          disabled={(doc.concourse?.width ?? 0) > 0.5}
+          min={0}
+          max={12}
+          step={0.5}
+          value={mats.plinthHeight ?? 0}
+          display={(mats.plinthHeight ?? 0) >= 3 ? `${fr1(mats.plinthHeight ?? 0)} m` : 'Aucun'}
+          onChange={(plinthHeight) => updateMaterials({ plinthHeight })}
+        />
+        {envelope === 'enveloping_skin' && (
+          <>
+            <SliderField
+              label="Bandes verticales sombres"
+              hint="Traits foncés qui montent le long de la peau, comme sur une calebasse"
+              min={0}
+              max={40}
+              step={2}
+              value={mats.facadeStripeSpacing ?? 0}
+              display={(mats.facadeStripeSpacing ?? 0) >= 4 ? `tous les ${mats.facadeStripeSpacing} m` : 'Aucune'}
+              onChange={(facadeStripeSpacing) => updateMaterials({ facadeStripeSpacing })}
+            />
+            <ToggleField
+              label="Anneau lumineux en pied"
+              hint="Bande orangée qui rougeoie au pied de la façade, surtout la nuit"
+              checked={mats.facadeBaseGlow === true}
+              onChange={(facadeBaseGlow) => updateMaterials({ facadeBaseGlow })}
+            />
+          </>
+        )}
       </PanelSection>
       <PanelSection title="Matériau">
         <GalleryPicker
