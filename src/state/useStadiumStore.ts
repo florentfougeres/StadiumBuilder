@@ -41,6 +41,7 @@ import {
   TransformMode,
 } from '../stadium/schema';
 import { isIntegralShell, isMovableRoof } from '../stadium/roofCatalog';
+import { SeatStyleScope } from '../stadium/seatPattern';
 import { resolveStandTiers } from '../stadium/sightlines';
 import { defaultHaloHeight } from '../stadium/buildStadiumScene';
 import {
@@ -136,7 +137,18 @@ export interface StadiumStoreState {
    * Seat colour and pattern of one tier. On every stand at once (`all`) it sets that tier only,
    * keeping what each stand has on its other tiers; `null` returns the tier to the club colours.
    */
-  updateStandSeatTier: (target: StandTarget, tierIndex: number, patch: Partial<SeatTierStyle> | null) => void;
+  /**
+   * Edits the seat style set at `scope` (`tierIndex` for the per-tier scopes; `target` for the
+   * per-stand ones). `null` removes that level so it inherits again.
+   */
+  updateSeatStyle: (
+    scope: SeatStyleScope,
+    target: StandTarget,
+    tierIndex: number,
+    patch: Partial<SeatTierStyle> | null
+  ) => void;
+  /** Removes the seat styles narrower than `scope` that override it for `target` / `tierIndex`. */
+  clearNarrowerSeatStyles: (scope: SeatStyleScope, target: StandTarget, tierIndex: number) => void;
   resetStandTiersUniform: (target: StandTarget) => void;
   convertStandToKopWall: (target: StandTarget) => void;
   applyTargetCapacity: (targetCapacity: number) => void;
@@ -682,13 +694,41 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
         for (const side of standsOf(target)) applyStandTierPatch(d, side, tierIndex, patch);
       }),
 
-    updateStandSeatTier: (target, tierIndex, patch) =>
+    updateSeatStyle: (scope, target, tierIndex, patch) =>
       commitChange((d) => {
-        for (const side of standsOf(target)) {
+        const merge = (prev: SeatTierStyle | undefined) => (patch === null ? undefined : { ...prev, ...patch });
+        if (scope === 'stadium') d.seatStyle = merge(d.seatStyle);
+        else if (scope === 'tier') {
+          const seatTierStyles = [...(d.seatTierStyles ?? [])];
+          seatTierStyles[tierIndex] = merge(seatTierStyles[tierIndex]);
+          d.seatTierStyles = seatTierStyles;
+        } else {
+          for (const side of standsOf(target)) {
+            const prev = d.stands[side];
+            if (scope === 'stand') d.stands[side] = { ...prev, seatStyle: merge(prev.seatStyle) };
+            else {
+              const seatTiers = [...(prev.seatTiers ?? [])];
+              seatTiers[tierIndex] = merge(seatTiers[tierIndex]);
+              d.stands[side] = { ...prev, seatTiers };
+            }
+          }
+        }
+      }),
+
+    clearNarrowerSeatStyles: (scope, target, tierIndex) =>
+      commitChange((d) => {
+        if (scope === 'stand_tier') return;
+        // Stadium-wide levels reach every stand; a stand's own levels only reach that stand.
+        const sides = scope === 'stadium' || scope === 'tier' ? standsOf('all') : standsOf(target);
+        if (scope === 'stadium') d.seatTierStyles = undefined;
+        for (const side of sides) {
           const prev = d.stands[side];
-          const seatTiers = [...(prev.seatTiers ?? [])];
-          seatTiers[tierIndex] = patch === null ? undefined : { ...seatTiers[tierIndex], ...patch };
-          d.stands[side] = { ...prev, seatTiers };
+          d.stands[side] = {
+            ...prev,
+            seatStyle: scope === 'stand' ? prev.seatStyle : undefined,
+            seatTiers:
+              scope === 'tier' ? (prev.seatTiers ?? []).map((st, t) => (t === tierIndex ? undefined : st)) : undefined,
+          };
         }
       }),
 

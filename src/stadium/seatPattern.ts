@@ -14,15 +14,51 @@ export interface ResolvedSeatTierStyle {
 const MAX_TIERS = 5;
 
 /**
- * Style of tier `tierIdx` of `stand`. Unset fields keep the stadium's club colours, alternating
- * from one tier to the next as the stands always did.
+ * Where a seat style is set, from the broadest to the most specific: the whole stadium, one tier
+ * on every stand, one whole stand, one tier of one stand. A narrower level wins field by field.
+ */
+export type SeatStyleScope = 'stadium' | 'tier' | 'stand' | 'stand_tier';
+
+export const SEAT_STYLE_SCOPES: readonly SeatStyleScope[] = ['stadium', 'tier', 'stand', 'stand_tier'];
+
+/** The style set at `scope` for tier `tierIdx` of `stand`, if any. */
+export function seatStyleAt(
+  doc: StadiumDocument,
+  stand: StandConfig,
+  tierIdx: number,
+  scope: SeatStyleScope
+): SeatTierStyle | undefined {
+  switch (scope) {
+    case 'stadium':
+      return doc.seatStyle ?? undefined;
+    case 'tier':
+      return doc.seatTierStyles?.[tierIdx] ?? undefined;
+    case 'stand':
+      return stand.seatStyle ?? undefined;
+    case 'stand_tier':
+      return stand.seatTiers?.[tierIdx] ?? undefined;
+  }
+}
+
+/**
+ * Style of tier `tierIdx` of `stand`, merging every level up to `upTo` (all of them by default).
+ * Unset fields keep the stadium's club colours, alternating from one tier to the next as the
+ * stands always did.
  */
 export function resolveSeatTierStyle(
   doc: StadiumDocument,
   stand: StandConfig,
-  tierIdx: number
+  tierIdx: number,
+  upTo: SeatStyleScope = 'stand_tier'
 ): ResolvedSeatTierStyle {
-  const own: SeatTierStyle = stand.seatTiers?.[tierIdx] ?? {};
+  const own: SeatTierStyle = {};
+  for (const scope of SEAT_STYLE_SCOPES.slice(0, SEAT_STYLE_SCOPES.indexOf(upTo) + 1)) {
+    const layer = seatStyleAt(doc, stand, tierIdx, scope);
+    if (!layer) continue;
+    for (const [key, value] of Object.entries(layer)) {
+      if (value !== undefined) (own as Record<string, unknown>)[key] = value;
+    }
+  }
   const even = tierIdx % 2 === 0;
   const main = even ? doc.colors.seatsPrimary : doc.colors.seatsSecondary;
   const other = even ? doc.colors.seatsSecondary : doc.colors.seatsPrimary;

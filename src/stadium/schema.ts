@@ -171,6 +171,9 @@ export interface StandConfig {
   /** Supporters' banners hung over the pitch wall and balcony fronts. */
   banners?: boolean;
   /** Seat colour and pattern of each tier, front tier first; unset tiers keep the club colours. */
+  /** Seat style of the whole stand, over the stadium-wide tier styles (see `resolveSeatTierStyle`). */
+  seatStyle?: SeatTierStyle;
+  /** Seat style of one tier of this stand, the most specific level. */
   seatTiers?: (SeatTierStyle | undefined)[];
   /**
    * Rake of each tier: `constant` risers, or `progressive` ones, flatter at the front and steeper
@@ -790,6 +793,10 @@ export interface StadiumDocument {
   /** Architectural floodlighting system (`roof_gantry`, `corner_masts`, `both`, `none`). */
   floodlightRig?: FloodlightRigMode;
   colors: StadiumColors;
+  /** Seat style of every tier of every stand, over the club colours. */
+  seatStyle?: SeatTierStyle;
+  /** Seat style of tier `t` on every stand, over `seatStyle`. */
+  seatTierStyles?: (SeatTierStyle | undefined)[];
   materials?: StadiumMaterialsConfig;
   concourse?: ConcourseConfig;
   /** Surroundings outside the facade; absent means DEFAULT_SITE. */

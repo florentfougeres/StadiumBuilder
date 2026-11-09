@@ -64,7 +64,7 @@ import {
 } from '../stadium/schema';
 import { isIntegralShell, isMovableRoof, roofDefinition, ROOF_STYLES } from '../stadium/roofCatalog';
 import { OFFERED_SHAPES, shapeDefinition } from '../stadium/shapeCatalog';
-import { resolveSeatTierStyle } from '../stadium/seatPattern';
+import { resolveSeatTierStyle, SeatStyleScope, seatStyleAt } from '../stadium/seatPattern';
 import {
   computeStandSightlines,
   DEFAULT_TIER_OVERHANG_M,
@@ -540,26 +540,77 @@ const CrossAisleList: React.FC<{
 const TIER_NAMES = ['bas', 'deuxième', 'troisième', 'quatrième', 'cinquième'];
 
 /**
- * Colour and pattern of each tier's seats. With every stand selected an edit sets that tier on all
- * four; with one stand selected it sets that stand's tier only.
+ * Colour and pattern of the seats, set at one of four levels: the whole stadium, one tier on every
+ * stand, one whole stand, one tier of one stand. A narrower level wins over a broader one. With
+ * every stand selected only the two stadium-wide levels are offered.
  */
 const SeatTiersEditor: React.FC<{ editAll: boolean; side: StandSide }> = ({ editAll, side }) => {
   const doc = useStadiumStore((s) => s.doc);
   const target = useStadiumStore((s) => s.activeStandTab);
-  const updateStandSeatTier = useStadiumStore((s) => s.updateStandSeatTier);
+  const updateSeatStyle = useStadiumStore((s) => s.updateSeatStyle);
+  const clearNarrower = useStadiumStore((s) => s.clearNarrowerSeatStyles);
   const stand = doc.stands[side];
+  const sides = Object.keys(STAND_LABELS) as StandSide[];
+  const standName = STAND_LABELS[side].toLowerCase();
+  const scopeOptions: { id: SeatStyleScope; label: string }[] = [
+    { id: 'stadium', label: 'Tout le stade' },
+    { id: 'tier', label: editAll ? 'Chaque étage' : 'Cet étage partout' },
+    ...(editAll
+      ? []
+      : [
+          { id: 'stand' as const, label: `Tribune ${standName} entière` },
+          { id: 'stand_tier' as const, label: `Étages de la tribune ${standName}` },
+        ]),
+  ];
+  const [chosen, setScope] = useState<SeatStyleScope>(() =>
+    sides.some((s) => doc.stands[s].seatTiers?.some(Boolean))
+      ? 'stand_tier'
+      : sides.some((s) => doc.stands[s].seatStyle)
+        ? 'stand'
+        : doc.seatTierStyles?.some(Boolean)
+          ? 'tier'
+          : 'stadium'
+  );
+  const scope = scopeOptions.some((o) => o.id === chosen) ? chosen : 'tier';
+  const perTier = scope === 'tier' || scope === 'stand_tier';
   // All stands: as many tiers as the tallest stand has, shown with the displayed stand's values.
   const tierCount = editAll
-    ? Math.max(...(Object.keys(STAND_LABELS) as StandSide[]).map((s) => (doc.stands[s].enabled ? doc.stands[s].tiers : 0)), 1)
+    ? Math.max(...sides.map((s) => (doc.stands[s].enabled ? doc.stands[s].tiers : 0)), 1)
     : Math.max(1, stand.tiers);
+  const narrowerSet = (t: number): boolean => {
+    const standLevels = (s: StandSide) => doc.stands[s].seatTiers?.some(Boolean) || !!doc.stands[s].seatStyle;
+    switch (scope) {
+      case 'stadium':
+        return !!doc.seatTierStyles?.some(Boolean) || sides.some(standLevels);
+      case 'tier':
+        return sides.some((s) => !!doc.stands[s].seatStyle || !!doc.stands[s].seatTiers?.[t]);
+      case 'stand':
+        return !!stand.seatTiers?.some(Boolean);
+      case 'stand_tier':
+        return false;
+    }
+  };
+  const blocks = perTier ? Array.from({ length: tierCount }, (_, t) => t) : [0];
   return (
     <>
-      {Array.from({ length: tierCount }, (_, t) => {
-        const style = resolveSeatTierStyle(doc, stand, t);
-        const custom = stand.seatTiers?.[t] !== undefined && stand.seatTiers?.[t] !== null;
-        const set = (patch: Partial<SeatTierStyle>) => updateStandSeatTier(target, t, patch);
+      <SelectField label="Appliquer à" value={scope} options={scopeOptions} onChange={setScope} />
+      <p className="text-2xs leading-snug text-ink-faint">
+        Du plus général au plus précis : stade, étage, tribune, étage d’une tribune. Le réglage le plus précis
+        l’emporte.
+      </p>
+      {blocks.map((t) => {
+        const style = resolveSeatTierStyle(doc, stand, t, scope);
+        const own = seatStyleAt(doc, stand, t, scope) !== undefined;
+        const set = (patch: Partial<SeatTierStyle>) => updateSeatStyle(scope, target, t, patch);
+        const title = perTier
+          ? tierCount === 1
+            ? 'Sièges'
+            : `Étage ${t + 1} (${TIER_NAMES[t] ?? t + 1})`
+          : scope === 'stadium'
+            ? 'Tous les sièges'
+            : `Tribune ${standName}`;
         return (
-          <SubGroup key={t} title={tierCount === 1 ? 'Sièges' : `Étage ${t + 1} (${TIER_NAMES[t] ?? t + 1})`}>
+          <SubGroup key={`${scope}-${t}`} title={title}>
             <SelectField
               label="Motif"
               value={style.pattern}
@@ -596,13 +647,25 @@ const SeatTiersEditor: React.FC<{ editAll: boolean; side: StandSide }> = ({ edit
                 onChange={(text) => set({ text })}
               />
             )}
-            {custom && (
+            {narrowerSet(t) && (
+              <p className="text-2xs leading-snug text-ink-faint">
+                Des réglages plus précis remplacent celui-ci sur une partie des sièges.{' '}
+                <button
+                  type="button"
+                  onClick={() => clearNarrower(scope, target, t)}
+                  className="underline underline-offset-2 hover:text-ink"
+                >
+                  Les effacer
+                </button>
+              </p>
+            )}
+            {own && (
               <button
                 type="button"
-                onClick={() => updateStandSeatTier(target, t, null)}
+                onClick={() => updateSeatStyle(scope, target, t, null)}
                 className="text-2xs text-ink-faint underline underline-offset-2 hover:text-ink"
               >
-                Revenir aux couleurs du club
+                {scope === 'stadium' ? 'Revenir aux couleurs du club' : 'Reprendre le réglage plus général'}
               </button>
             )}
           </SubGroup>
@@ -1538,11 +1601,6 @@ const StandsPanel: React.FC = () => {
             value={doc.colors.seatsSecondary}
             onChange={(v) => updateColors({ seatsSecondary: v })}
           />
-          <p className="text-2xs leading-snug text-ink-faint">
-            {editAll
-              ? 'Couleurs du club pour tout le stade. Chaque étage ci-dessous s’applique au même étage de toutes les tribunes.'
-              : `Chaque étage ci-dessous ne concerne que la tribune ${STAND_LABELS[side].toLowerCase()}.`}
-          </p>
           <SeatTiersEditor editAll={editAll} side={side} />
         </SubGroup>
       </PanelSection>
