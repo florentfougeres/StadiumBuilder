@@ -257,6 +257,7 @@ export function buildStandEnvelope(params: StandEnvelopeParams): THREE.Group {
         primaryMat: facadeMat,
         accentMat: structureMat,
         palette: resolveFacadePalette(doc),
+        paletteGradient: mats.facadePaletteGradient,
       })
     );
   }

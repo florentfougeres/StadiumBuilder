@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { getBowlArcRange, sampleRoundedBowlRing } from '../bowlRing';
-import { createConcreteBowlMaterial, createStructurePbrMaterial, resolveStadiumMaterials } from '../materials';
-import { getEffectiveSunkenDepth, resolveCornerPylonFrame, resolveCounterweightTrusses, resolveSuspendedMasts, StadiumDocument, RoofStyle } from '../schema';
+import { createConcreteBowlMaterial, createRoofPbrMaterial, createStructurePbrMaterial, resolveStadiumMaterials } from '../materials';
+import { getEffectiveSunkenDepth, resolveCornerPylonFrame, resolveCounterweightTrusses, resolveRetractable, resolveSuspendedMasts, StadiumDocument, RoofStyle } from '../schema';
+import type { RoundedBowlGeometry } from '../bowlRing';
 import { beamGeometry, mergedMesh } from './roofBeams';
 import { computeStadiumRingBounds } from './ringBounds';
 import { RoofBuilder, buildAnnularCanopyMesh, buildAnnularCatwalkFloodlights, buildCanopyMaterialBundle, buildPerimeterCanopyCrown, createStrutBetween, hasRoofGantryLights, insideXZ, warrenTrussParts } from './roofKit';
@@ -70,10 +71,14 @@ function buildSuspendedMastsRoof(
   const concretePedestalMat = createConcreteBowlMaterial(maxAnisotropy);
 
   const masts = resolveSuspendedMasts(doc.roof);
-  const mastCount = Math.max(3, Math.round(masts.mastCount * arcFraction));
+  // Up to 4 masts are pylons (Turin, Cardiff): centred on the sides or set at the corners, each
+  // holding a fan of stays spread over its share of the roof edge.
+  const pylons = masts.mastCount <= SUSPENDED_PYLON_MAX;
+  const mastCount = pylons ? masts.mastCount : Math.max(3, Math.round(masts.mastCount * arcFraction));
   for (let i = 0; i < mastCount; i++) {
-    const frac = closed ? i / mastCount : i / Math.max(1, mastCount - 1);
-    const t = tStart + frac * (tEnd - tStart);
+    const frac = pylons ? (i + 0.5) / mastCount : closed ? i / mastCount : i / Math.max(1, mastCount - 1);
+    const t = pylons ? frac : tStart + frac * (tEnd - tStart);
+    if (pylons && crossSectionClip && sampleRoundedBowlRing(ring, t, 0).z > 0) continue;
 
     const baseSample = sampleRoundedBowlRing(ring, t, 0);
     const localStandD = standDepthAtNormal(baseSample.nx, baseSample.nz);
@@ -153,6 +158,20 @@ function buildSuspendedMastsRoof(
     );
     anchorBlock.position.set(backstayGround.x, groundY + 0.8, backstayGround.z);
     group.add(anchorBlock);
+
+    if (pylons) {
+      const spread = 0.42 / mastCount;
+      for (let k = 1; k <= PYLON_FAN_STAYS; k++) {
+        for (const sign of [-1, 1]) {
+          const tk = t + sign * (k / PYLON_FAN_STAYS) * spread;
+          const front = sampleRoundedBowlRing(ring, ((tk % 1) + 1) % 1, innerOffset + 2.2);
+          if (crossSectionClip && front.z > 0) continue;
+          group.add(
+            createStrutBetween(pTip, new THREE.Vector3(front.x, roofY - 0.2, front.z), 0.07, 0.07, cableMat, 5)
+          );
+        }
+      }
+    }
   }
 
   return group;
@@ -164,6 +183,11 @@ function buildSuspendedMastsRoof(
  * the canopy hangs from them at the front and rests on the stand crests at the rear. Optional
  * `spaceFrame` adds a two-layer lattice over the canopy, and `crownRise` domes it toward the pitch.
  */
+/** A `suspended_masts` roof with this many masts or fewer stands on pylons with fans of stays. */
+export const SUSPENDED_PYLON_MAX = 4;
+/** Stays of a pylon fan on each side of its mast. */
+const PYLON_FAN_STAYS = 7;
+
 function buildCornerPylonsRoof(
   doc: StadiumDocument,
   crossSectionClip: boolean,
@@ -730,6 +754,80 @@ function buildGiantArchRoof(
     }
   }
 
+  if (doc.roof.archMovablePanels) {
+    const spec = resolveRetractable(doc.roof);
+    const panelMat = createRoofPbrMaterial(spec.panelMaterial, 1, doc.lighting, false, maxAnisotropy, 4, 4);
+    const build = (openRatio: number): THREE.Group => {
+      const panels = buildArchMovablePanels(ring, innerOffset, roofY, openRatio, spec.panelCount, panelMat, primaryStructMat, crossSectionClip);
+      panels.userData.rebuildAt = build;
+      return panels;
+    };
+    group.add(build(spec.openRatio));
+  }
+
+  return group;
+}
+
+/** Radial reach (m) of the movable panels of a `giant_arch` roof over the pitch when closed. */
+export const ARCH_PANEL_REACH = 16;
+
+/**
+ * Movable roof panels of a `giant_arch` roof (Wembley): on each long side, panels lying on the
+ * front of the fixed canopy slide toward the pitch to shade it (`openRatio` 0) or back over the
+ * canopy to let the sun reach the grass (1), each on two radial rails.
+ */
+function buildArchMovablePanels(
+  ring: RoundedBowlGeometry,
+  innerOffset: number,
+  roofY: number,
+  openRatio: number,
+  panelCount: number,
+  panelMat: THREE.Material,
+  railMat: THREE.Material,
+  crossSectionClip: boolean
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'ArchMovablePanels';
+  const reach = ARCH_PANEL_REACH;
+  const inner = innerOffset - reach * (1 - Math.max(0, Math.min(1, openRatio)));
+  const y = roofY + 0.95;
+  const corner = (t: number, off: number) => {
+    const p = sampleRoundedBowlRing(ring, t, off);
+    return new THREE.Vector3(p.x, y, p.z);
+  };
+  // Long sides: the south and north quarters of the ring (t = 0.25 and 0.75).
+  for (const centre of [0.25, 0.75]) {
+    for (let i = 0; i < panelCount; i++) {
+      const t0 = centre - 0.1 + (0.2 * i) / panelCount + 0.002;
+      const t1 = centre - 0.1 + (0.2 * (i + 1)) / panelCount - 0.002;
+      if (crossSectionClip && sampleRoundedBowlRing(ring, (t0 + t1) / 2, 0).z > 0) continue;
+      const a = corner(t0, inner);
+      const b = corner(t1, inner);
+      const c = corner(t1, inner + reach);
+      const d = corner(t0, inner + reach);
+      const geo = new THREE.BufferGeometry();
+      const top = [a, b, c, d];
+      const pos: number[] = [];
+      for (const p of top) pos.push(p.x, p.y + 0.35, p.z);
+      for (const p of top) pos.push(p.x, p.y, p.z);
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.setIndex([0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7]);
+      geo.computeVertexNormals();
+      const panel = new THREE.Mesh(geo, panelMat);
+      panel.castShadow = true;
+      panel.receiveShadow = true;
+      group.add(panel);
+    }
+    // Rails at both ends of the movable band and between panels, from the closed edge to the canopy.
+    for (let i = 0; i <= panelCount; i++) {
+      const t = centre - 0.1 + (0.2 * i) / panelCount;
+      const from = corner(t, innerOffset - reach);
+      const to = corner(t, innerOffset + reach);
+      if (crossSectionClip && from.z > 0) continue;
+      from.y = to.y = roofY + 0.7;
+      group.add(createStrutBetween(from, to, 0.22, 0.22, railMat, 6));
+    }
+  }
   return group;
 }
 

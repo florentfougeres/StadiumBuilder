@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildGalleon, buildLighthouse } from './landmarkObjects';
+import { buildFootbridge, buildGalleon, buildLighthouse, buildTower } from './landmarkObjects';
 import {
   CornerQuadrantId,
   sampleCornerQuadrantPoint,
@@ -77,6 +77,59 @@ function createScoreboardTexture(): THREE.CanvasTexture {
 /**
  * Composite procedural PBR 3D model generator for placeable stadium assets.
  */
+/**
+ * Continuous LED band through `points` (a closed loop, local x/z), `height` tall and centred on
+ * y = 0, its scoreboard texture repeated along the loop; double-sided so it reads from both faces.
+ */
+export function buildLedLoopBand(points: { x: number; z: number }[], height: number, lighting: string): THREE.Mesh {
+  const tex = createScoreboardTexture();
+  tex.wrapS = THREE.RepeatWrapping;
+  let len = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    len += Math.hypot(b.x - a.x, b.z - a.z);
+  }
+  tex.repeat.set(Math.max(1, Math.round(len / (height * 4))), 1);
+  const n = points.length;
+  const pos = new Float32Array((n + 1) * 6);
+  const uvs = new Float32Array((n + 1) * 4);
+  const idx: number[] = [];
+  let s = 0;
+  for (let i = 0; i <= n; i++) {
+    const p = points[i % n];
+    if (i > 0) {
+      const q = points[i - 1];
+      s += Math.hypot(p.x - q.x, p.z - q.z);
+    }
+    pos.set([p.x, -height / 2, p.z, p.x, height / 2, p.z], i * 6);
+    uvs.set([s / len, 0, s / len, 1], i * 4);
+  }
+  for (let i = 0; i < n; i++) {
+    const a = i * 2;
+    const b = (i + 1) * 2;
+    idx.push(a, b, a + 1, b, b + 1, a + 1);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(
+    geo,
+    new THREE.MeshStandardMaterial({
+      map: tex,
+      emissive: new THREE.Color(0xffffff),
+      emissiveMap: tex,
+      emissiveIntensity: lighting === 'night' ? 1.25 : 0.72,
+      roughness: 0.18,
+      side: THREE.DoubleSide,
+    })
+  );
+  mesh.name = 'RoofEdgeLedBand';
+  return mesh;
+}
+
 export function generatePlacedObjectGroup(
   obj: PlacedObject,
   lighting: LightingMode,
@@ -198,6 +251,8 @@ export function generatePlacedObjectGroup(
     }
 
     case 'halo_screen': {
+      // Along the roof edge, the scene builder draws it: it knows the roof.
+      if (obj.haloShape === 'roof_edge') break;
       // Giant 360° dual-sided elliptical Halo LED scoreboard ring suspended over the center circle!
       const scoreTex = createScoreboardTexture();
       scoreTex.wrapS = THREE.RepeatWrapping;
@@ -649,6 +704,14 @@ export function generatePlacedObjectGroup(
 
     case 'galleon':
       group.add(buildGalleon(obj.color));
+      break;
+
+    case 'tower':
+      group.add(buildTower(obj.color));
+      break;
+
+    case 'footbridge':
+      group.add(buildFootbridge(obj.color));
       break;
 
     case 'custom_roof': {

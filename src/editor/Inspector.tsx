@@ -44,6 +44,10 @@ import {
   resolveSite,
   resolveSpanningGirderCount,
   resolveSuspendedMasts,
+  resolveRingBreach,
+  resolveUpperRingGaps,
+  RING_BREACH_LIMITS,
+  UPPER_RING_GAP_LIMITS,
   resolveWaveAmplitude,
   resolveRetractable,
   resolveStandVomitories,
@@ -318,6 +322,15 @@ const MaterialSwatchSvg: React.FC<{ materialId: string }> = ({ materialId }) => 
             <rect key={x} x={x} y="4" width="6" height="20" rx="2" fill="#3b82f6" />
           ))}
           <rect x="0" y="12" width="40" height="4" fill="#f8fafc" opacity="0.85" />
+        </svg>
+      );
+    case 'stone_bench':
+      return (
+        <svg viewBox="0 0 40 28" aria-hidden className="w-10 h-[26px] rounded-sm shrink-0">
+          <rect width="40" height="28" fill="#ece7dc" />
+          {[6, 13, 20, 27].map((y) => (
+            <rect key={y} x="0" y={y} width="40" height="2" fill="#a8a296" />
+          ))}
         </svg>
       );
     case 'padded_club_velvet':
@@ -841,6 +854,7 @@ const ShapePanel: React.FC = () => {
             onChange={setCornerRoundness}
           />
         )}
+        {isContinuousBowlShape(doc.shape) && <RingCutsFields />}
         {doc.shape === 'tilted_bowl' && (
           <p className="text-2xs text-ink-faint">
             La pente vient des rangs des tribunes nord (haute) et sud (basse) ; les virages suivent.
@@ -1911,7 +1925,8 @@ const RoofPanel: React.FC = () => {
         <PanelSection title="Mâts et haubans">
           <SliderField
             label="Nombre de mâts"
-            min={6}
+            hint="2 à 4 : pylônes avec haubans en éventail (2 au milieu des latérales, 4 aux angles)"
+            min={2}
             max={36}
             step={1}
             value={resolveSuspendedMasts(roof).mastCount}
@@ -2008,6 +2023,39 @@ const RoofPanel: React.FC = () => {
             checked={Boolean(roof.spaceFrame)}
             onChange={(v) => updateRoof({ spaceFrame: v })}
           />
+        </PanelSection>
+      )}
+      {roof.style === 'giant_arch' && (
+        <PanelSection title="Panneaux mobiles">
+          <ToggleField
+            label="Panneaux coulissants sur les latérales"
+            hint="Ils glissent au-dessus de la pelouse pour l'ombrer, ou reculent sur le toit pour l'ouvrir"
+            checked={Boolean(roof.archMovablePanels)}
+            onChange={(archMovablePanels) => updateRoof({ archMovablePanels })}
+          />
+          {roof.archMovablePanels && (
+            <>
+              <SliderField
+                label="Ouverture"
+                min={0}
+                max={1}
+                step={0.05}
+                value={resolveRetractable(roof).openRatio}
+                display={resolveRetractable(roof).openRatio === 0 ? 'Fermé' : `${Math.round(resolveRetractable(roof).openRatio * 100)} %`}
+                onChange={(openRatio) => updateRoof({ retractable: { ...roof.retractable, openRatio } })}
+              />
+              <SliderField
+                label="Panneaux par côté"
+                min={2}
+                max={6}
+                step={1}
+                value={resolveRetractable(roof).panelCount}
+                display={String(resolveRetractable(roof).panelCount)}
+                onChange={(panelCount) => updateRoof({ retractable: { ...roof.retractable, panelCount } })}
+              />
+              <RoofMotionButton openRatio={resolveRetractable(roof).openRatio} />
+            </>
+          )}
         </PanelSection>
       )}
       {isMovableRoof(roof.style) && (
@@ -2518,6 +2566,7 @@ const FacadePanel: React.FC = () => {
               { id: 'straight', label: 'Fûts droits' },
               { id: 'palm', label: 'Palmiers' },
               { id: 'doric', label: 'Doriques', title: 'Portique néoclassique : colonnes cannelées, chapiteaux, entablement' },
+              { id: 'square', label: 'Piliers', title: 'Piliers carrés massifs dans le revêtement de façade, une seule rangée' },
             ]}
           />
         )}
@@ -2635,6 +2684,14 @@ const FacadePanel: React.FC = () => {
                   }}
                 />
               ))}
+            {pattern === 'pixel_mosaic' && (
+              <ToggleField
+                label="Dégradé du bas vers le haut"
+                hint="Couleur 1 au pied de la façade, couleur 4 en haut, au lieu d'un tirage au hasard"
+                checked={mats.facadePaletteGradient ?? false}
+                onChange={(facadePaletteGradient) => updateMaterials({ facadePaletteGradient })}
+              />
+            )}
             {mats.facadePalette && (
               <button
                 type="button"
@@ -2804,3 +2861,81 @@ export const Inspector: React.FC<{ tab: EditorTab }> = ({ tab }) => {
       return <ObjectList footer={<FloodlightSection />} />;
   }
 };
+
+/** Breach through a continuous bowl's ring and petal gaps cut into its upper tiers. */
+function RingCutsFields() {
+  const doc = useStadiumStore((s) => s.doc);
+  const setRingCuts = useStadiumStore((s) => s.setRingCuts);
+  const breach = resolveRingBreach(doc);
+  const petals = resolveUpperRingGaps(doc);
+  return (
+    <>
+      <SelectField<StandSide | 'none'>
+        label="Brèche dans l’anneau"
+        value={breach?.side ?? 'none'}
+        onChange={(side) =>
+          setRingCuts({
+            ringBreach: side === 'none' ? undefined : { side, width: breach?.width ?? RING_BREACH_LIMITS.def },
+          })
+        }
+        options={[
+          { id: 'none', label: 'Aucune' },
+          { id: 'north', label: 'Nord' },
+          { id: 'south', label: 'Sud' },
+          { id: 'east', label: 'Est' },
+          { id: 'west', label: 'Ouest' },
+        ]}
+      />
+      {breach && (
+        <SliderField
+          label="Largeur de la brèche"
+          hint="Une porte monumentale à travers tous les gradins, comme une porte de Marathon"
+          min={RING_BREACH_LIMITS.min}
+          max={RING_BREACH_LIMITS.max}
+          step={1}
+          value={breach.width}
+          display={`${breach.width} m`}
+          onChange={(width) => setRingCuts({ ringBreach: { ...breach, width } })}
+        />
+      )}
+      <ToggleField
+        label="Anneau supérieur en pétales"
+        hint="Les étages au-dessus du premier sont découpés en pétales séparés par des vides"
+        checked={petals !== null}
+        onChange={(on) =>
+          setRingCuts({
+            upperRingGaps: on
+              ? { count: UPPER_RING_GAP_LIMITS.count.def, width: UPPER_RING_GAP_LIMITS.width.def }
+              : undefined,
+          })
+        }
+      />
+      {petals && (
+        <>
+          <SliderField
+            label="Nombre de pétales"
+            min={UPPER_RING_GAP_LIMITS.count.min}
+            max={UPPER_RING_GAP_LIMITS.count.max}
+            step={1}
+            value={petals.count}
+            display={String(petals.count)}
+            onChange={(count) => setRingCuts({ upperRingGaps: { ...petals, count } })}
+          />
+          <SliderField
+            label="Largeur des vides"
+            min={UPPER_RING_GAP_LIMITS.width.min}
+            max={UPPER_RING_GAP_LIMITS.width.max}
+            step={0.5}
+            value={petals.width}
+            display={`${petals.width} m`}
+            onChange={(width) => setRingCuts({ upperRingGaps: { ...petals, width } })}
+          />
+          {Math.max(...(['north', 'south', 'east', 'west'] as StandSide[]).map((s) => doc.stands[s].tiers)) < 2 && (
+            <p className="text-2xs text-ink-faint">Il faut au moins deux niveaux de gradins pour voir les pétales.</p>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+

@@ -206,6 +206,7 @@ export function generateEnvelopeSkirt(
             primaryMat: screenMat,
             accentMat: finMat,
             palette: resolveFacadePalette(doc),
+        paletteGradient: mats.facadePaletteGradient,
             name: 'SkirtParametricFacade',
           });
     if (dressing) group.add(dressing);

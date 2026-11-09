@@ -158,3 +158,87 @@ export function buildGalleon(color?: string): THREE.Group {
   }
   return group;
 }
+
+/**
+ * Free-standing tower 50 m tall (Florence marathon tower, Berlin bell tower): a slender square
+ * shaft in concrete or stone with thin vertical slots, an open belvedere on four piers, a flat cap
+ * and a flagpole.
+ */
+export function buildTower(color?: string): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'Tower';
+  const stone = new THREE.MeshStandardMaterial({ color: color ?? '#d9d4c7', roughness: 0.85 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.6 });
+  const shaftH = 42;
+  const w = 6;
+  const shaft = new THREE.Mesh(new THREE.BoxGeometry(w, shaftH, w), stone);
+  shaft.position.y = shaftH / 2;
+  shaft.castShadow = true;
+  shaft.receiveShadow = true;
+  group.add(shaft);
+  // Tall narrow slots up each face.
+  for (let f = 0; f < 4; f++) {
+    const a = (f * Math.PI) / 2;
+    for (const off of [-1.4, 0, 1.4]) {
+      const slot = new THREE.Mesh(new THREE.BoxGeometry(0.45, shaftH * 0.7, 0.1), dark);
+      slot.position.set(Math.sin(a) * (w / 2 + 0.02) + Math.cos(a) * off, shaftH * 0.52, Math.cos(a) * (w / 2 + 0.02) - Math.sin(a) * off);
+      slot.rotation.y = a;
+      group.add(slot);
+    }
+  }
+  // Belvedere: four corner piers carrying a projecting cap.
+  const belvH = 5;
+  for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
+    const pier = new THREE.Mesh(new THREE.BoxGeometry(1.1, belvH, 1.1), stone);
+    pier.position.set(x * (w / 2 - 0.55), shaftH + belvH / 2, z * (w / 2 - 0.55));
+    pier.castShadow = true;
+    group.add(pier);
+  }
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(w + 1.6, 1, w + 1.6), stone);
+  cap.position.y = shaftH + belvH + 0.5;
+  cap.castShadow = true;
+  group.add(cap);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 9, 6), dark);
+  pole.position.y = shaftH + belvH + 1 + 4.5;
+  group.add(pole);
+  return group;
+}
+
+/**
+ * Footbridge 60 m long crossing an old bank or a moat to the stadium: a steel deck 5 m wide,
+ * glass parapets and a shallow arch underneath, on piers at both ends. Its local +x points at
+ * the stadium.
+ */
+export function buildFootbridge(color?: string): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'Footbridge';
+  const steel = new THREE.MeshStandardMaterial({ color: color ?? '#e5e7eb', roughness: 0.4, metalness: 0.6 });
+  const glass = new THREE.MeshStandardMaterial({ color: 0xbfdbfe, roughness: 0.1, transparent: true, opacity: 0.4 });
+  const concrete = new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.9 });
+  const len = 60;
+  const deckY = 9;
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(len, 0.7, 5), steel);
+  deck.position.y = deckY;
+  deck.castShadow = true;
+  deck.receiveShadow = true;
+  group.add(deck);
+  for (const z of [-2.45, 2.45]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 1.1, 0.06), glass);
+    rail.position.set(0, deckY + 0.9, z);
+    group.add(rail);
+    // Shallow arch under each edge of the deck.
+    const pts = Array.from({ length: 17 }, (_, i) => {
+      const x = -len / 2 + (len * i) / 16;
+      return new THREE.Vector3(x, deckY - 0.4 - 3.5 * (1 - Math.pow((2 * x) / len, 2)) + 3.5, z);
+    });
+    const arch = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 32, 0.25, 6), steel);
+    group.add(arch);
+  }
+  for (const x of [-len / 2 + 1.5, len / 2 - 1.5]) {
+    const pier = new THREE.Mesh(new THREE.BoxGeometry(3, deckY - 0.35, 5.6), concrete);
+    pier.position.set(x, (deckY - 0.35) / 2, 0);
+    pier.castShadow = true;
+    group.add(pier);
+  }
+  return group;
+}

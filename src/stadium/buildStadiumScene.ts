@@ -14,6 +14,7 @@ import {
 import { generateConcourseGroup } from './generateConcourse';
 import { generateEnvelopeSkirt } from './generateEnvelopeSkirt';
 import {
+  buildLedLoopBand,
   generateFloodlightRigGroup,
   generatePlacedObjectGroup,
 } from './generateLights';
@@ -151,6 +152,44 @@ function applyScreenMount(doc: StadiumDocument, obj: PlacedObject, group: THREE.
 export function defaultHaloHeight(doc: StadiumDocument): number {
   const bounds = computeStadiumRingBounds(doc);
   return Math.max(18, bounds.maxStandH * 0.8);
+}
+
+/** Points along the roof edge screen, and how far inside the roof's front edge it hangs (m). */
+const ROOF_EDGE_SCREEN_POINTS = 96;
+const ROOF_EDGE_SCREEN_INSET = 0.6;
+
+/**
+ * 360° LED band hung under the front edge of a ring roof, all around the bowl (Bernabéu): it
+ * follows the canopy's inner edge, its top just under the canopy, found by casting rays up
+ * through the roof. Nothing is drawn when no roof stands above that edge.
+ */
+function buildRoofEdgeScreen(doc: StadiumDocument, obj: PlacedObject, roofGroup: THREE.Group): THREE.Group | null {
+  const { ring, avgDepth } = computeStadiumRingBounds(doc);
+  const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
+  const { bandHeight } = resolveHaloSize(obj);
+  const points: { x: number; z: number }[] = [];
+  for (let i = 0; i < ROOF_EDGE_SCREEN_POINTS; i++) {
+    const p = sampleRoundedBowlRing(ring, i / ROOF_EDGE_SCREEN_POINTS, innerOffset + ROOF_EDGE_SCREEN_INSET);
+    points.push({ x: p.x, z: p.z });
+  }
+  roofGroup.updateMatrixWorld(true);
+  const raycaster = new THREE.Raycaster();
+  raycaster.far = 300;
+  const hits: number[] = [];
+  for (const p of points) {
+    raycaster.set(new THREE.Vector3(p.x, 1, p.z), UP);
+    const hit = raycaster.intersectObject(roofGroup, true)[0];
+    if (hit) hits.push(hit.point.y);
+  }
+  if (hits.length < ROOF_EDGE_SCREEN_POINTS / 2) return null;
+  // The lowest underside along the edge, so the band never cuts through the canopy.
+  const top = Math.min(...hits) - 0.25;
+  const group = new THREE.Group();
+  group.name = 'RoofEdgeScreen';
+  const band = buildLedLoopBand(points, bandHeight, doc.lighting);
+  band.position.y = top - bandHeight / 2;
+  group.add(band);
+  return group;
 }
 
 const HALO_CABLES = 12;
@@ -303,7 +342,13 @@ export function buildStadiumSceneGraph(
       doc.materials,
       aniso
     );
-    if (obj.type === 'halo_screen') {
+    if (obj.type === 'halo_screen' && obj.haloShape === 'roof_edge') {
+      objGroup.position.set(0, 0, 0);
+      objGroup.rotation.set(0, 0, 0);
+      objGroup.scale.set(1, 1, 1);
+      const band = buildRoofEdgeScreen(doc, obj, roofGroup);
+      if (band) objGroup.add(band);
+    } else if (obj.type === 'halo_screen') {
       if (obj.position[1] <= 5) objGroup.position.y = defaultHaloHeight(doc);
       hangHaloFromStructure(obj, objGroup, [roofGroup, standsGroup]);
     }

@@ -33,6 +33,8 @@ export type PlacedObjectType =
   | 'monumental_gate'
   | 'lighthouse'
   | 'galleon'
+  | 'tower'
+  | 'footbridge'
   | 'floodlight'
   | 'dugout'
   | 'locker_room'
@@ -440,10 +442,13 @@ export function resolveWaveAmplitude(roof: RoofConfig): number {
   return Math.max(0, Math.min(14, roof.waveAmplitude ?? 9));
 }
 
-/** Masts of a `suspended_masts` roof: count around the full bowl and tip height above the canopy. */
+/**
+ * Masts of a `suspended_masts` roof: count around the full bowl and tip height above the canopy.
+ * Up to 4 masts become pylons: 2 centred on the long sides, 4 at the corners.
+ */
 export function resolveSuspendedMasts(roof: RoofConfig): { mastCount: number; mastHeight: number } {
   return {
-    mastCount: Math.max(6, Math.min(36, Math.round(roof.mastCount ?? 18))),
+    mastCount: Math.max(2, Math.min(36, Math.round(roof.mastCount ?? 18))),
     mastHeight: Math.max(8, Math.min(45, roof.mastHeight ?? 19.5)),
   };
 }
@@ -481,10 +486,15 @@ export interface RoofConfig {
   portalCount?: number;
   /** `wave_canopy`: peak rise (m) of the undulating roof line (`0..14`). */
   waveAmplitude?: number;
-  /** `suspended_masts`: masts around the full bowl (`6..36`, default 18). */
+  /** `suspended_masts`: masts around the full bowl (`2..36`, default 18); up to 4 are pylons with fans of stays. */
   mastCount?: number;
   /** `suspended_masts`: mast tip height above the canopy (m, `8..45`, default 19.5). */
   mastHeight?: number;
+  /**
+   * `giant_arch`: movable panels on the long sides that slide over the pitch to shade it and back
+   * over the canopy to open it (Wembley); travel, count and material come from `retractable`.
+   */
+  archMovablePanels?: boolean;
   /** Continuous bowls only: stands under the roof; absent means the whole bowl is covered. */
   coveredSides?: StandSide[];
   /** Extends the outer edge of all roofs across the outer concourse up to the facade (enabled by default). */
@@ -683,7 +693,8 @@ export type StructureMaterialId =
 export type SeatMaterialId =
   | 'molded_poly_mosaic'
   | 'ribbed_stadium_shell'
-  | 'padded_club_velvet';
+  | 'padded_club_velvet'
+  | 'stone_bench';
 
 export type PitchTurfMaterialId =
   | 'hybrid_emerald'
@@ -731,6 +742,8 @@ export interface StadiumMaterialsConfig {
   facadeBaseGlow?: boolean;
   /** Colours of the `pixel_mosaic` panels and `woven_basket` strips; absent uses the club colours. */
   facadePalette?: string[];
+  /** `pixel_mosaic`: palette graded from the foot (first colour) to the top (last), instead of random. */
+  facadePaletteGradient?: boolean;
   /** Parametric pattern repetition density (`0.4..2.2`). */
   facadeDensity?: number;
   /** Outward 3D relief projection depth in metres (`0.15..2.4`). */
@@ -739,8 +752,8 @@ export interface StadiumMaterialsConfig {
   facadeBulge?: number;
   /** `colonnade_forest`: column density multiplier (`0.5..4`, default 1). */
   colonnadeDensity?: number;
-  /** `colonnade_forest`: slender straight columns, date palms fanning out under the cornice, or a Doric portico. */
-  colonnadeShape?: 'straight' | 'palm' | 'doric';
+  /** `colonnade_forest`: slender straight columns, date palms under the cornice, a Doric portico, or massive square stone piers. */
+  colonnadeShape?: 'straight' | 'palm' | 'doric' | 'square';
 }
 
 export const DEFAULT_STADIUM_MATERIALS: StadiumMaterialsConfig = {
@@ -781,8 +794,11 @@ export interface PlacedObject {
   haloDiameter?: number;
   /** `halo_screen`: height of the LED band (m). */
   haloBandHeight?: number;
-  /** `halo_screen`: an elliptical ring, or a four-sided box hung over midfield (NFL domes). */
-  haloShape?: 'ring' | 'box';
+  /**
+   * `halo_screen`: an elliptical ring, a four-sided box hung over midfield (NFL domes), or a
+   * continuous band along the roof's inner edge, all around the bowl (Bernabéu).
+   */
+  haloShape?: 'ring' | 'box' | 'roof_edge';
 }
 
 export const HALO_LIMITS = {
@@ -876,6 +892,13 @@ export interface StadiumDocument {
   /** Height of the `mesh` front fence above the parapet (m, `1.5..4`). */
   frontFenceHeight?: number;
   sunkenDepth?: number;
+  /** Continuous bowls: a breach through the whole ring, centred on one stand (Berlin's marathon gate). */
+  ringBreach?: { side: StandSide; width: number };
+  /**
+   * Continuous bowls: the tiers above the first cut into `count` petals by gaps `width` metres
+   * wide, the lowest tier running on unbroken underneath (Bari).
+   */
+  upperRingGaps?: { count: number; width: number };
   /** `rounded_rectangle`: corner rounding, `0` tight to `1` a full bend (default `0.5`). */
   cornerRoundness?: number;
   pitch: PitchConfig;
@@ -1052,6 +1075,29 @@ export function vomitoryLevelLayout(
   }));
 }
 
+/** Ring position (`0..1`) of the middle of each stand on a continuous bowl's ring. */
+export const SIDE_RING_T: Record<StandSide, number> = { east: 0, south: 0.25, west: 0.5, north: 0.75 };
+
+export const RING_BREACH_LIMITS = { min: 8, max: 60, def: 24 } as const;
+export const UPPER_RING_GAP_LIMITS = { count: { min: 8, max: 40, def: 26 }, width: { min: 2, max: 12, def: 6 } } as const;
+
+/** The ring breach of a continuous bowl, its width clamped; `null` when none or not a bowl. */
+export function resolveRingBreach(doc: StadiumDocument): { side: StandSide; width: number } | null {
+  if (!doc.ringBreach || !isContinuousBowlShape(doc.shape)) return null;
+  const w = doc.ringBreach.width ?? RING_BREACH_LIMITS.def;
+  return { side: doc.ringBreach.side, width: Math.max(RING_BREACH_LIMITS.min, Math.min(RING_BREACH_LIMITS.max, w)) };
+}
+
+/** The petal gaps of a continuous bowl's upper tiers, values clamped; `null` when none. */
+export function resolveUpperRingGaps(doc: StadiumDocument): { count: number; width: number } | null {
+  if (!doc.upperRingGaps || !isContinuousBowlShape(doc.shape)) return null;
+  const L = UPPER_RING_GAP_LIMITS;
+  return {
+    count: Math.max(L.count.min, Math.min(L.count.max, Math.round(doc.upperRingGaps.count ?? L.count.def))),
+    width: Math.max(L.width.min, Math.min(L.width.max, doc.upperRingGaps.width ?? L.width.def)),
+  };
+}
+
 /** Deepest excavation (m): a field 30 m below the street, as in Inglewood. */
 export const SUNKEN_MAX_DEPTH = 30;
 
@@ -1092,6 +1138,11 @@ export function riserFromSlopeDeg(slopeDeg: number, rowDepth: number): number {
 export function slopeDegFromRiser(riserHeight: number, rowDepth: number): number {
   if (rowDepth <= 0) return 26;
   return Number(((Math.atan2(riserHeight, rowDepth) * 180) / Math.PI).toFixed(1));
+}
+
+/** Individual 3D seats are drawn: switched on, and not stone benches (which have no seats). */
+export function resolveSeats3d(materials: StadiumMaterialsConfig): boolean {
+  return materials.seats3d !== false && materials.seatFinish !== 'stone_bench';
 }
 
 /** Share of places filled with spectators: none unless the crowd is switched on. */

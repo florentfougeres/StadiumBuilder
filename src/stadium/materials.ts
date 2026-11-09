@@ -520,6 +520,14 @@ export const SEAT_MATERIAL_CATALOG: MaterialCatalogEntry<SeatMaterialId>[] = [
       'repeating-linear-gradient(0deg, rgba(255,255,255,0.28) 0 2px, transparent 2px 7px), linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%)',
   },
   {
+    id: 'stone_bench',
+    label: 'Gradins de marbre (sans sièges)',
+    subtitle: 'Bancs de pierre blanche, ni coques ni fauteuils',
+    fallbackHex: '#e7e2d6',
+    swatchBackground:
+      'repeating-linear-gradient(0deg, #a8a296 0 3px, #ece7dc 3px 9px)',
+  },
+  {
     id: 'padded_club_velvet',
     label: 'Sellerie textile rembourrée',
     subtitle: 'Fauteuils club mats à grain velours haute densité',
@@ -2542,6 +2550,29 @@ export function createStructurePbrMaterial(
 // 5. 3D MOLDED BUCKET SEATING + RADIAL STAIRS + VOMITORIES PBR MATERIAL
 // ============================================================================
 
+/**
+ * `stone_bench`: rows of white marble blocks with no seat on them (ancient and early stadiums),
+ * a shadowed riser under each tread, joints between blocks and faint grey veins.
+ */
+function stoneBenchTexel(u: number, v: number): { r: number; g: number; b: number; height: number; roughness: number } {
+  const rows = 24;
+  const sv = (v * rows) % 1;
+  const row = Math.floor(v * rows);
+  if (sv < 0.16) {
+    const ao = 0.62 + (sv / 0.16) * 0.3;
+    return { r: 196 * ao, g: 190 * ao, b: 178 * ao, height: 0.15, roughness: 0.9 };
+  }
+  const blocks = 14;
+  const shifted = u * blocks + (row % 2) * 0.5;
+  const bu = shifted % 1;
+  if (bu < 0.025) return { r: 150, g: 146, b: 138, height: 0.4, roughness: 0.9 };
+  const block = Math.floor(shifted);
+  const tone = 0.9 + (((block * 37 + row * 91) % 17) / 17) * 0.1;
+  const vein = Math.abs(Math.sin(u * 61 + v * 23 + block)) < 0.035 ? 0.86 : 1;
+  const k = tone * vein;
+  return { r: 236 * k, g: 231 * k, b: 220 * k, height: 0.55, roughness: 0.62 };
+}
+
 export function createSeatTerracePbrMaterial(
   seatFinish: SeatMaterialId,
   primaryHex: string,
@@ -2563,6 +2594,7 @@ export function createSeatTerracePbrMaterial(
   const secB = sec.b * 255;
 
   const buffers = synthesizeCachedPbrBuffers(key, 512, 512, 4.6, false, (u, v) => {
+    if (seatFinish === 'stone_bench') return stoneBenchTexel(u, v);
     // Radial concrete stairways & dark recessed vomitory portals
     const aislePhase = (u * safeAisles) % 1;
     const aisleIdx = Math.floor(u * safeAisles);

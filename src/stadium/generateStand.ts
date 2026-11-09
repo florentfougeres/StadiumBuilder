@@ -69,6 +69,10 @@ import {
   StandConfig,
   StandSide,
   resolveCrowdAttendance,
+  resolveSeats3d,
+  resolveRingBreach,
+  resolveUpperRingGaps,
+  SIDE_RING_T,
 } from './schema';
 import { createStandSeatPainter, SeatPainter } from './seatPattern';
 import { buildStandEnvelope, facadeGradeY, hasOwnFacade, isHollowStand, resolveStandFacade } from './envelopes';
@@ -801,7 +805,7 @@ function buildStraightStandMesh(
     (s) => (spanLength * 0.5 - sliceXs[s]) / Math.max(1e-5, spanLength)
   );
 
-  const seats3d = mats.seats3d !== false;
+  const seats3d = resolveSeats3d(mats);
   const bowlMesh = new THREE.Mesh(straightBowlGeo, [concreteMat, seats3d ? concreteMat : seatMat]);
   bowlMesh.castShadow = true;
   bowlMesh.receiveShadow = true;
@@ -2530,7 +2534,7 @@ function buildCornerVirageQuadrant(
     isCornerHole
   );
 
-  const cornerSeats3d = resolveStadiumMaterials(doc).seats3d !== false;
+  const cornerSeats3d = resolveSeats3d(resolveStadiumMaterials(doc));
   const cornerMesh = new THREE.Mesh(cornerGeo, [concreteMat, cornerSeats3d ? concreteMat : seatMat]);
   cornerMesh.name = 'CornerTerrace';
   cornerMesh.castShadow = true;
@@ -3507,6 +3511,26 @@ function buildModernBowlSweep(
     return isCornerConfigured(doc, cid) && resolvedCorners[cid] !== 'filled';
   };
 
+  // Breach through the whole ring (Berlin's marathon gate) and gaps through the upper tiers only
+  // (Bari's petals), as ring positions of each slice.
+  const breach = resolveRingBreach(doc);
+  const ringPos = (s: number) => ((sliceT[((s % ringCount) + ringCount) % ringCount] % 1) + 1) % 1;
+  const ringDist = (a: number, b: number) => Math.min(Math.abs(a - b), 1 - Math.abs(a - b));
+  const isSliceInBreach = (s: number): boolean =>
+    breach !== null && bowlRing.perimeter > 0 && ringDist(ringPos(s), SIDE_RING_T[breach.side]) * bowlRing.perimeter < breach.width / 2;
+  const isSliceCut = (s: number) => isSliceInOpenCorner(s) || isSliceInBreach(s);
+  const petals = resolveUpperRingGaps(doc);
+  const upperTierSegs = sectionModel?.treadSeg[1]?.length ? sectionModel.treadSeg[1] : null;
+  const upperFirstSeg = upperTierSegs ? Math.max(0, Math.min(...upperTierSegs) - 2) : -1;
+  const isSliceInPetalGap = (s: number): boolean => {
+    if (!petals || !upperTierSegs || bowlRing.perimeter <= 0) return false;
+    const pitch = 1 / petals.count;
+    const phase = ((ringPos(s) + pitch / 2) % pitch) - pitch / 2;
+    return Math.abs(phase) * bowlRing.perimeter < petals.width / 2;
+  };
+  /** Profile segments of the upper tiers, from the tier break up to the crest. */
+  const isUpperSeg = (s: number, p: number) => p >= upperFirstSeg && p < profilePtsPerSlice[s % ringCount].length - (isHollow ? 4 : 2);
+
   // Map each terrace step `k` (`0..N_TERRACE_STEPS-1`) to its `[treadSegIdx, riserSegIdx]` in `profilePtsPerSlice`
   const stepSegPairs: [number, number][] = [];
   {
@@ -3746,9 +3770,10 @@ function buildModernBowlSweep(
 
   const isBowlQuadHole = (s: number, p: number): boolean => {
     const nextS = closed ? (s + 1) % ringCount : s + 1;
-    if (isSliceInOpenCorner(s) || isSliceInOpenCorner(nextS)) {
+    if (isSliceCut(s) || isSliceCut(nextS)) {
       return true;
     }
+    if ((isSliceInPetalGap(s) || isSliceInPetalGap(nextS)) && isUpperSeg(s, p)) return true;
     if (bowlTunnels.some((plan) => isTunnelQuad(plan, s, p))) return true;
     const set = bowlHoleMap.get(s);
     return set ? set.has(p) : false;
@@ -3778,7 +3803,7 @@ function buildModernBowlSweep(
     true
   );
 
-  const bowlSeats3d = mats.seats3d !== false;
+  const bowlSeats3d = resolveSeats3d(mats);
   const bowlMesh = new THREE.Mesh(bowlGeo, [concreteMat, bowlSeats3d ? concreteMat : seatMat]);
   bowlMesh.castShadow = true;
   bowlMesh.receiveShadow = true;
@@ -3826,14 +3851,54 @@ function buildModernBowlSweep(
     if (seats) group.add(seats);
   }
 
+  // Walls closing the ring where it is cut: a breach through all of it, a petal gap above the
+  // tier break (the cap then runs from the break up to the crest).
+  if (breach || petals) {
+    const capMat = concreteMat.clone();
+    capMat.side = THREE.DoubleSide;
+    const capAt = (idx: number, pts2d: [number, number][]) => {
+      const shape = new THREE.Shape();
+      shape.moveTo(pts2d[0][0], pts2d[0][1]);
+      for (let i = 1; i < pts2d.length; i++) shape.lineTo(pts2d[i][0], pts2d[i][1]);
+      shape.closePath();
+      const geo = new THREE.ShapeGeometry(shape);
+      const pos = geo.attributes.position;
+      const t = tAtSlice(idx);
+      for (let i = 0; i < pos.count; i++) {
+        const w = sampleRoundedBowlRing(bowlRing, t, pos.getX(i));
+        pos.setXYZ(i, w.x, pos.getY(i), w.z);
+      }
+      geo.computeVertexNormals();
+      const mesh = new THREE.Mesh(geo, capMat);
+      mesh.castShadow = true;
+      group.add(mesh);
+    };
+    for (let s = 0; s < activeSegments; s++) {
+      const nextS = closed ? (s + 1) % ringCount : s + 1;
+      if (breach && !hasCustomCornerCutout && isSliceCut(s) !== isSliceCut(nextS)) {
+        const idx = isSliceCut(s) ? nextS : s;
+        capAt(idx, profilePtsPerSlice[idx]);
+      }
+      if (petals && isSliceInPetalGap(s) !== isSliceInPetalGap(nextS) && !isSliceCut(s) && !isSliceCut(nextS)) {
+        const idx = isSliceInPetalGap(s) ? nextS : s;
+        const pts2d = profilePtsPerSlice[idx];
+        const top = pts2d.length - (isHollow ? 4 : 2);
+        const upper = pts2d.slice(upperFirstSeg, top + 1);
+        // Down the back to the foot of the break, so the cap closes the petal's hollow end.
+        const back = pts2d[top];
+        capAt(idx, [...upper, [back[0], pts2d[upperFirstSeg][1]]]);
+      }
+    }
+  }
+
   // When a continuous bowl has custom non-filled corners (`open`, `building`, `screen`), cap cut ends & build corner inserts!
   if (hasCustomCornerCutout) {
     const capWallMat = concreteMat.clone();
     capWallMat.side = THREE.DoubleSide;
     for (let s = 0; s < activeSegments; s++) {
       const nextS = closed ? (s + 1) % ringCount : s + 1;
-      const openCur = isSliceInOpenCorner(s);
-      const openNxt = isSliceInOpenCorner(nextS);
+      const openCur = isSliceCut(s);
+      const openNxt = isSliceCut(nextS);
       if (openCur !== openNxt) {
         const boundaryIdx = openCur ? nextS : s;
         const pts2d = profilePtsPerSlice[boundaryIdx];

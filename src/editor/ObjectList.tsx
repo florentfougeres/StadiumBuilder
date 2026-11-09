@@ -13,6 +13,8 @@ import {
   MonitorPlay,
   Plus,
   Sailboat,
+  Castle,
+  Spline,
   TowerControl,
   ShoppingBag,
   Tent,
@@ -36,6 +38,8 @@ const ADDABLE_ASSETS: {
   { type: 'monumental_gate', label: 'Porte monumentale', icon: <DoorOpen className="w-3.5 h-3.5" /> },
   { type: 'lighthouse', label: 'Phare', icon: <TowerControl className="w-3.5 h-3.5" /> },
   { type: 'galleon', label: 'Galion', icon: <Sailboat className="w-3.5 h-3.5" /> },
+  { type: 'tower', label: 'Tour', icon: <Castle className="w-3.5 h-3.5" /> },
+  { type: 'footbridge', label: 'Passerelle', icon: <Spline className="w-3.5 h-3.5" /> },
   { type: 'floodlight', label: 'Projecteur', icon: <Lightbulb className="w-3.5 h-3.5" /> },
   { type: 'dugout', label: 'Bancs de touche', icon: <Users className="w-3.5 h-3.5" /> },
   { type: 'locker_room', label: 'Vestiaires', icon: <Building2 className="w-3.5 h-3.5" /> },
@@ -201,6 +205,7 @@ const HaloControls: React.FC = () => {
   if (!obj) return null;
   const { rx, bandHeight } = resolveHaloSize(obj);
   const box = obj.haloShape === 'box';
+  const roofEdge = obj.haloShape === 'roof_edge';
   return (
     <PanelSection title="Écran central">
       <Segmented
@@ -210,8 +215,11 @@ const HaloControls: React.FC = () => {
         options={[
           { id: 'ring', label: 'Anneau', title: 'Anneau elliptique à 360°' },
           { id: 'box', label: 'Caisson', title: 'Quatre écrans en caisson au-dessus du milieu de terrain' },
+          { id: 'roof_edge', label: 'Bord du toit', title: 'Bandeau à 360° sous le bord intérieur du toit, tout autour du stade' },
         ]}
       />
+      {!roofEdge && (
+        <>
       <SliderField
         label="Hauteur au-dessus du terrain"
         min={10}
@@ -230,6 +238,8 @@ const HaloControls: React.FC = () => {
         display={`${Math.round(rx * 2)} m`}
         onChange={(v) => updateObjectTransform(obj.id, { haloDiameter: v })}
       />
+        </>
+      )}
       <SliderField
         label="Hauteur de l’écran"
         min={HALO_LIMITS.bandHeight.min}
@@ -240,7 +250,9 @@ const HaloControls: React.FC = () => {
         onChange={(v) => updateObjectTransform(obj.id, { haloBandHeight: v })}
       />
       <p className="text-2xs text-ink-faint">
-        Centré sur le terrain, il est suspendu par des câbles à la structure au-dessus : toit, arche ou crête des tribunes.
+        {roofEdge
+          ? 'Il court sous le bord intérieur du toit, tout autour du stade ; sans toit au-dessus, il n’apparaît pas.'
+          : 'Centré sur le terrain, il est suspendu par des câbles à la structure au-dessus : toit, arche ou crête des tribunes.'}
       </p>
     </PanelSection>
   );

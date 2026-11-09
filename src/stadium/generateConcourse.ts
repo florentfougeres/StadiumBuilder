@@ -174,6 +174,7 @@ export function generateConcourseGroup(
       primaryMat: facadeMat,
       accentMat: structMat,
       palette: resolveFacadePalette(doc),
+        paletteGradient: mats.facadePaletteGradient,
       name: 'ConcourseParametricFacade',
     });
     if (relief) {

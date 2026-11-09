@@ -669,6 +669,10 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
         return sum + 4.5;
       case 'galleon':
         return sum + 3;
+      case 'tower':
+        return sum + 6;
+      case 'footbridge':
+        return sum + 2.5;
       default:
         return sum + 0.15;
     }

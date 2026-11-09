@@ -16,6 +16,12 @@ export const colonnadeForest: EnvelopeDrawer = {
       return;
     }
     add(wall(-1.6, 0.8), loft(slab(-1.6, 6, 0.95, (pt) => pt.yTop - 0.8), structureMat));
+    if (mats.colonnadeShape === 'square') {
+      // Monumental square piers of stone (Berlin 1936): one row, in the facade cladding.
+      const pierSpacing = 6.5 / Math.max(0.5, Math.min(4, mats.colonnadeDensity ?? 1));
+      add(verticals(railStations(rail, closed, pierSpacing), 1.4, new THREE.BoxGeometry(1.5, 1, 1.5), facadeMat, 'EnvelopeSquarePiers'));
+      return;
+    }
     if (mats.colonnadeShape === 'palm') {
       add(palmColumns(railStations(rail, closed, 7.5 / Math.max(0.5, Math.min(4, mats.colonnadeDensity ?? 1))), structureMat));
       return;

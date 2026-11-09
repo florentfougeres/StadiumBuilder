@@ -62,6 +62,8 @@ const OBJECT_TYPE_LABELS: Record<PlacedObjectType, string> = {
   monumental_gate: 'Porte monumentale',
   lighthouse: 'Phare',
   galleon: 'Galion',
+  tower: 'Tour',
+  footbridge: 'Passerelle',
   floodlight: 'Pylône d’Éclairage',
   dugout: 'Bancs de Touche',
   locker_room: 'Vestiaires & Médias',
@@ -84,6 +86,10 @@ const OBJECT_DEFAULT_SPAWN: Record<PlacedObjectType, [number, number, number]> =
   lighthouse: [-150, 0, -40],
   // Behind the north end stand, above the seats like a ship moored there.
   galleon: [0, 0, -120],
+  // Off a corner of the forecourt, like a marathon tower.
+  tower: [-150, 0, 90],
+  // Beyond the west end, reaching toward the bowl over the old bank.
+  footbridge: [-170, 0, 0],
   floodlight: [68, 0, -48],
   dugout: [0, 0, 37.5],
   locker_room: [-52, 0, 88],
@@ -126,6 +132,8 @@ export interface StadiumStoreState {
   setShape: (shape: StadiumShape) => void;
   setSunkenDepth: (depth: number) => void;
   setCornerRoundness: (roundness: number) => void;
+  /** Breach through a continuous bowl's ring and petal gaps in its upper tiers (`undefined` removes). */
+  setRingCuts: (patch: Pick<StadiumDocument, 'ringBreach' | 'upperRingGaps'>) => void;
   setCornerFill: (fill: boolean) => void;
   setCornerMode: (corner: CornerId, mode: CornerMode) => void;
   setAllCorners: (mode: CornerMode) => void;
@@ -636,6 +644,11 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     setCornerRoundness: (roundness) =>
       commitChange((d) => {
         d.cornerRoundness = Math.max(0, Math.min(1, roundness));
+      }),
+    setRingCuts: (patch) =>
+      commitChange((d) => {
+        if ('ringBreach' in patch) d.ringBreach = patch.ringBreach;
+        if ('upperRingGaps' in patch) d.upperRingGaps = patch.upperRingGaps;
       }),
     setSunkenDepth: (depth) =>
       commitChange((d) => {

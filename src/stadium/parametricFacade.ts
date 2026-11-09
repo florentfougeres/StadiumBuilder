@@ -171,7 +171,9 @@ function colouredInstances(
 
 /**
  * `pixel_mosaic`: a grid of flat panels, each one a colour of the palette drawn at random, a few
- * left out and the others set at slightly different depths, so the facade reads as pixels.
+ * left out and the others set at slightly different depths, so the facade reads as pixels. With
+ * `gradient`, the colour follows the height instead: the first of the palette at the foot, the
+ * last at the top, bands blurred into each other (a sunset facade).
  */
 function buildPixelMosaic(
   sampleAtArc: (s: number) => FacadeRailSample,
@@ -180,6 +182,7 @@ function buildPixelMosaic(
   density: number,
   depth: number,
   palette: string[],
+  gradient: boolean,
   group: THREE.Group
 ): THREE.Group | null {
   const colours = (palette.length ? palette : DEFAULT_FACADE_PALETTE).map((c) => new THREE.Color(c));
@@ -202,13 +205,20 @@ function buildPixelMosaic(
       dummy.scale.set(stepS * 0.94, panelH * 0.92, 0.08);
       dummy.updateMatrix();
       matrices.push(dummy.matrix.clone());
-      colors.push(colours[Math.floor(hash01(c * 1.7, r * 2.3) * colours.length) % colours.length]);
+      colors.push(colours[mosaicColourIndex(c, r, rows, colours.length, gradient)]);
     }
   }
   const mesh = colouredInstances('FacadePixelMosaic', new THREE.BoxGeometry(1, 1, 1), matrices, colors);
   if (!mesh) return null;
   group.add(mesh);
   return group;
+}
+
+/** Palette index of panel (`c`, `r`) of a column of `rows` panels: random, or graded by height. */
+export function mosaicColourIndex(c: number, r: number, rows: number, n: number, gradient: boolean): number {
+  if (!gradient) return Math.floor(hash01(c * 1.7, r * 2.3) * n) % n;
+  const t = (r + 0.5) / Math.max(1, rows) + (hash01(c * 1.7, r * 2.3) - 0.5) * (0.9 / n);
+  return Math.max(0, Math.min(n - 1, Math.floor(t * n)));
 }
 
 /**
@@ -514,6 +524,8 @@ export function buildParametricFacadeOnRail(params: {
   accentMat: THREE.Material;
   /** Colours of `pixel_mosaic` panels and `woven_basket` strips (see `resolveFacadePalette`). */
   palette?: string[];
+  /** `pixel_mosaic`: palette colours graded from the foot (first) to the top (last), not random. */
+  paletteGradient?: boolean;
   name?: string;
 }): THREE.Group | null {
   const {
@@ -526,6 +538,7 @@ export function buildParametricFacadeOnRail(params: {
     primaryMat,
     accentMat,
     palette = DEFAULT_FACADE_PALETTE,
+    paletteGradient = false,
     name = 'ParametricFacadeRelief',
   } = params;
 
@@ -552,7 +565,7 @@ export function buildParametricFacadeOnRail(params: {
   const qOrient = new THREE.Quaternion();
 
   if (pattern === 'pixel_mosaic') {
-    return buildPixelMosaic(sampleAtArc, totalLen, closed, safeDensity, safeDepth, palette, group);
+    return buildPixelMosaic(sampleAtArc, totalLen, closed, safeDensity, safeDepth, palette, paletteGradient, group);
   }
 
   if (pattern === 'mashrabiya') {
