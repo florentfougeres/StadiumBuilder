@@ -30,8 +30,13 @@ import { ProjectsMenu } from './ProjectsPanel';
 import { useTheme } from './theme';
 import { Button, IconButton, Segmented } from './ui';
 
-const CAMERA_MODES: { id: CameraPresetMode; label: string; icon: React.ReactNode }[] = [
-  { id: 'drone', label: 'Drone', icon: <Video className="w-3.5 h-3.5" /> },
+const CAMERA_MODES: { id: CameraPresetMode; label: string; icon: React.ReactNode; hint?: string }[] = [
+  {
+    id: 'drone',
+    label: 'Drone',
+    icon: <Video className="w-3.5 h-3.5" />,
+    hint: 'Drone · molette : zoom vers le curseur · double-clic : centrer sur un point · flèches : se déplacer (Maj plus vite, Page haut/bas : altitude)',
+  },
   { id: 'touchline', label: 'Bord terrain', icon: <Camera className="w-3.5 h-3.5" /> },
   { id: 'spectator', label: 'Vue siège', icon: <Eye className="w-3.5 h-3.5" /> },
   { id: 'cross_section', label: 'Coupe', icon: <Layers className="w-3.5 h-3.5" /> },
@@ -252,7 +257,7 @@ export const Toolbar: React.FC = () => {
           onChange={setCameraMode}
           options={CAMERA_MODES.map((m) => ({
             id: m.id,
-            title: m.label,
+            title: m.hint ?? m.label,
             label: (
               <>
                 {m.icon}

@@ -345,6 +345,16 @@ export const Viewport: React.FC = () => {
     orbit.minDistance = 8;
     orbit.maxDistance = 540;
     orbit.target.set(0, 6, 0);
+    // The wheel closes in on what the cursor points at, not always on the pitch centre.
+    orbit.zoomToCursor = true;
+
+    // Keyboard flight: arrows glide across the ground, Page Up / Down change altitude, Shift speeds up.
+    const flightKeys = new Set<string>();
+    const FLIGHT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown'];
+    let flightFast = false;
+    const _flightForward = new THREE.Vector3();
+    const _flightRight = new THREE.Vector3();
+    const _flightStep = new THREE.Vector3();
 
     const transform = new TransformControls(camera, renderer.domElement);
     transform.setSize(0.85);
@@ -444,6 +454,32 @@ export const Viewport: React.FC = () => {
           } else {
             needsMoreFrames = true;
           }
+        }
+
+        if (flightKeys.size > 0) {
+          camera.getWorldDirection(_flightForward);
+          _flightForward.y = 0;
+          if (_flightForward.lengthSq() < 1e-6) _flightForward.set(0, 0, -1);
+          _flightForward.normalize();
+          _flightRight.crossVectors(_flightForward, camera.up).normalize();
+          // Speed follows the view distance: slow near a stand, fast from high up.
+          const speed = Math.max(8, camera.position.distanceTo(orbit.target) * 0.7) * (flightFast ? 3 : 1) * dt;
+          _flightStep.set(0, 0, 0);
+          if (flightKeys.has('ArrowUp')) _flightStep.add(_flightForward);
+          if (flightKeys.has('ArrowDown')) _flightStep.sub(_flightForward);
+          if (flightKeys.has('ArrowRight')) _flightStep.add(_flightRight);
+          if (flightKeys.has('ArrowLeft')) _flightStep.sub(_flightRight);
+          if (flightKeys.has('PageUp')) _flightStep.y += 1;
+          if (flightKeys.has('PageDown')) _flightStep.y -= 1;
+          if (_flightStep.lengthSq() > 0) {
+            _flightStep.normalize().multiplyScalar(speed);
+            // Never below the ground: the target stays at or above grass level.
+            if (orbit.target.y + _flightStep.y < 0) _flightStep.y = -orbit.target.y;
+            camera.position.add(_flightStep);
+            orbit.target.add(_flightStep);
+            transitionActive = false;
+          }
+          needsMoreFrames = true;
         }
 
         if (orbit.enableDamping && orbit.update()) {
@@ -659,9 +695,48 @@ export const Viewport: React.FC = () => {
       callbacksRef.current.selectObject(pickPlaced(e));
     };
 
+    /** Double-click: the clicked point becomes the centre of rotation, and the view closes in on it. */
+    const _focusOffset = new THREE.Vector3();
+    const onDoubleClick = (e: MouseEvent) => {
+      const currentEngine = engineRef.current;
+      if (!currentEngine?.stadiumRoot || useStadiumStore.getState().placingType) return;
+      setRay(e as PointerEvent);
+      const targets: THREE.Object3D[] = [currentEngine.stadiumRoot, ...currentEngine.placedMap.values()];
+      const hit = raycaster.intersectObjects(targets, true).find((h) => h.object.visible);
+      const point = hit?.point ?? groundAt(e as PointerEvent, 0);
+      if (!point) return;
+      _focusOffset.copy(camera.position).sub(orbit.target);
+      const distance = Math.min(_focusOffset.length(), 70);
+      _focusOffset.setLength(distance);
+      startCameraTransition(point.clone().add(_focusOffset), point.clone(), camera.fov);
+    };
+
+    const isTyping = (el: Element | null) =>
+      el instanceof HTMLElement &&
+      (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+    const onFlightKeyDown = (e: KeyboardEvent) => {
+      if (!FLIGHT_KEYS.includes(e.key) || e.metaKey || e.ctrlKey || e.altKey || isTyping(document.activeElement)) return;
+      e.preventDefault();
+      flightFast = e.shiftKey;
+      if (!flightKeys.has(e.key)) {
+        flightKeys.add(e.key);
+        markMotion();
+        requestRender();
+      }
+    };
+    const onFlightKeyUp = (e: KeyboardEvent) => {
+      flightFast = e.shiftKey;
+      flightKeys.delete(e.key);
+    };
+    const stopFlight = () => flightKeys.clear();
+
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
     renderer.domElement.addEventListener('pointermove', onPointerMove);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
+    renderer.domElement.addEventListener('dblclick', onDoubleClick);
+    window.addEventListener('keydown', onFlightKeyDown);
+    window.addEventListener('keyup', onFlightKeyUp);
+    window.addEventListener('blur', stopFlight);
 
     // WebGL Context Loss Safety
     const handleContextLost = (e: Event) => {
@@ -772,6 +847,10 @@ export const Viewport: React.FC = () => {
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
+      renderer.domElement.removeEventListener('dblclick', onDoubleClick);
+      window.removeEventListener('keydown', onFlightKeyDown);
+      window.removeEventListener('keyup', onFlightKeyUp);
+      window.removeEventListener('blur', stopFlight);
       renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);
       renderer.domElement.removeEventListener('webglcontextrestored', handleContextRestored);
       transform.detach();
