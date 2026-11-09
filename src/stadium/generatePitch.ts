@@ -2,10 +2,10 @@ import * as THREE from 'three';
 import { RoundedBowlGeometry, sampleRoundedBowlRing } from './bowlRing';
 import { buildMovablePitch } from './generateMovablePitch';
 import { createGridironFurniture, drawGridironMarkings } from './gridiron';
+import { buildFootballGoal, buildPitchAdvertising } from './pitchside';
 import {
   applyTurfCloseUpDetail,
   createGrassBladeNormalMap,
-  createLedSponsorRibbonTexture,
   createTrackPbrMaterial,
   getTurfPresetColors,
 } from './materials';
@@ -330,137 +330,6 @@ function createPitchTextures(
   roughnessMap.needsUpdate = true;
 
   return { colorMap, roughnessMap };
-}
-
-/**
- * Generates woven hexagonal FIFA goal-net texture (clean white cords on transparent alpha).
- */
-function createGoalNetTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d')!;
-  ctx.clearRect(0, 0, 256, 256);
-
-  ctx.strokeStyle = 'rgba(248, 250, 252, 0.85)';
-  ctx.lineWidth = 2.1;
-  const step = 16;
-  for (let i = -256; i <= 512; i += step) {
-    ctx.beginPath();
-    ctx.moveTo(i, 0);
-    ctx.lineTo(i + 256, 256);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(i, 256);
-    ctx.lineTo(i + 256, 0);
-    ctx.stroke();
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(6, 2.5);
-  tex.needsUpdate = true;
-  return tex;
-}
-
-/**
- * Sloped broadcast FIFA Goal with hexagonal woven net, curved top D-brackets & rear ground frame.
- */
-function createGoalGroup(sideSign: -1 | 1, netTex: THREE.CanvasTexture): THREE.Group {
-  const goal = new THREE.Group();
-  const goalWidth = 7.32;
-  const goalHeight = 2.44;
-  const topDepth = 0.95;
-  const bottomDepth = 2.15;
-
-  const postMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 0.18,
-    metalness: 0.35,
-  });
-
-  const postGeo = new THREE.CylinderGeometry(0.06, 0.06, goalHeight, 12);
-  const leftPost = new THREE.Mesh(postGeo, postMat);
-  leftPost.position.set(0, goalHeight / 2, -goalWidth / 2);
-  leftPost.castShadow = true;
-
-  const rightPost = new THREE.Mesh(postGeo, postMat);
-  rightPost.position.set(0, goalHeight / 2, goalWidth / 2);
-  rightPost.castShadow = true;
-
-  const crossbarGeo = new THREE.CylinderGeometry(0.06, 0.06, goalWidth + 0.12, 12);
-  crossbarGeo.rotateX(Math.PI / 2);
-  const crossbar = new THREE.Mesh(crossbarGeo, postMat);
-  crossbar.position.set(0, goalHeight, 0);
-  crossbar.castShadow = true;
-
-  const rearSupportMat = new THREE.MeshStandardMaterial({
-    color: 0x94a3b8,
-    roughness: 0.35,
-    metalness: 0.75,
-  });
-  const backFrameGeo = new THREE.CylinderGeometry(0.04, 0.04, goalWidth + 0.2, 8);
-  backFrameGeo.rotateX(Math.PI / 2);
-  const backBottomBar = new THREE.Mesh(backFrameGeo, rearSupportMat);
-  backBottomBar.position.set(sideSign * bottomDepth, 0.05, 0);
-
-  for (const zSign of [-1, 1] as const) {
-    const topArm = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.03, 0.03, topDepth, 8),
-      rearSupportMat
-    );
-    topArm.rotation.z = Math.PI / 2;
-    topArm.position.set(
-      (sideSign * topDepth) / 2,
-      goalHeight - 0.04,
-      zSign * (goalWidth / 2)
-    );
-    goal.add(topArm);
-  }
-
-  const netMat = new THREE.MeshStandardMaterial({
-    map: netTex,
-    roughness: 0.85,
-    metalness: 0.05,
-    transparent: true,
-    opacity: 0.72,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  });
-
-  const roofNet = new THREE.Mesh(new THREE.PlaneGeometry(topDepth, goalWidth), netMat);
-  roofNet.rotation.x = -Math.PI / 2;
-  roofNet.position.set((sideSign * topDepth) / 2, goalHeight, 0);
-
-  const slopeLen = Math.hypot(bottomDepth - topDepth, goalHeight);
-  const slopeAngle = Math.atan2(bottomDepth - topDepth, goalHeight);
-  const backNet = new THREE.Mesh(new THREE.PlaneGeometry(goalWidth, slopeLen), netMat);
-  backNet.rotation.y = sideSign === 1 ? Math.PI / 2 : -Math.PI / 2;
-  backNet.rotation.x = sideSign === 1 ? -slopeAngle : slopeAngle;
-  backNet.position.set(
-    sideSign * ((topDepth + bottomDepth) / 2),
-    goalHeight / 2,
-    0
-  );
-
-  for (const zSign of [-1, 1] as const) {
-    const sShape = new THREE.Shape();
-    sShape.moveTo(0, 0);
-    sShape.lineTo(sideSign * bottomDepth, 0);
-    sShape.lineTo(sideSign * topDepth, goalHeight);
-    sShape.lineTo(0, goalHeight);
-    sShape.closePath();
-    const sGeo = new THREE.ShapeGeometry(sShape);
-    const sideNet = new THREE.Mesh(sGeo, netMat);
-    sideNet.position.set(0, 0, zSign * (goalWidth / 2));
-    goal.add(sideNet);
-  }
-
-  goal.add(leftPost, rightPost, crossbar, backBottomBar, roofNet, backNet);
-  return goal;
 }
 
 /** Closed floor contour in world (x, z), such as the front edge of the stands. */
@@ -1182,13 +1051,11 @@ export function generatePitchGroup(
   } else if (pitch.sport === 'american_football') {
     root.add(createGridironFurniture(pitch));
   } else {
-    // Two FIFA Goals with woven hexagonal nets
-    const netTex = createGoalNetTexture();
-    const westGoal = createGoalGroup(-1, netTex);
-    westGoal.position.set(-pitch.length / 2, 0.03, 0);
-    const eastGoal = createGoalGroup(1, netTex);
-    eastGoal.position.set(pitch.length / 2, 0.03, 0);
-    root.add(westGoal, eastGoal);
+    for (const sx of [-1, 1] as const) {
+      const goal = buildFootballGoal(sx);
+      goal.position.set((sx * pitch.length) / 2, 0.03, 0);
+      root.add(goal);
+    }
   }
 
   // Corner Flags with 3D Pennants
@@ -1218,118 +1085,25 @@ export function generatePitchGroup(
     root.add(pole, pennant);
   }
 
-  // Multi-brand 360° Broadcast LED Perimeter Advertising Boards + Curved Corner Arcs + TV Camera Decks
+  // LED boards round the pitch (a gap for the dugouts), carpets beside the goals, TV cameras.
   if (pitch.adBoards) {
-    const boardHeight = 0.96;
-    const boardThickness = 0.22;
-    const sponsorTex = createLedSponsorRibbonTexture();
-    const ledMat = new THREE.MeshStandardMaterial({
-      map: sponsorTex,
-      emissive: new THREE.Color(0xffffff),
-      emissiveMap: sponsorTex,
-      emissiveIntensity: lighting === 'day' ? 0.38 : 1.05,
-      roughness: 0.2,
-      metalness: 0.35,
-      side: THREE.DoubleSide,
-    });
-    const backBoardMat = new THREE.MeshStandardMaterial({
-      color: 0x0f172a,
-      roughness: 0.65,
-      metalness: 0.58,
-    });
-
-    const adCornerR = track ? 8.5 : 2.6;
-    const adSideOffset = track
+    const sideOffset = track
       ? Math.min(2.4, Math.max(1.15, track.innerRadius - pitch.width * 0.5 - 0.55))
       : 2.8;
-    const northZ = -(pitch.width / 2 + adSideOffset);
-    const southZ = pitch.width / 2 + adSideOffset;
-    const endX = pitch.length / 2 + (track ? 2.6 : 3.2);
-
-    const straightNorthLen = Math.max(20, (endX - adCornerR) * 2);
-    const northBoard = new THREE.Mesh(
-      new THREE.BoxGeometry(straightNorthLen, boardHeight, boardThickness),
-      [backBoardMat, backBoardMat, backBoardMat, backBoardMat, ledMat, backBoardMat]
+    root.add(
+      buildPitchAdvertising(
+        {
+          hx: pitch.length / 2 + (track ? 2.6 : 3.2),
+          hz: pitch.width / 2 + sideOffset,
+          cornerR: track ? 8.5 : 2.6,
+          goalX: pitch.length / 2,
+          dugoutGap: 23,
+          carpets: !track,
+        },
+        lighting,
+        pitch.adBoardTheme
+      )
     );
-    northBoard.position.set(0, boardHeight / 2 + 0.03, northZ);
-    northBoard.castShadow = true;
-    root.add(northBoard);
-
-    // South touchline flanking LED boards (leaving central technical/dugout zone `[-23..+23]` clear)
-    const southWingLen = Math.max(8, endX - adCornerR - 23);
-    for (const xSign of [-1, 1] as const) {
-      const southWing = new THREE.Mesh(
-        new THREE.BoxGeometry(southWingLen, boardHeight * 0.86, boardThickness),
-        [backBoardMat, backBoardMat, backBoardMat, backBoardMat, backBoardMat, ledMat]
-      );
-      southWing.position.set(
-        xSign * (23 + southWingLen * 0.5),
-        (boardHeight * 0.86) / 2 + 0.03,
-        southZ
-      );
-      southWing.castShadow = true;
-      root.add(southWing);
-    }
-
-    // East & West goal-line LED boards flanking the goals + photographer turf benches behind
-    const sideSegmentLen = Math.max(6, Math.abs(northZ) - adCornerR - 5.2);
-    for (const xSign of [-1, 1] as const) {
-      const xPos = xSign * endX;
-      for (const zSign of [-1, 1] as const) {
-        const segMats =
-          xSign === 1
-            ? [backBoardMat, ledMat, backBoardMat, backBoardMat, backBoardMat, backBoardMat]
-            : [ledMat, backBoardMat, backBoardMat, backBoardMat, backBoardMat, backBoardMat];
-        const seg = new THREE.Mesh(
-          new THREE.BoxGeometry(boardThickness, boardHeight, sideSegmentLen),
-          segMats
-        );
-        seg.position.set(
-          xPos,
-          boardHeight / 2 + 0.03,
-          zSign * (5.2 + sideSegmentLen / 2)
-        );
-        seg.castShadow = true;
-        root.add(seg);
-
-        // Photographer / broadcast camera position behind goal-line LED boards
-        const camRig = new THREE.Mesh(
-          new THREE.BoxGeometry(0.55, 0.72, 2.4),
-          backBoardMat
-        );
-        camRig.position.set(
-          xPos + xSign * 1.15,
-          0.39,
-          zSign * (7.5 + sideSegmentLen * 0.35)
-        );
-        camRig.castShadow = true;
-        root.add(camRig);
-      }
-    }
-
-    // 4 Curved Quarter-Circle Corner LED Sponsor Arcs seamlessly connecting North/South & East/West!
-    const arcConfigs: { cx: number; cz: number; thetaStart: number }[] = [
-      { cx: endX - adCornerR, cz: southZ - adCornerR, thetaStart: 0 },
-      { cx: -(endX - adCornerR), cz: southZ - adCornerR, thetaStart: Math.PI * 1.5 },
-      { cx: -(endX - adCornerR), cz: northZ + adCornerR, thetaStart: Math.PI },
-      { cx: endX - adCornerR, cz: northZ + adCornerR, thetaStart: Math.PI * 0.5 },
-    ];
-    for (const ac of arcConfigs) {
-      const cylArc = new THREE.CylinderGeometry(
-        adCornerR,
-        adCornerR,
-        boardHeight,
-        12,
-        1,
-        true,
-        ac.thetaStart,
-        Math.PI * 0.5
-      );
-      const arcMesh = new THREE.Mesh(cylArc, ledMat);
-      arcMesh.position.set(ac.cx, boardHeight / 2 + 0.03, ac.cz);
-      arcMesh.castShadow = true;
-      root.add(arcMesh);
-    }
   }
 
   if (outfield) root.add(buildCricketFurniture(outfield));

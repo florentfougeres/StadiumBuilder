@@ -15,6 +15,8 @@ import { generateConcourseGroup } from './generateConcourse';
 import { generateEnvelopeSkirt } from './generateEnvelopeSkirt';
 import {
   buildLedLoopBand,
+  SCREEN_TOP,
+  SCREEN_W,
   generateFloodlightRigGroup,
   generatePlacedObjectGroup,
 } from './generateLights';
@@ -31,10 +33,6 @@ import {
   StadiumDocument,
   StandSide,
 } from './schema';
-
-/** Screen casing size in metres at scale 1, matching the `screen` builder in generateLights. */
-const SCREEN_W = 13.5;
-const SCREEN_TOP = 7.65;
 
 /** Yaw that turns a screen's display (+z) toward the pitch from each stand. */
 const FACE_PITCH: Record<StandSide, number> = {
@@ -126,7 +124,10 @@ function applyScreenMount(doc: StadiumDocument, obj: PlacedObject, group: THREE.
   if (mount === 'roof' && hasRoof) {
     roofY = roofEdgeY;
     radial = inner + Math.max(2, depth * (1 - coverage)) + 1.5;
-    y = roofY - SCREEN_TOP * scale - 1.2;
+    // Clear of the roof's edge truss, but never down into the rows raked up beneath it.
+    const rowsBelow = crest * Math.min(1, Math.max(0, (radial - inner) / Math.max(1, depth)));
+    const hang = roofY - SCREEN_TOP * scale;
+    y = Math.min(hang - 1.2, Math.max(rowsBelow + 2.5, hang - 3.2));
   } else {
     radial = inner + depth - 1.2;
     y = crest;

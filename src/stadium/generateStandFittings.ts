@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /**
  * Pitch-side fittings of a stand: the teams' dugouts set into the front wall, the press seats
@@ -86,88 +87,171 @@ function merge(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
   return out;
 }
 
+/** Canopy profile of a dugout (z toward the pitch negative, y up): off the wall, over the seats. */
+const DUGOUT_CANOPY = new THREE.QuadraticBezierCurve3(
+  new THREE.Vector3(0, 2.2, 0),
+  new THREE.Vector3(0, 2.45, -2.0),
+  new THREE.Vector3(0, 1.45, -DUGOUT_D - 0.1)
+);
+
 /**
- * One dugout in front of the wall: a floor, white side cheeks, a glazed roof sloping down to the
- * pitch, two stepped rows of padded seats facing the pitch.
+ * A padded bucket seat facing `-z`: pedestal, shell with side bolsters and headrest, leather
+ * cushions; returned as shell and cushion geometries to instance.
  */
-export function buildDugout(isNight: boolean): THREE.Group {
+function dugoutSeatGeometries(): { shell: THREE.BufferGeometry; cushion: THREE.BufferGeometry } {
+  const recline = (g: THREE.BufferGeometry) => g.rotateX(0.2).translate(0, 0.5, 0.2);
+  const shell = merge([
+    box(0.07, 0.36, 0.07, 0, 0.18, 0),
+    box(0.52, 0.1, 0.5, 0, 0.41, 0),
+    recline(box(0.54, 0.86, 0.08, 0, 0.43, 0.04)),
+    recline(box(0.07, 0.62, 0.2, -0.24, 0.31, -0.05)),
+    recline(box(0.07, 0.62, 0.2, 0.24, 0.31, -0.05)),
+    box(0.06, 0.18, 0.44, -0.25, 0.53, -0.02),
+    box(0.06, 0.18, 0.44, 0.25, 0.53, -0.02),
+  ]);
+  const cushion = merge([
+    box(0.42, 0.08, 0.44, 0, 0.5, -0.02),
+    recline(box(0.38, 0.5, 0.05, 0, 0.26, -0.02)),
+    recline(box(0.3, 0.17, 0.06, 0, 0.71, -0.02)),
+  ]);
+  return { shell, cushion };
+}
+
+/**
+ * One dugout in front of the wall: a rubber floor with a step, a curved clear polycarbonate
+ * canopy on aluminium ribs with glass cheeks, and two rows of padded bucket seats facing the
+ * pitch; a light strip under the canopy's lip at night.
+ */
+export function buildDugout(isNight: boolean, seatColor: THREE.ColorRepresentation = 0x1f2329): THREE.Group {
   const group = new THREE.Group();
   group.name = 'Dugout';
-  const frameMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.4, metalness: 0.3 });
-  const floorMat = new THREE.MeshStandardMaterial({ color: 0x4b5563, roughness: 0.9 });
-  const roofMat = new THREE.MeshPhysicalMaterial({
-    color: 0xdbeafe,
-    roughness: 0.05,
+  const alu = new THREE.MeshStandardMaterial({ color: 0xd9dde2, roughness: 0.3, metalness: 0.85 });
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x2b2e33, roughness: 0.92 });
+  const backMat = new THREE.MeshStandardMaterial({ color: 0x31363d, roughness: 0.7 });
+  const clear = new THREE.MeshPhysicalMaterial({
+    color: 0xe2e8f0,
+    roughness: 0.03,
     metalness: 0,
     transparent: true,
-    opacity: 0.38,
+    opacity: 0.1,
     side: THREE.DoubleSide,
+    depthWrite: false,
   });
-  const seatMat = new THREE.MeshStandardMaterial({
-    color: 0x1e293b,
-    roughness: 0.55,
-    emissive: new THREE.Color(isNight ? 0x0b1220 : 0x000000),
+  const shellMat = new THREE.MeshStandardMaterial({ color: seatColor, roughness: 0.38, metalness: 0.1 });
+  const leather = new THREE.MeshPhysicalMaterial({
+    color: 0x0d0e10,
+    roughness: 0.42,
+    sheen: 0.4,
+    sheenColor: new THREE.Color(0x3a3d44),
   });
 
-  const zMid = -DUGOUT_D / 2;
-  const floor = new THREE.Mesh(merge([box(DUGOUT_W, 0.1, DUGOUT_D, 0, 0.05, zMid), box(DUGOUT_W, 0.32, 1.0, 0, 0.16, -0.5)]), floorMat);
+  // Floor, back step and a padded back panel against the wall.
+  const floor = new THREE.Mesh(
+    merge([box(DUGOUT_W, 0.08, DUGOUT_D, 0, 0.04, -DUGOUT_D / 2), box(DUGOUT_W, 0.26, 1.05, 0, 0.13, -0.525)]),
+    floorMat
+  );
   floor.receiveShadow = true;
   group.add(floor);
+  group.add(new THREE.Mesh(box(DUGOUT_W, 2.15, 0.06, 0, 1.12, -0.03), backMat));
 
-  const backH = 2.0;
-  const frontH = 1.75;
-  // Side cheeks follow the roof slope; a low kerb along the front.
-  const cheekShape = new THREE.Shape();
-  cheekShape.moveTo(0, 0);
-  cheekShape.lineTo(0, backH);
-  cheekShape.lineTo(-DUGOUT_D, frontH);
-  cheekShape.lineTo(-DUGOUT_D, 0);
-  cheekShape.closePath();
-  const cheekGeo = new THREE.ExtrudeGeometry(cheekShape, { depth: 0.12, bevelEnabled: false });
-  // Shape x -> world z, shape y -> world y, extrusion -> world x.
-  cheekGeo.rotateY(Math.PI / 2);
-  for (const sx of [-1, 1]) {
-    const cheek = new THREE.Mesh(cheekGeo, sx < 0 ? frameMat : frameMat);
-    cheek.position.x = sx * (DUGOUT_W / 2) - (sx > 0 ? 0.12 : 0);
-    cheek.castShadow = true;
-    group.add(cheek);
+  // Curved clear canopy across the width, aluminium ribs over it, a lip beam at the front.
+  const profile = DUGOUT_CANOPY.getPoints(18);
+  const canopyPos: number[] = [];
+  const canopyIdx: number[] = [];
+  profile.forEach((p) => {
+    canopyPos.push(-DUGOUT_W / 2, p.y, p.z, DUGOUT_W / 2, p.y, p.z);
+  });
+  for (let i = 0; i < profile.length - 1; i++) {
+    const a = i * 2;
+    canopyIdx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
   }
-  group.add(new THREE.Mesh(box(DUGOUT_W, 0.18, 0.12, 0, 0.09, -DUGOUT_D + 0.06), frameMat));
+  const canopyGeo = new THREE.BufferGeometry();
+  canopyGeo.setAttribute('position', new THREE.Float32BufferAttribute(canopyPos, 3));
+  canopyGeo.setIndex(canopyIdx);
+  canopyGeo.computeVertexNormals();
+  group.add(new THREE.Mesh(canopyGeo, clear));
 
-  // Glazed roof with a white front beam.
-  const slope = Math.atan2(backH - frontH, DUGOUT_D);
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(DUGOUT_W, 0.04, Math.hypot(DUGOUT_D, backH - frontH) + 0.2), roofMat);
-  roof.position.set(0, (backH + frontH) / 2 + 0.02, zMid - 0.1);
-  roof.rotation.x = -slope;
-  group.add(roof);
-  const beam = new THREE.Mesh(new THREE.BoxGeometry(DUGOUT_W + 0.1, 0.14, 0.14), frameMat);
-  beam.position.set(0, frontH, -DUGOUT_D - 0.05);
-  beam.castShadow = true;
-  group.add(beam);
+  // Glass cheeks: the canopy profile down to the floor, sloping back to the step.
+  const cheek = new THREE.Shape();
+  cheek.moveTo(0, 0);
+  for (const p of profile) cheek.lineTo(-p.z, p.y);
+  cheek.lineTo(DUGOUT_D - 0.15, 0.6);
+  cheek.lineTo(DUGOUT_D - 0.45, 0);
+  cheek.closePath();
+  const cheekGeo = new THREE.ShapeGeometry(cheek, 6);
+  // Shape x is the distance toward the pitch: x -> -z.
+  cheekGeo.rotateY(Math.PI / 2);
+  const ribs: THREE.BufferGeometry[] = [];
+  const cheekEdge = cheek.getPoints(24).map((p) => new THREE.Vector3(0, p.y, -p.x));
+  for (const sx of [-1, 1]) {
+    group.add(new THREE.Mesh(cheekGeo.clone().translate((sx * DUGOUT_W) / 2, 0, 0), clear));
+    ribs.push(
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3(cheekEdge.map((p) => p.clone().setX((sx * DUGOUT_W) / 2)), true),
+        64,
+        0.035,
+        6,
+        true
+      )
+    );
+  }
+  cheekGeo.dispose();
+  for (const fx of [-1 / 6, 1 / 6]) {
+    ribs.push(
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3(profile.map((p) => new THREE.Vector3(fx * DUGOUT_W, p.y + 0.03, p.z))),
+        24,
+        0.03,
+        6,
+        false
+      )
+    );
+  }
+  const lipZ = profile[profile.length - 1];
+  const lip = new THREE.CylinderGeometry(0.05, 0.05, DUGOUT_W, 10).rotateZ(Math.PI / 2).translate(0, lipZ.y, lipZ.z);
+  ribs.push(lip);
+  const frame = new THREE.Mesh(mergeGeometries(ribs.map((g) => g.toNonIndexed()))!, alu);
+  ribs.forEach((g) => g.dispose());
+  frame.castShadow = true;
+  group.add(frame);
 
-  // Two rows of bucket seats facing the pitch, the back row on the step.
-  const seatW = 0.56;
-  const perRow = Math.floor((DUGOUT_W - 0.6) / seatW);
-  const seatParts: THREE.BufferGeometry[] = [];
-  for (const [z, y] of [[-0.45, 0.32], [-1.45, 0.1]] as const) {
+  if (isNight) {
+    const strip = new THREE.Mesh(
+      box(DUGOUT_W - 0.3, 0.03, 0.05, 0, lipZ.y - 0.07, lipZ.z + 0.12),
+      new THREE.MeshBasicMaterial({ color: 0xf8fafc })
+    );
+    group.add(strip);
+  }
+
+  // Two rows of padded bucket seats facing the pitch, the back row on the step.
+  const seatW = 0.6;
+  const perRow = Math.floor((DUGOUT_W - 0.5) / seatW);
+  const places: THREE.Matrix4[] = [];
+  for (const [z, y] of [[-0.62, 0.26], [-1.7, 0.08]] as const) {
     for (let i = 0; i < perRow; i++) {
       const x = -((perRow - 1) * seatW) / 2 + i * seatW;
-      seatParts.push(box(0.48, 0.1, 0.46, x, y + 0.42, z));
-      seatParts.push(box(0.48, 0.62, 0.08, x, y + 0.75, z + 0.24));
+      places.push(new THREE.Matrix4().makeTranslation(x, y, z));
     }
   }
-  const seats = new THREE.Mesh(merge(seatParts), seatMat);
-  seats.castShadow = true;
-  group.add(seats);
+  const { shell, cushion } = dugoutSeatGeometries();
+  for (const [geo, mat] of [[shell, shellMat], [cushion, leather]] as const) {
+    const inst = new THREE.InstancedMesh(geo, mat, places.length);
+    places.forEach((m, i) => inst.setMatrixAt(i, m));
+    inst.instanceMatrix.needsUpdate = true;
+    inst.computeBoundingSphere();
+    inst.castShadow = true;
+    inst.receiveShadow = true;
+    group.add(inst);
+  }
   return group;
 }
 
 /** The two dugouts of a stand, either side of `x = 0`, in front of its wall. */
-export function buildDugoutPair(isNight: boolean): THREE.Group {
+export function buildDugoutPair(isNight: boolean, seatColor?: THREE.ColorRepresentation): THREE.Group {
   const group = new THREE.Group();
   group.name = 'Dugouts';
   for (const sx of [-1, 1]) {
-    const d = buildDugout(isNight);
+    const d = buildDugout(isNight, seatColor);
     d.position.x = sx * DUGOUT_OFFSET;
     group.add(d);
   }

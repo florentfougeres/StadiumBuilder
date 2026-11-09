@@ -8,6 +8,8 @@ import {
 import { stadiumCornerLayout } from './capacity';
 import { CORNER_ACCESS_WIDTH } from './generateCornerAccess';
 import { computeStadiumRingBounds } from './roofs/ringBounds';
+import { createScreenFeedTexture } from './screenContent';
+import { buildDugoutPair } from './generateStandFittings';
 import {
   createConcreteBowlMaterial,
   createFacadePbrMaterial,
@@ -30,49 +32,10 @@ import {
   StadiumMaterialsConfig,
 } from './schema';
 
-/**
- * Generates a live scoreboard canvas texture for giant stadium LED screens.
- */
-function createScoreboardTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d')!;
-
-  const grad = ctx.createLinearGradient(0, 0, 512, 256);
-  grad.addColorStop(0, '#091122');
-  grad.addColorStop(1, '#0f2942');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 512, 256);
-
-  ctx.fillStyle = '#10b981';
-  ctx.fillRect(0, 0, 512, 34);
-  ctx.fillStyle = '#022c22';
-  ctx.font = 'bold 18px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('MATCHDAY LIVE  ·  74:18', 256, 24);
-
-  ctx.fillStyle = '#f8fafc';
-  ctx.font = 'bold 78px monospace';
-  ctx.fillText('2  -  1', 256, 138);
-
-  ctx.font = 'bold 28px sans-serif';
-  ctx.fillStyle = '#38bdf8';
-  ctx.fillText('DOM', 92, 130);
-  ctx.fillStyle = '#f43f5e';
-  ctx.fillText('EXT', 420, 130);
-
-  ctx.fillStyle = 'rgba(255,255,255,0.12)';
-  ctx.fillRect(24, 188, 464, 44);
-  ctx.fillStyle = '#cbd5e1';
-  ctx.font = '18px monospace';
-  ctx.fillText('DIRECT HD  ·  CHRONO OFFICIEL', 256, 216);
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
-}
+/** Giant screen (`screen` object) at scale 1: 16:9 display, casing top 0.45 m above it. */
+export const SCREEN_W = 13.5;
+export const SCREEN_H = (SCREEN_W * 9) / 16;
+export const SCREEN_TOP = SCREEN_H + 0.45;
 
 /**
  * Composite procedural PBR 3D model generator for placeable stadium assets.
@@ -82,7 +45,7 @@ function createScoreboardTexture(): THREE.CanvasTexture {
  * y = 0, its scoreboard texture repeated along the loop; double-sided so it reads from both faces.
  */
 export function buildLedLoopBand(points: { x: number; z: number }[], height: number, lighting: string): THREE.Mesh {
-  const tex = createScoreboardTexture();
+  const tex = createScreenFeedTexture();
   tex.wrapS = THREE.RepeatWrapping;
   let len = 0;
   for (let i = 0; i < points.length; i++) {
@@ -90,7 +53,8 @@ export function buildLedLoopBand(points: { x: number; z: number }[], height: num
     const b = points[(i + 1) % points.length];
     len += Math.hypot(b.x - a.x, b.z - a.z);
   }
-  tex.repeat.set(Math.max(1, Math.round(len / (height * 4))), 1);
+  // One 16:9 picture after another round the loop.
+  tex.repeat.set(Math.max(1, Math.round(len / ((height * 16) / 9))), 1);
   const n = points.length;
   const pos = new Float32Array((n + 1) * 6);
   const uvs = new Float32Array((n + 1) * 4);
@@ -222,9 +186,9 @@ export function generatePlacedObjectGroup(
     }
 
     case 'screen': {
-      const scoreTex = createScoreboardTexture();
-      const w = 13.5;
-      const h = 7.2;
+      const scoreTex = createScreenFeedTexture();
+      const w = SCREEN_W;
+      const h = SCREEN_H;
 
       const casing = new THREE.Mesh(new THREE.BoxGeometry(w + 0.9, h + 0.9, 0.9), darkSteel);
       casing.position.y = h / 2;
@@ -254,12 +218,14 @@ export function generatePlacedObjectGroup(
       // Along the roof edge, the scene builder draws it: it knows the roof.
       if (obj.haloShape === 'roof_edge') break;
       // Giant 360° dual-sided elliptical Halo LED scoreboard ring suspended over the center circle!
-      const scoreTex = createScoreboardTexture();
+      const scoreTex = createScreenFeedTexture();
       scoreTex.wrapS = THREE.RepeatWrapping;
-      scoreTex.repeat.set(4, 1);
 
       // Cables up to the roof are added by the scene builder, which knows the roof geometry.
       const { rx, rz, bandHeight: ringH } = resolveHaloSize(obj);
+      // As many 16:9 pictures as fit round the ellipse (Ramanujan's perimeter).
+      const perimeter = Math.PI * (3 * (rx + rz) - Math.sqrt((3 * rx + rz) * (rx + 3 * rz)));
+      scoreTex.repeat.set(Math.max(2, Math.round(perimeter / ((ringH * 16) / 9))), 1);
       const segs = 64;
 
       const buildEllipticalBand = (
@@ -372,52 +338,15 @@ export function generatePlacedObjectGroup(
     }
 
     case 'dugout': {
-      const seatMat = new THREE.MeshPhysicalMaterial({
-        color: obj.color ? new THREE.Color(obj.color) : 0x1e293b,
-        roughness: 0.42,
-        metalness: 0.08,
-        clearcoat: 0.3,
-      });
-      const canopyMat = new THREE.MeshPhysicalMaterial({
-        color: 0xe2e8f0,
-        roughness: 0.08,
-        metalness: 0.1,
-        clearcoat: 0.95,
-        transparent: true,
-        opacity: 0.46,
-        depthWrite: false,
-      });
-
-      for (const sideOffset of [-9.5, 9.5]) {
-        const shelter = new THREE.Group();
-        shelter.position.x = sideOffset;
-
-        const floor = new THREE.Mesh(new THREE.BoxGeometry(9.2, 0.18, 2.2), darkSteel);
-        floor.position.y = 0.09;
-        shelter.add(floor);
-
-        const shell = new THREE.Mesh(
-          new THREE.CylinderGeometry(1.25, 1.25, 9.0, 14, 1, true, 0, Math.PI * 0.85),
-          canopyMat
-        );
-        shell.rotation.z = Math.PI / 2;
-        shell.rotation.x = -Math.PI * 0.15;
-        shell.position.set(0, 1.15, -0.2);
-        shelter.add(shell);
-
-        const bucketGeo = new THREE.BoxGeometry(0.58, 0.72, 0.55);
-        for (let i = 0; i < 11; i++) {
-          const seat = new THREE.Mesh(bucketGeo, seatMat);
-          seat.position.set(-3.8 + i * 0.76, 0.54, -0.35);
-          seat.castShadow = true;
-          shelter.add(seat);
-        }
-        group.add(shelter);
-      }
-
-      const officialDesk = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.9, 1.0), darkSteel);
-      officialDesk.position.set(0, 0.45, 0);
-      group.add(officialDesk);
+      // A placed object faces its local +z; the dugouts are built facing -z.
+      const pair = buildDugoutPair(lighting !== 'day', obj.color ?? undefined);
+      pair.rotation.y = Math.PI;
+      group.add(pair);
+      // Fourth official's table between the two dugouts.
+      const desk = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.9, 0.9), darkSteel);
+      desk.position.set(0, 0.45, 1.6);
+      desk.castShadow = true;
+      group.add(desk);
       break;
     }
 

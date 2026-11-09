@@ -2,65 +2,7 @@ import * as THREE from 'three';
 import { sampleCornerQuadrantPoint } from '../bowlRing';
 import { createStrut } from '../meshKit';
 import { cornerEnds, type CornerStructureContext } from './kit';
-
-let cornerScoreboardTexCache: THREE.CanvasTexture | null = null;
-
-function getCornerScoreboardTexture(): THREE.CanvasTexture {
-  if (cornerScoreboardTexCache) return cornerScoreboardTexCache;
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 288;
-  const ctx = canvas.getContext('2d')!;
-
-  const bg = ctx.createLinearGradient(0, 0, 0, 288);
-  bg.addColorStop(0, '#071326');
-  bg.addColorStop(0.55, '#0b223e');
-  bg.addColorStop(1, '#061527');
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, 512, 288);
-
-  // Subtle LED pixel matrix scanlines
-  ctx.fillStyle = 'rgba(56, 189, 248, 0.08)';
-  for (let y = 0; y < 288; y += 6) {
-    ctx.fillRect(0, y, 512, 2);
-  }
-
-  // Top telemetry header bar
-  ctx.fillStyle = '#0ea5e9';
-  ctx.fillRect(24, 20, 464, 34);
-  ctx.fillStyle = '#04101f';
-  ctx.font = 'bold 20px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('DIRECT  •  67:42', 256, 44);
-
-  // Home / Away neutral badges & score
-  ctx.fillStyle = '#1e3a5f';
-  ctx.fillRect(36, 76, 132, 132);
-  ctx.fillRect(344, 76, 132, 132);
-
-  ctx.fillStyle = '#38bdf8';
-  ctx.fillRect(58, 98, 88, 88);
-  ctx.fillStyle = '#f59e0b';
-  ctx.fillRect(366, 98, 88, 88);
-
-  ctx.fillStyle = '#f8fafc';
-  ctx.font = 'bold 84px monospace';
-  ctx.fillText('2 : 1', 256, 168);
-
-  // Bottom match metrics strip
-  ctx.fillStyle = '#0f2942';
-  ctx.fillRect(24, 228, 464, 38);
-  ctx.fillStyle = '#34d399';
-  ctx.fillRect(36, 242, 248, 10);
-  ctx.fillStyle = '#f59e0b';
-  ctx.fillRect(290, 242, 186, 10);
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  cornerScoreboardTexCache = tex;
-  return tex;
-}
+import { createScreenFeedTexture } from '../screenContent';
 
 /**
  * Giant LED scoreboard on a four-legged steel lattice gantry (`screen`), set on the corner's
@@ -220,7 +162,7 @@ export function buildCornerScreen(ctx: CornerStructureContext): THREE.Group {
   sunHood.castShadow = true;
   assembly.add(sunHood);
 
-  const scoreTex = getCornerScoreboardTexture();
+  const scoreTex = createScreenFeedTexture();
   const screenMat = new THREE.MeshStandardMaterial({
     map: scoreTex,
     emissive: new THREE.Color(0xffffff),

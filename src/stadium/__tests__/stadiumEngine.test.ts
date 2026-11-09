@@ -79,6 +79,8 @@ function ensureCanvasMock() {
           closePath: () => {},
           moveTo: () => {},
           lineTo: () => {},
+          bezierCurveTo: () => {},
+          quadraticCurveTo: () => {},
           arc: () => {},
           ellipse: () => {},
           fill: () => {},
