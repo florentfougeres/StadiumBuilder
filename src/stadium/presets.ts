@@ -1916,11 +1916,110 @@ function placeShopsBehindStands(doc: StadiumDocument): void {
   }
 }
 
+const ALL_SIDES: StandSide[] = ['north', 'south', 'east', 'west'];
+
+/**
+ * Options layered over each template so the gallery shows the editor's range — crowd, tifos,
+ * seat patterns, facade palettes, site, water, lighting moods — not just shapes and roofs. Kept
+ * apart from the templates because derived presets start from those and must not inherit them.
+ */
+const PRESET_HIGHLIGHTS: Record<string, (doc: StadiumDocument) => void> = {
+  bowl_bowstring_60k: (doc) => {
+    doc.stands.south = { ...doc.stands.south, vipLoges: true, vipStoreys: 2, pressBox: true, fasciaStyle: 'led_ribbon' };
+    doc.pitch.adBoardTheme = 'champions_league';
+    withMaterials(doc, { crowd: true, crowdAttendance: 0.85 });
+    doc.site = { setting: 'esplanade', entrances: true };
+  },
+  cauldron_cable_42k: (doc) => {
+    doc.stands.south = { ...doc.stands.south, tifo: true, banners: true, seatStyle: { pattern: 'lettering', text: 'ALLEZ' } };
+    doc.frontFence = 'mesh';
+    doc.frontFenceHeight = 2.5;
+    doc.lighting = 'night';
+    withMaterials(doc, { crowd: true, crowdAttendance: 0.97 });
+    doc.site = { setting: 'urban' };
+  },
+  olympic_masts_80k: (doc) => {
+    doc.pitch.adBoardTheme = 'world_cup';
+    doc.roof.skylightMode = 'pitch_ring';
+    doc.roof.skylightRatio = 0.2;
+    doc.site = { setting: 'park', water: 'moat' };
+    doc.lighting = 'dusk';
+  },
+  octagonal_cantilever_26k: (doc) => {
+    for (const side of ALL_SIDES) doc.stands[side] = { ...doc.stands[side], crestProfile: 'saddle_dip' };
+    withMaterials(doc, { facadeStripeSpacing: 6, facadeBaseGlow: true });
+    doc.lighting = 'dusk';
+  },
+  urban_cathedral_84k: (doc) => {
+    withMaterials(doc, { plinthHeight: 6 });
+    doc.site = { setting: 'urban', podiumHeight: 8 };
+  },
+  mega_retractable_88k: (doc) => {
+    doc.pitch.adBoardTheme = 'mls_usa';
+    doc.roof.forecourtCanopy = { side: 'south', depth: 24 };
+    doc.site = { setting: 'parking' };
+  },
+  luminous_shell_75k: (doc) => {
+    doc.lighting = 'night';
+    withMaterials(doc, { envelopeProfile: 'bulging', facadeGlowHex: '#e11d48', crowd: true });
+  },
+  asymmetric_modular_30k: (doc) => {
+    withMaterials(doc, {
+      facadePattern: 'pixel_mosaic',
+      facadePalette: ['#0f172a', '#dc2626', '#f8fafc'],
+      facadePaletteGradient: true,
+    });
+    doc.pitch.adBoardTheme = 'ligue_1';
+    doc.cornerAccess = { ne: true };
+  },
+  traditional_four_stands_42k: (doc) => {
+    doc.stands.south = { ...doc.stands.south, pressGantry: true, tunnelStyle: 'corner_twin' };
+    doc.pitch.adBoardTheme = 'premier_league';
+    doc.pitch.grassPattern = 'checker';
+    doc.site = { setting: 'urban', perimeterFence: true };
+  },
+  horseshoe_amphitheatre_38k: (doc) => {
+    doc.stands.west = { ...doc.stands.west, embankment: true };
+    doc.site = { setting: 'park', mound: 6 };
+  },
+  english_kop_wall_48k: (doc) => {
+    doc.stands.west = { ...doc.stands.west, tifo: true, banners: true };
+    withMaterials(doc, { crowd: true, crowdAttendance: 0.95 });
+    doc.lighting = 'night';
+  },
+  sunken_colonnade_44k: (doc) => {
+    withMaterials(doc, { colonnadeShape: 'doric' });
+    doc.site = { setting: 'esplanade', water: 'waterfront' };
+  },
+  tensile_exposed_56k: (doc) => {
+    doc.roof.skylightMode = 'radial_slots';
+    doc.roof.skylightRatio = 0.25;
+    doc.pitch.adBoardTheme = 'europa_league';
+    doc.seatTierStyles = [{ pattern: 'solid' }, { pattern: 'mosaic', share: 0.25 }, { pattern: 'gradient' }];
+    doc.stands.north = { ...doc.stands.north, rakeProfile: 'progressive', crossAisle: true };
+  },
+  climatic_dome_72k: (doc) => {
+    doc.roof.skylightMode = 'grid_oculi';
+    doc.roof.skylightRatio = 0.15;
+    doc.lighting = 'night';
+  },
+  circular_folded_52k: (doc) => {
+    doc.seatStyle = { pattern: 'stripes' };
+    withMaterials(doc, { envelopeProfile: 'saucer' });
+  },
+  open_ends_vault_46k: (doc) => {
+    doc.roof.enclosureGlazed = true;
+    doc.pitch.hasMoat = true;
+    doc.pitch.adBoardTheme = 'equipe_de_france';
+  },
+};
+
 export function createPresetDocument(presetId: string): StadiumDocument {
   const normalizedId = LEGACY_TEMPLATE_ALIASES[presetId] ?? presetId;
   const found =
     STADIUM_PRESETS.find((p) => p.id === normalizedId) ?? STADIUM_PRESETS[0];
   const doc = found.createDocument();
+  PRESET_HIGHLIGHTS[found.id]?.(doc);
   placeShopsBehindStands(doc);
   if (doc.roof.overConcourse === undefined) {
     doc.roof.overConcourse = true;
@@ -1956,7 +2055,7 @@ export function createBlankDocument(): StadiumDocument {
   doc.roof = { ...doc.roof, style: 'none', coveredSides: undefined };
   doc.concourse = { width: 0, heightRatio: 0.5 };
   doc.floodlightRig = 'none';
-  doc.pitch = { ...doc.pitch, adBoards: false, hasTrack: false, movablePitch: 'none' };
+  doc.pitch = { ...doc.pitch, adBoards: false, adBoardTheme: undefined, grassPattern: 'stripes', hasTrack: false, movablePitch: 'none' };
   doc.site = { setting: 'none', entrances: false, perimeterFence: false };
   doc.objects = [];
   return doc;
