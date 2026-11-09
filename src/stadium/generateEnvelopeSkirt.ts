@@ -3,12 +3,12 @@ import { getBowlArcRange, sampleRoundedBowlRing } from './bowlRing';
 import { computeStadiumRingBounds } from './generateRoof';
 import { createFacadePbrMaterial, createStructurePbrMaterial, resolveStadiumMaterials } from './materials';
 import {
-  BOWL_CURTAIN_WALL_OFFSET,
+  FACADE_WALL_OFFSET,
   buildEnvelopeDressing,
   buildParametricFacadeOnRail,
   FacadeRailSample,
 } from './parametricFacade';
-import { isContinuousBowlShape, StadiumDocument, StandSide } from './schema';
+import { StadiumDocument, StandSide } from './schema';
 
 const SIDES: StandSide[] = ['north', 'south', 'east', 'west'];
 
@@ -48,8 +48,7 @@ export function generateEnvelopeSkirt(
   group.name = 'EnvelopeSkirt';
   const mats = resolveStadiumMaterials(doc);
   if (doc.roof.enclosed === false || hasNoRoof(doc)) return group;
-  // Bowls carry a curtain wall set slightly proud of the stand backs (see generateStand).
-  const facadeOffset = isContinuousBowlShape(doc.shape) ? BOWL_CURTAIN_WALL_OFFSET : 0.3;
+  const facadeOffset = FACADE_WALL_OFFSET;
 
   const {
     ring,

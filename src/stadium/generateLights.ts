@@ -1,11 +1,10 @@
 import * as THREE from 'three';
 import {
-  computeRectangularCornerLayout,
   CornerQuadrantId,
   sampleCornerQuadrantPoint,
   sampleRoundedBowlRing,
 } from './bowlRing';
-import { getTrackRadialOffset } from './capacity';
+import { getTrackRadialOffset, stadiumCornerLayout } from './capacity';
 import { CORNER_ACCESS_WIDTH } from './generateCornerAccess';
 import { computeStadiumRingBounds } from './generateRoof';
 import {
@@ -17,7 +16,6 @@ import {
   resolveStadiumMaterials,
 } from './materials';
 import {
-  clampPitchToTrack,
   DEFAULT_STADIUM_MATERIALS,
   getEffectiveSunkenDepth,
   isContinuousBowlShape,
@@ -878,20 +876,8 @@ export function generateFloodlightRigGroup(
     doc.roof.style !== 'none' ? Math.max(4.5, doc.roof.heightOffset) + 15.5 : 14.0;
   const mastHeight = Math.max(40, bounds.maxStandH + roofExtra - groundY);
 
-  const safePitch = clampPitchToTrack(doc.pitch);
   const cornerModes = resolveAllCorners(doc);
-  const trackOffsets = getTrackRadialOffset(doc);
-  const rectLayout = computeRectangularCornerLayout({
-    shape: doc.shape,
-    cornerFill: doc.cornerFill,
-    cornerModes,
-    crossSectionClip,
-    pitchLength: safePitch.length,
-    pitchWidth: safePitch.width,
-    endTrackOffset: trackOffsets.endOffset,
-    sideTrackOffset: trackOffsets.sideOffset,
-    stands: doc.stands,
-  });
+  const rectLayout = stadiumCornerLayout(doc, crossSectionClip);
 
   const cornerList: { id: CornerQuadrantId; tBowl: number }[] = [
     { id: 'se', tBowl: 0.125 },

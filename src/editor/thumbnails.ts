@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { roofDefinition } from '../stadium/roofCatalog';
+import { shapeDefinition } from '../stadium/shapeCatalog';
 import { ENVELOPE_STYLE_CATALOG, resolveStadiumMaterials } from '../stadium/materials';
 import { buildStadiumSceneGraph, disposeObject3D } from '../stadium/buildStadiumScene';
 import { BLANK_PRESET_ID, createBlankDocument, createPresetDocument, STADIUM_PRESETS } from '../stadium/presets';
@@ -85,15 +87,6 @@ export async function renderThumbnails(
   }
 }
 
-/** Roofs built stand by stand only: a bowl would show the default canopy instead. */
-const STAND_ONLY_ROOFS = new Set<RoofStyle>([
-  'historic_gable',
-  'sawtooth',
-  'butterfly',
-  'barrel_vault',
-  'hypar_shells',
-  'tree_columns',
-]);
 
 /** Neutral stadium the option thumbnails vary one choice of, with the surroundings cleared. */
 function optionBase(shape: StadiumShape = 'modern_bowl'): StadiumDocument {
@@ -104,26 +97,10 @@ function optionBase(shape: StadiumShape = 'modern_bowl'): StadiumDocument {
   return doc;
 }
 
-/**
- * Stands each shape preview borrows from the preset that shows it best. One shared stadium made
- * shapes that differ mostly in rake, height or corners (bowl, cauldron, compact, rounded
- * rectangle; four stands vs modular) render alike.
- */
-const SHAPE_STANDS_PRESET: Partial<Record<StadiumShape, string>> = {
-  compact_urban: 'urban_cathedral_84k',
-  steep_cauldron: 'cauldron_cable_42k',
-  english_rectangular: 'asymmetric_modular_30k',
-  four_stands: 'traditional_four_stands_42k',
-  horseshoe: 'horseshoe_amphitheatre_38k',
-  olympic_oval: 'olympic_masts_80k',
-};
-
-const LOW_VIEW_SHAPES = new Set<StadiumShape>(['tilted_bowl', 'saddle_bowl', 'steep_cauldron']);
-
 /** A shape on its characteristic stands, uncovered, so the footprint and section are what read. */
 function shapeThumbnailDoc(shape: StadiumShape): StadiumDocument {
   const doc = optionBase();
-  const source = createPresetDocument(SHAPE_STANDS_PRESET[shape] ?? 'concrete_portals_48k');
+  const source = createPresetDocument(shapeDefinition(shape).thumbnailStands ?? 'concrete_portals_48k');
   doc.stands = structuredClone(source.stands);
   applyShape(doc, shape);
   doc.roof = { ...doc.roof, style: 'none' };
@@ -152,10 +129,10 @@ export function thumbnailJobs(
       id: shape,
       doc: shapeThumbnailDoc(shape),
       // A lower view shows the rim's slope (tilted, saddle) or the steep rake (cauldron).
-      elevation: LOW_VIEW_SHAPES.has(shape) ? 0.6 : 1.05,
+      elevation: shapeDefinition(shape).thumbnailLowView ? 0.6 : 1.05,
     })),
     roofs: roofs.map((style) => {
-      const doc = optionBase(STAND_ONLY_ROOFS.has(style) ? 'four_stands' : 'modern_bowl');
+      const doc = optionBase(roofDefinition(style).placement === 'stand' ? 'four_stands' : 'modern_bowl');
       doc.roof = { ...doc.roof, style };
       return { id: style, doc };
     }),

@@ -43,6 +43,7 @@ import {
 import {
   computeTelescopicProjection,
   getTrackRadialOffset,
+  stadiumCornerLayout,
 } from './capacity';
 import {
   applyTurfCloseUpDetail,
@@ -55,17 +56,12 @@ import {
   resolveStadiumMaterials,
 } from './materials';
 import {
-  BOWL_CURTAIN_WALL_OFFSET,
-  buildCurtainWallArticulation,
-  buildEnvelopeDressing,
   buildParametricFacadeOnRail,
-  buildStraightParametricFacade,
   FacadeRailSample,
 } from './parametricFacade';
 import {
   clampPitchToTrack,
   CornerId,
-  CornerMode,
   EnvelopeStyle,
   getEffectiveSunkenDepth,
   isContinuousBowlShape,
@@ -79,6 +75,7 @@ import {
   resolveCrowdAttendance,
 } from './schema';
 import { createStandSeatPainter, SeatPainter } from './seatPattern';
+import { buildStandEnvelope, facadeGradeY, isHollowStand, splitRail } from './standEnvelope';
 import {
   computeStandSection,
   StandSection,
@@ -672,41 +669,6 @@ function createVomitoryPortalUnit(
   return createCarvedVomitoryTunnel(2.2, 2.2, 1.65, portalMat, darkMouthMat, railMat, false);
 }
 
-/** Envelopes drawn as a dressing on a rail in front of the plain facade wall. */
-function isRailDressedEnvelope(envelope: EnvelopeStyle): boolean {
-  return (
-    envelope === 'stacked_arcades' ||
-    envelope === 'media_mesh' ||
-    envelope === 'helical_ramps' ||
-    envelope === 'horizontal_strata'
-  );
-}
-
-/** The rail dressing of an envelope drawn on a rail (see `isRailDressedEnvelope`). */
-function railEnvelopeDressing(
-  doc: StadiumDocument,
-  envelope: EnvelopeStyle,
-  samples: FacadeRailSample[],
-  closed: boolean,
-  facadeMat: THREE.Material,
-  structureMat: THREE.Material
-): THREE.Group | null {
-  return buildEnvelopeDressing({
-    samples,
-    closed,
-    style: envelope,
-    frameMat: structureMat,
-    facadeMat,
-    ledColors: [doc.colors.seatsPrimary, doc.colors.seatsSecondary],
-    night: doc.lighting !== 'day',
-  });
-}
-
-/** Column density multiplier of a `colonnade_forest` envelope. */
-function colonnadeDensity(mats: { colonnadeDensity?: number }): number {
-  return Math.max(0.5, Math.min(4, mats.colonnadeDensity ?? 1));
-}
-
 function buildStraightStandMesh(
   stand: StandConfig,
   spanLength: number,
@@ -722,15 +684,7 @@ function buildStraightStandMesh(
 ): THREE.Group {
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
-  const envelope: EnvelopeStyle = mats.envelopeStyle ?? 'enveloping_skin';
-  const ownStructure = stand.structureMaterialOverride;
-  const isHollow =
-    doc.roof.style !== 'enveloping_shell' &&
-    (envelope === 'exposed_structure' ||
-      envelope === 'colonnade_forest' ||
-      (ownStructure !== undefined &&
-        ownStructure !== 'inherit' &&
-        ownStructure !== 'reinforced_concrete'));
+  const isHollow = isHollowStand(doc, stand.structureMaterialOverride);
   const isNight = doc.lighting !== 'day';
 
   const {
@@ -746,7 +700,7 @@ function buildStraightStandMesh(
   } = buildStandProfilePoints(stand, isHollow);
 
   const sunkenDepth = getEffectiveSunkenDepth(doc);
-  const gradeY = Math.min(sunkenDepth, Math.max(0, topHeight * 0.68));
+  const gradeY = facadeGradeY(sunkenDepth, topHeight);
   const totalRowsCount = Math.max(1, rowPositions.length);
 
   // Resolve vomitory openings & longitudinal slice breaks so openings are physically carved into the stand mesh
@@ -1321,257 +1275,27 @@ function buildStraightStandMesh(
     }
   }
 
-  // Exterior Envelope Architecture (above `gradeY`)
-  const wallH = Math.max(2.0, topHeight - gradeY);
-  const extOverhang = capNegLocalX && capPosLocalX ? 2.4 : 0.0;
-
-  if (doc.roof.style !== 'enveloping_shell') {
-    if (envelope === 'exposed_structure') {
-      const bayCount = Math.max(6, Math.floor(spanLength / 8.5));
-      const concourseY = Math.min(topHeight - 2.5, Math.max(gradeY + 4.2, topHeight * 0.42));
-
-      if (topHeight - gradeY > 7.5) {
-        const walkway = new THREE.Mesh(
-          new THREE.BoxGeometry(spanLength - 0.4, 0.42, Math.max(3.5, totalDepth * 0.36)),
-          concreteMat
-        );
-        walkway.position.set(0, concourseY, totalDepth * 0.72);
-        walkway.castShadow = true;
-        walkway.receiveShadow = true;
-        group.add(walkway);
-
-        const rail = new THREE.Mesh(
-          new THREE.BoxGeometry(spanLength - 0.4, 1.05, 0.08),
-          structureMat
-        );
-        rail.position.set(0, concourseY + 0.65, totalDepth * 0.9);
-        group.add(rail);
-      }
-
-      for (let b = 0; b <= bayCount; b++) {
-        const bx = -spanLength / 2 + 1.2 + (b * (spanLength - 2.4)) / bayCount;
-        const innerFootZ = Math.max(3.2, totalDepth * 0.25);
-        const midZ = totalDepth * 0.58;
-        const midSoffitY = Math.max(gradeY + 1.5, topHeight * 0.48);
-
-        group.add(
-          createStrut(
-            new THREE.Vector3(bx, Math.max(0.2, gradeY * 0.4), innerFootZ),
-            new THREE.Vector3(bx, topHeight - 1.2, totalDepth - 0.4),
-            0.34,
-            0.42,
-            structureMat,
-            6
-          ),
-          createStrut(
-            new THREE.Vector3(bx, gradeY, totalDepth - 0.4),
-            new THREE.Vector3(bx, topHeight, totalDepth - 0.4),
-            0.34,
-            0.38,
-            structureMat,
-            6
-          ),
-          createStrut(
-            new THREE.Vector3(bx, gradeY, midZ),
-            new THREE.Vector3(bx, midSoffitY, midZ),
-            0.28,
-            0.32,
-            structureMat,
-            6
-          )
-        );
-
-        if (b < bayCount && b % 2 === 0 && topHeight - gradeY > 6) {
-          const nextBx =
-            -spanLength / 2 + 1.2 + ((b + 1) * (spanLength - 2.4)) / bayCount;
-          const stairFlight = createStrut(
-            new THREE.Vector3(bx, gradeY + 0.2, totalDepth + 0.8),
-            new THREE.Vector3(nextBx, concourseY, totalDepth + 0.8),
-            0.45,
-            0.45,
-            concreteMat,
-            4
-          );
-          group.add(stairFlight);
-          if (topHeight - concourseY > 4.5) {
-            group.add(
-              createStrut(
-                new THREE.Vector3(nextBx, concourseY, totalDepth + 1.5),
-                new THREE.Vector3(bx, topHeight - 1.8, totalDepth + 0.4),
-                0.42,
-                0.42,
-                concreteMat,
-                4
-              )
-            );
-          }
-        }
-      }
-    } else if (envelope === 'colonnade_forest') {
-      const innerCoreWall = new THREE.Mesh(
-        new THREE.BoxGeometry(spanLength, wallH * 0.94, 0.55),
-        facadeMat
-      );
-      innerCoreWall.position.set(0, gradeY + (wallH * 0.94) / 2, totalDepth - 1.6);
-      group.add(innerCoreWall);
-
-      const cornice = new THREE.Mesh(
-        new THREE.BoxGeometry(spanLength + extOverhang, 0.95, 7.6),
-        structureMat
-      );
-      cornice.position.set(0, topHeight - 0.35, totalDepth + 1.8);
-      cornice.castShadow = true;
-      group.add(cornice);
-
-      const colsPerRow = Math.max(12, Math.floor(spanLength / (4.2 / colonnadeDensity(mats))));
-      const rowOffsets = [0.2, 2.5, 4.8];
-      const totalCols = colsPerRow * rowOffsets.length;
-      const slenderGeo = new THREE.CylinderGeometry(0.21, 0.24, wallH, 10);
-      const forest = new THREE.InstancedMesh(slenderGeo, structureMat, totalCols);
-      forest.castShadow = true;
-
-      let idx = 0;
-      for (let r = 0; r < rowOffsets.length; r++) {
-        const zOff = totalDepth + rowOffsets[r];
-        const stagger = r % 2 === 1 ? 0.5 : 0;
-        for (let c = 0; c < colsPerRow; c++) {
-          const cx =
-            -spanLength / 2 +
-            ((c + 0.25 + stagger * 0.5) / colsPerRow) * spanLength;
-          dummy.position.set(cx, gradeY + wallH / 2, zOff);
-          dummy.rotation.set(0, 0, 0);
-          dummy.scale.set(1, 1, 1);
-          dummy.updateMatrix();
-          forest.setMatrixAt(idx++, dummy.matrix);
-        }
-      }
-      forest.instanceMatrix.needsUpdate = true;
-      forest.computeBoundingSphere();
-      group.add(forest);
-    } else if (envelope === 'louver_curtain') {
-      const coreWall = new THREE.Mesh(
-        new THREE.BoxGeometry(spanLength, wallH * 0.98, 0.6),
-        facadeMat
-      );
-      coreWall.position.set(0, gradeY + (wallH * 0.98) / 2, totalDepth - 0.2);
-      group.add(coreWall);
-
-      const bladeLevels = Math.max(5, Math.floor(wallH / 2.2));
-      const bladeGeo = new THREE.BoxGeometry(spanLength + extOverhang * 0.3, 0.32, 1.35);
-      const blades = new THREE.InstancedMesh(bladeGeo, structureMat, bladeLevels);
-      blades.castShadow = true;
-      for (let l = 0; l < bladeLevels; l++) {
-        const ly = gradeY + 2.6 + (l * Math.max(1, wallH - 3.0)) / Math.max(1, bladeLevels - 1);
-        dummy.position.set(0, ly, totalDepth + 1.15);
-        dummy.rotation.set(0.28, 0, 0);
-        dummy.scale.set(1, 1, 1);
-        dummy.updateMatrix();
-        blades.setMatrixAt(l, dummy.matrix);
-      }
-      blades.instanceMatrix.needsUpdate = true;
-      blades.computeBoundingSphere();
-      group.add(blades);
-    } else {
-      const rearFacadeWall = new THREE.Mesh(
-        new THREE.BoxGeometry(spanLength, wallH * 0.98, 0.78),
-        facadeMat
-      );
-      rearFacadeWall.position.set(0, gradeY + (wallH * 0.98) / 2, totalDepth + 0.15);
-      rearFacadeWall.castShadow = true;
-      rearFacadeWall.receiveShadow = true;
-      group.add(rearFacadeWall);
-
-      const dressing = isRailDressedEnvelope(envelope)
-        ? railEnvelopeDressing(
-            doc,
-            envelope,
-            [-1, 1].map((side) => ({
-              x: (side * (spanLength + extOverhang)) / 2,
-              z: totalDepth + 0.55,
-              nx: 0,
-              nz: 1,
-              yBottom: gradeY,
-              yTop: topHeight,
-            })),
-            false,
-            facadeMat,
-            structureMat
-          )
-        : null;
-      if (dressing) group.add(dressing);
-
-      // Pilasters, unless the arcades or LED skin already articulate the wall.
-      if (!dressing) {
-        const colCount = Math.max(6, Math.floor(spanLength / 7.5));
-        const colGeo = new THREE.BoxGeometry(0.62, wallH, 2.2);
-        const colInstanced = new THREE.InstancedMesh(colGeo, structureMat, colCount);
-        colInstanced.castShadow = true;
-
-        for (let i = 0; i < colCount; i++) {
-          const x = -spanLength / 2 + (i + 0.5) * (spanLength / colCount);
-          dummy.position.set(x, gradeY + wallH / 2, totalDepth + 0.58);
-          dummy.rotation.set(0, 0, 0);
-          dummy.scale.set(1, 1, 1);
-          dummy.updateMatrix();
-          colInstanced.setMatrixAt(i, dummy.matrix);
-        }
-        colInstanced.instanceMatrix.needsUpdate = true;
-        colInstanced.computeBoundingSphere();
-        group.add(colInstanced);
-      }
-    }
-
-    // 3D Parametric Facade Relief on straight stand exterior when concourse ring is not wrapping it
-    const facadePattern = mats.facadePattern ?? 'none';
-    if (facadePattern !== 'none' && (doc.concourse?.width ?? 0) <= 0.5) {
-      const lobbyTop = envelope !== 'exposed_structure' ? Math.min(3.4, wallH * 0.85) + 0.35 : 0;
-      const relief = buildStraightParametricFacade({
-        span: spanLength,
-        rearWallZ: totalDepth + 0.65,
-        yBottom: gradeY + lobbyTop,
-        yTop: topHeight - 0.15,
-        pattern: facadePattern,
-        density: mats.facadeDensity ?? 1.0,
-        depth: mats.facadeDepth ?? 0.85,
-        bulge: mats.facadeBulge ?? 0,
-        primaryMat: facadeMat,
-        accentMat: structureMat,
-        name: `StandParametricFacade_${stand.id}`,
-      });
-      if (relief) {
-        group.add(relief);
-      }
-    }
-  }
-
-  // Concourse Entrance Plinth & Turnstiles (`Y = gradeY .. gradeY + 3.4m`)
-  if (envelope !== 'exposed_structure') {
-    const entranceMat = new THREE.MeshPhysicalMaterial({
-      map: turnstileTex,
-      emissive: new THREE.Color(isNight ? 0xfbbf24 : 0x000000),
-      emissiveMap: turnstileTex,
-      emissiveIntensity: isNight ? 0.55 : 0,
-      roughness: 0.18,
-      metalness: 0.35,
-      clearcoat: 0.85,
-    });
-    const lobbyH = Math.min(3.4, wallH * 0.85);
-    const entranceLobby = new THREE.Mesh(
-      new THREE.BoxGeometry(spanLength * 0.98, lobbyH, 2.4),
-      entranceMat
-    );
-    entranceLobby.position.set(0, gradeY + lobbyH / 2, totalDepth + 1.05);
-    entranceLobby.castShadow = true;
-    group.add(entranceLobby);
-
-    const entranceCanopy = new THREE.Mesh(
-      new THREE.BoxGeometry(spanLength + extOverhang * 0.5, 0.45, 3.8),
-      structureMat
-    );
-    entranceCanopy.position.set(0, gradeY + lobbyH + 0.22, totalDepth + 1.45);
-    entranceCanopy.castShadow = true;
-    group.add(entranceCanopy);
-  }
+  // Exterior envelope along the back of the stand.
+  group.add(
+    buildStandEnvelope({
+      doc,
+      rail: [-1, 1].map((side) => ({
+        x: (side * spanLength) / 2,
+        z: totalDepth,
+        nx: 0,
+        nz: 1,
+        yBottom: gradeY,
+        yTop: topHeight,
+        depth: totalDepth,
+      })),
+      closed: false,
+      facadeMat,
+      structureMat,
+      concreteMat,
+      turnstileTex,
+      name: `StandEnvelope_${stand.id}`,
+    })
+  );
 
   if (stand.banners) {
     const parapetTop = stand.elevationStart + 0.58;
@@ -2428,14 +2152,10 @@ const CORNER_STANDS: Record<CornerQuadrantId, { end: StandSide; side: StandSide 
 export function resolveCornerFollow(doc: StadiumDocument): Partial<Record<CornerQuadrantId, StandSide>> {
   const join = doc.cornerJoin ?? 'blend';
   if (join === 'blend') return {};
-  const mats = resolveStadiumMaterials(doc);
-  const envelope: EnvelopeStyle = mats.envelopeStyle ?? 'enveloping_skin';
-  const isHollow =
-    doc.roof.style !== 'enveloping_shell' &&
-    (envelope === 'exposed_structure' || envelope === 'colonnade_forest');
   const sections = new Map<StandSide, StandProfile>();
   const section = (side: StandSide) => {
-    if (!sections.has(side)) sections.set(side, buildStandProfilePoints(doc.stands[side], isHollow));
+    const stand = doc.stands[side];
+    if (!sections.has(side)) sections.set(side, buildStandProfilePoints(stand, isHollowStand(doc, stand.structureMaterialOverride)));
     return sections.get(side)!;
   };
   const follow: Partial<Record<CornerQuadrantId, StandSide>> = {};
@@ -2492,8 +2212,7 @@ function buildCornerVirageQuadrant(
   const mats = resolveStadiumMaterials(doc);
   const envelope: EnvelopeStyle = mats.envelopeStyle ?? 'enveloping_skin';
   const isHollow =
-    doc.roof.style !== 'enveloping_shell' &&
-    (envelope === 'exposed_structure' || envelope === 'colonnade_forest');
+    isHollowStand(doc, standA.structureMaterialOverride) || isHollowStand(doc, standB.structureMaterialOverride);
 
   const profA = buildStandProfilePoints(standA, isHollow);
   const profB = buildStandProfilePoints(standB, isHollow);
@@ -2604,7 +2323,7 @@ function buildCornerVirageQuadrant(
         outerD: mix(profA.totalDepth, profB.totalDepth),
         topH,
         elev: mix(standA.elevationStart, standB.elevationStart),
-        gradeY: Math.min(sunkenDepth, Math.max(0, topH * 0.68)),
+        gradeY: facadeGradeY(sunkenDepth, topH),
       });
     }
   }
@@ -2765,7 +2484,7 @@ function buildCornerVirageQuadrant(
       pts.push([outerWallD, 0]);
     }
 
-    const gradeY = Math.min(sunkenDepth, Math.max(0, crestY * 0.68));
+    const gradeY = facadeGradeY(sunkenDepth, crestY);
     profilePtsPerSlice.push(pts);
     rowSamplesPerSlice.push(sliceRows);
     balconiesPerSlice.push(sliceBals);
@@ -3187,330 +2906,67 @@ function buildCornerVirageQuadrant(
     }
   }
 
-  // 8. Exterior Corner Envelope Architecture (`exposed_structure`, `colonnade_forest`, `louver_curtain`, `enveloping_skin`)
-  if (doc.roof.style !== 'enveloping_shell') {
-    const doubleFacadeMat = facadeMat.clone();
-    doubleFacadeMat.side = THREE.DoubleSide;
+  // 8. Exterior envelope around the corner.
+  group.add(
+    buildStandEnvelope({
+      doc,
+      rail: crestPerSlice.map((cr, s) => {
+        const pt = sampleCornerQuadrantPoint(corner, s / segs, cr.outerD);
+        return { x: pt.x, z: pt.z, nx: pt.nx, nz: pt.nz, yBottom: cr.gradeY, yTop: cr.topH, depth: cr.outerD };
+      }),
+      closed: false,
+      facadeMat,
+      structureMat,
+      concreteMat,
+      turnstileTex,
+      name: `CornerEnvelope_${corner.id.toUpperCase()}`,
+    })
+  );
 
-    const buildSweptCornerWall = (
-      offsetFromOuter: number,
-      bottomYFn: (s: number) => number,
-      topYFn: (s: number) => number,
-      mat: THREE.Material,
-      uTile: number = 3.0
-    ): THREE.Mesh => {
-      const pos = new Float32Array((segs + 1) * 2 * 3);
-      const uvs = new Float32Array((segs + 1) * 2 * 2);
-      const idx: number[] = [];
-      for (let s = 0; s <= segs; s++) {
-        const cr = crestPerSlice[s];
-        const pt = sampleCornerQuadrantPoint(corner, s / segs, cr.outerD + offsetFromOuter);
-        const y0 = bottomYFn(s);
-        const y1 = topYFn(s);
-        const b = s * 6;
-        pos[b] = pt.x;
-        pos[b + 1] = y0;
-        pos[b + 2] = pt.z;
-        pos[b + 3] = pt.x;
-        pos[b + 4] = y1;
-        pos[b + 5] = pt.z;
-
-        const uCoord = (s / segs) * uTile;
-        uvs[s * 4] = uCoord;
-        uvs[s * 4 + 1] = 0;
-        uvs[s * 4 + 2] = uCoord;
-        uvs[s * 4 + 3] = 1;
-      }
-      for (let s = 0; s < segs; s++) {
-        const a = s * 2;
-        const b = (s + 1) * 2;
-        const c = b + 1;
-        const d = a + 1;
-        // Outward normal `(+nx, 0, +nz)` for clockwise `s`
-        idx.push(a, b, d, b, c, d);
-      }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-      g.setIndex(idx);
-      g.computeVertexNormals();
-      const m = new THREE.Mesh(g, mat);
-      m.castShadow = true;
-      m.receiveShadow = true;
-      return m;
-    };
-
-    if (envelope === 'exposed_structure') {
-      const concPts: THREE.Vector3[] = [];
-      for (let s = 0; s <= segs; s++) {
-        const cr = crestPerSlice[s];
-        const concY = Math.min(cr.topH - 2.5, Math.max(cr.gradeY + 4.2, cr.topH * 0.42));
-        const cp = sampleCornerQuadrantPoint(corner, s / segs, cr.outerD * 0.76);
-        concPts.push(new THREE.Vector3(cp.x, concY, cp.z));
-      }
-      group.add(
-        new THREE.Mesh(
-          new THREE.TubeGeometry(new THREE.CatmullRomCurve3(concPts, false), segs, 1.35, 6, false),
-          concreteMat
-        )
-      );
-
-      for (let s = 1; s < segs; s += 3) {
-        const u = s / segs;
-        const cr = crestPerSlice[s];
-        const pIn = sampleCornerQuadrantPoint(corner, u, Math.max(3.2, cr.outerD * 0.26));
-        const pMid = sampleCornerQuadrantPoint(corner, u, cr.outerD * 0.58);
-        const pOut = sampleCornerQuadrantPoint(corner, u, cr.outerD - 0.4);
-        group.add(
-          createStrut(
-            new THREE.Vector3(pIn.x, Math.max(0.2, cr.gradeY * 0.4), pIn.z),
-            new THREE.Vector3(pOut.x, cr.topH - 1.2, pOut.z),
-            0.34,
-            0.42,
-            structureMat,
-            6
-          ),
-          createStrut(
-            new THREE.Vector3(pOut.x, cr.gradeY, pOut.z),
-            new THREE.Vector3(pOut.x, cr.topH, pOut.z),
-            0.32,
-            0.38,
-            structureMat,
-            6
-          ),
-          createStrut(
-            new THREE.Vector3(pMid.x, cr.gradeY, pMid.z),
-            new THREE.Vector3(pMid.x, Math.max(cr.gradeY + 1.5, cr.topH * 0.48), pMid.z),
-            0.28,
-            0.32,
-            structureMat,
-            6
-          )
-        );
-      }
-    } else if (envelope === 'colonnade_forest') {
-      group.add(
-        buildSweptCornerWall(
-          -1.6,
-          (s) => crestPerSlice[s].gradeY,
-          (s) => crestPerSlice[s].topH - 0.8,
-          doubleFacadeMat
-        ),
-        buildSweptCornerWall(
-          3.2,
-          (s) => crestPerSlice[s].topH - 1.1,
-          (s) => crestPerSlice[s].topH - 0.15,
-          structureMat
-        )
-      );
-
-      for (const rAdd of [0.2, 2.5, 4.8]) {
-        const colN = 7;
-        for (let i = 0; i < colN; i++) {
-          const u = (i + 0.5) / colN;
-          const sIdx = Math.min(segs, Math.round(u * segs));
-          const cr = crestPerSlice[sIdx];
-          const wallH = Math.max(2.0, cr.topH - cr.gradeY);
-          const pt = sampleCornerQuadrantPoint(corner, u, cr.outerD + rAdd);
-          const col = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.21, 0.24, wallH, 10),
-            structureMat
-          );
-          col.position.set(pt.x, cr.gradeY + wallH * 0.5, pt.z);
-          col.castShadow = true;
-          group.add(col);
-        }
-      }
-    } else if (envelope === 'louver_curtain') {
-      group.add(
-        buildSweptCornerWall(
-          -0.2,
-          (s) => crestPerSlice[s].gradeY,
-          (s) => crestPerSlice[s].topH - 0.3,
-          doubleFacadeMat
-        )
-      );
-
+  // Glazed circulation rotunda on `compact_urban` corners.
+  if (doc.shape === 'compact_urban' && envelope === 'enveloping_skin' && doc.roof.style !== 'enveloping_shell') {
+    {
       const midCr = crestPerSlice[midSlice];
-      const bladeLevels = Math.max(5, Math.floor(Math.max(2, midCr.topH - midCr.gradeY) / 2.2));
-      for (let l = 0; l < bladeLevels; l++) {
-        const fracH = l / Math.max(1, bladeLevels - 1);
-        const bladePts: THREE.Vector3[] = [];
-        for (let s = 0; s <= segs; s++) {
-          const cr = crestPerSlice[s];
-          const ly = cr.gradeY + 2.6 + fracH * Math.max(1, cr.topH - cr.gradeY - 3.0);
-          const bp = sampleCornerQuadrantPoint(corner, s / segs, cr.outerD + 1.15);
-          bladePts.push(new THREE.Vector3(bp.x, ly, bp.z));
-        }
-        group.add(
-          new THREE.Mesh(
-            new THREE.TubeGeometry(
-              new THREE.CatmullRomCurve3(bladePts, false),
-              segs,
-              0.24,
-              4,
-              false
-            ),
-            structureMat
-          )
-        );
-      }
-    } else {
-      // `enveloping_skin`: Continuous corner facade wall + vertical structural fins
-      group.add(
-        buildSweptCornerWall(
-          0.15,
-          (s) => crestPerSlice[s].gradeY,
-          (s) => crestPerSlice[s].topH - 0.25,
-          doubleFacadeMat
-        )
+      const wallH = Math.max(4.0, midCr.topH - midCr.gradeY);
+      const tPt = sampleCornerQuadrantPoint(corner, 0.5, midCr.outerD + 2.1);
+      const towerR = 4.4;
+      const towerH = wallH + 1.2;
+
+      const rotundaGlassMat = new THREE.MeshPhysicalMaterial({
+        color: isNight ? 0xfef3c7 : 0x38bdf8,
+        emissive: new THREE.Color(isNight ? 0xf59e0b : 0x000000),
+        emissiveIntensity: isNight ? 0.35 : 0,
+        roughness: 0.14,
+        metalness: 0.28,
+        clearcoat: 0.92,
+        transparent: true,
+        opacity: 0.78,
+      });
+      const coreCyl = new THREE.Mesh(
+        new THREE.CylinderGeometry(towerR * 0.86, towerR * 0.9, towerH, 24),
+        rotundaGlassMat
       );
+      coreCyl.position.set(tPt.x, midCr.gradeY + towerH * 0.5, tPt.z);
+      coreCyl.castShadow = true;
+      group.add(coreCyl);
 
-      const dressing = isRailDressedEnvelope(envelope)
-        ? railEnvelopeDressing(
-            doc,
-            envelope,
-            crestPerSlice.map((cr, s) => {
-              const pt = sampleCornerQuadrantPoint(corner, s / segs, cr.outerD + 0.15);
-              return { x: pt.x, z: pt.z, nx: pt.nx, nz: pt.nz, yBottom: cr.gradeY, yTop: cr.topH - 0.25 };
-            }),
-            false,
-            facadeMat,
-            structureMat
-          )
-        : null;
-      if (dressing) group.add(dressing);
-
-      const finCount = dressing ? 0 : corner.facetedThreeBay ? 4 : 6;
-      for (let i = 0; i < finCount; i++) {
-        const u = corner.facetedThreeBay ? i / 3 : (i + 0.5) / finCount;
-        const sIdx = Math.min(segs, Math.round(u * segs));
-        const cr = crestPerSlice[sIdx];
-        const pt = sampleCornerQuadrantPoint(corner, u, cr.outerD + 0.62);
-        group.add(
-          createStrut(
-            new THREE.Vector3(pt.x, cr.gradeY, pt.z),
-            new THREE.Vector3(pt.x, cr.topH - 0.15, pt.z),
-            0.34,
-            0.38,
-            structureMat,
-            6
-          )
-        );
-      }
-
-      // Architectural Glazed Spiral-Ramp / Circulation Rotunda on `compact_urban` corners
-      if (doc.shape === 'compact_urban') {
-        const midCr = crestPerSlice[midSlice];
-        const wallH = Math.max(4.0, midCr.topH - midCr.gradeY);
-        const tPt = sampleCornerQuadrantPoint(corner, 0.5, midCr.outerD + 2.1);
-        const towerR = 4.4;
-        const towerH = wallH + 1.2;
-
-        const rotundaGlassMat = new THREE.MeshPhysicalMaterial({
-          color: isNight ? 0xfef3c7 : 0x38bdf8,
-          emissive: new THREE.Color(isNight ? 0xf59e0b : 0x000000),
-          emissiveIntensity: isNight ? 0.35 : 0,
-          roughness: 0.14,
-          metalness: 0.28,
-          clearcoat: 0.92,
-          transparent: true,
-          opacity: 0.78,
-        });
-        const coreCyl = new THREE.Mesh(
-          new THREE.CylinderGeometry(towerR * 0.86, towerR * 0.9, towerH, 24),
-          rotundaGlassMat
-        );
-        coreCyl.position.set(tPt.x, midCr.gradeY + towerH * 0.5, tPt.z);
-        coreCyl.castShadow = true;
-        group.add(coreCyl);
-
-        // Horizontal concourse slab rings & rooftop crown ring around the corner rotunda
-        for (let h = midCr.gradeY + 3.6; h <= midCr.topH + 0.8; h += 4.2) {
-          const slabRing = new THREE.Mesh(
-            new THREE.CylinderGeometry(towerR + 0.35, towerR + 0.35, 0.48, 24),
-            structureMat
-          );
-          slabRing.position.set(tPt.x, h, tPt.z);
-          slabRing.castShadow = true;
-          group.add(slabRing);
-        }
-        const crownCap = new THREE.Mesh(
-          new THREE.CylinderGeometry(towerR + 0.55, towerR + 0.45, 0.72, 24),
+      // Horizontal concourse slab rings & rooftop crown ring around the corner rotunda
+      for (let h = midCr.gradeY + 3.6; h <= midCr.topH + 0.8; h += 4.2) {
+        const slabRing = new THREE.Mesh(
+          new THREE.CylinderGeometry(towerR + 0.35, towerR + 0.35, 0.48, 24),
           structureMat
         );
-        crownCap.position.set(tPt.x, midCr.gradeY + towerH + 0.2, tPt.z);
-        crownCap.castShadow = true;
-        group.add(crownCap);
+        slabRing.position.set(tPt.x, h, tPt.z);
+        slabRing.castShadow = true;
+        group.add(slabRing);
       }
-    }
-
-    // Corner Concourse Turnstile Lobby Plinth & Canopy (`envelope !== 'exposed_structure'`)
-    if (envelope !== 'exposed_structure') {
-      const entranceMat = new THREE.MeshPhysicalMaterial({
-        map: turnstileTex,
-        emissive: new THREE.Color(isNight ? 0xfbbf24 : 0x000000),
-        emissiveMap: turnstileTex,
-        emissiveIntensity: isNight ? 0.55 : 0,
-        roughness: 0.18,
-        metalness: 0.35,
-        clearcoat: 0.85,
-        side: THREE.DoubleSide,
-      });
-      group.add(
-        buildSweptCornerWall(
-          1.2,
-          (s) => crestPerSlice[s].gradeY,
-          (s) =>
-            crestPerSlice[s].gradeY +
-            Math.min(3.4, Math.max(2.0, crestPerSlice[s].topH - crestPerSlice[s].gradeY) * 0.85),
-          entranceMat,
-          2.0
-        ),
-        buildSweptCornerWall(
-          2.2,
-          (s) =>
-            crestPerSlice[s].gradeY +
-            Math.min(3.4, Math.max(2.0, crestPerSlice[s].topH - crestPerSlice[s].gradeY) * 0.85),
-          (s) =>
-            crestPerSlice[s].gradeY +
-            Math.min(3.4, Math.max(2.0, crestPerSlice[s].topH - crestPerSlice[s].gradeY) * 0.85) +
-            0.42,
-          structureMat,
-          1.0
-        )
+      const crownCap = new THREE.Mesh(
+        new THREE.CylinderGeometry(towerR + 0.55, towerR + 0.45, 0.72, 24),
+        structureMat
       );
-    }
-
-    if (
-      (doc.concourse?.width ?? 0) <= 0.5 &&
-      mats.facadePattern &&
-      mats.facadePattern !== 'none'
-    ) {
-      const cornerFacadeRail: FacadeRailSample[] = [];
-      for (let s = 0; s <= segs; s++) {
-        const cr = crestPerSlice[s];
-        const pt = sampleCornerQuadrantPoint(corner, s / segs, cr.outerD + 0.15);
-        cornerFacadeRail.push({
-          x: pt.x,
-          z: pt.z,
-          nx: pt.nx,
-          nz: pt.nz,
-          yBottom: cr.gradeY + 0.2,
-          yTop: Math.max(cr.gradeY + 1.8, cr.topH - 0.15),
-        });
-      }
-      const patGroup = buildParametricFacadeOnRail({
-        samples: cornerFacadeRail,
-        closed: false,
-        pattern: mats.facadePattern,
-        density: mats.facadeDensity ?? 1.0,
-        depth: mats.facadeDepth ?? 0.85,
-        bulge: mats.facadeBulge ?? 0,
-        primaryMat: facadeMat,
-        accentMat: structureMat,
-      });
-      if (patGroup) group.add(patGroup);
+      crownCap.position.set(tPt.x, midCr.gradeY + towerH + 0.2, tPt.z);
+      crownCap.castShadow = true;
+      group.add(crownCap);
     }
   }
 
@@ -3595,8 +3051,9 @@ function buildCornerBuildingPavilion(
   const isNight = doc.lighting !== 'day';
   const sunkenDepth = getEffectiveSunkenDepth(doc);
 
-  const standA = doc.stands[corner.sideA];
-  const standB = doc.stands[corner.sideB];
+  // A building keeping one stand's section (`cornerJoin`) is that stand's depth and height all along.
+  const standA = doc.stands[corner.follow ?? corner.sideA];
+  const standB = doc.stands[corner.follow ?? corner.sideB];
   const profA = buildStandProfilePoints(standA, false);
   const profB = buildStandProfilePoints(standB, false);
 
@@ -3623,7 +3080,7 @@ function buildCornerBuildingPavilion(
     const hB = standB.enabled ? profB.topHeight : profA.topHeight;
     const outerD = Math.max(frontOff + 10.5, dA + (dB - dA) * w);
     const topH = Math.max(10.5, hA + (hB - hA) * w);
-    const gradeY = Math.min(sunkenDepth, Math.max(0, topH * 0.55));
+    const gradeY = facadeGradeY(sunkenDepth, topH);
     sliceSpecs.push({ outerD, topH, gradeY });
   }
 
@@ -4303,10 +3760,7 @@ function buildModernBowlSweep(
 ): THREE.Group {
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
-  const envelope: EnvelopeStyle = mats.envelopeStyle ?? 'enveloping_skin';
-  const isHollow =
-    doc.roof.style !== 'enveloping_shell' &&
-    (envelope === 'exposed_structure' || envelope === 'colonnade_forest');
+  const isHollow = isHollowStand(doc);
 
   const trackOffsets = getTrackRadialOffset(doc);
   const sunkenDepth = getEffectiveSunkenDepth(doc);
@@ -5404,463 +4858,44 @@ function buildModernBowlSweep(
     );
   }
 
-  // Exterior Envelope Architecture (`enveloping_skin`, `exposed_structure`, `colonnade_forest`, `louver_curtain`)
-  if (doc.roof.style !== 'enveloping_shell') {
-    const facadeMat = createFacadePbrMaterial(
-      mats.facade,
-      doc.lighting,
-      doc.shape === 'octagonal_arena',
-      maxAnisotropy,
-      mats.facadeGlowHex
+  // Exterior envelope around the bowl, interrupted where a corner is left open.
+  const facadeMat = createFacadePbrMaterial(
+    mats.facade,
+    doc.lighting,
+    doc.shape === 'octagonal_arena',
+    maxAnisotropy,
+    mats.facadeGlowHex
+  );
+  const structureMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
+  const bowlRail = topCrestPerSlice.map(([outerD, crestY], s) => {
+    if (isSliceInOpenCorner(s)) return null;
+    const pt = sampleRoundedBowlRing(bowlRing, tAtSlice(s), outerD);
+    return {
+      x: pt.x,
+      z: pt.z,
+      nx: pt.nx,
+      nz: pt.nz,
+      yBottom: facadeGradeY(sunkenDepth, crestY),
+      yTop: crestY,
+      depth: outerD,
+    };
+  });
+  for (const run of splitRail(bowlRail, closed)) {
+    group.add(
+      buildStandEnvelope({
+        doc,
+        rail: run.samples,
+        closed: run.closed,
+        facadeMat,
+        structureMat,
+        concreteMat,
+        turnstileTex,
+        skinAccent:
+          doc.shape === 'steep_cauldron' ? 'piers' : doc.shape === 'olympic_oval' ? 'bands' : undefined,
+        name: 'BowlEnvelope',
+      })
     );
-    const structureMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
-    const isNight = doc.lighting !== 'day';
-
-    if (envelope === 'exposed_structure') {
-      // 1. EXPOSED STRUCTURE: Radial raker A-frames, open elevated concourse walkway & diagonal exterior stair flights!
-      const frameCount = Math.max(18, Math.round(52 * arcFraction));
-      const concoursePts: THREE.Vector3[] = [];
-      for (let s = 0; s < ringCount; s++) {
-        const [outerD, crestY] = topCrestPerSlice[s];
-        const gradeY = Math.min(sunkenDepth, crestY * 0.65);
-        const concY = Math.min(crestY - 2.4, Math.max(gradeY + 4.2, crestY * 0.44));
-        const cp = sampleRoundedBowlRing(bowlRing, tAtSlice(s), outerD * 0.8);
-        concoursePts.push(new THREE.Vector3(cp.x, concY, cp.z));
-      }
-      if (concoursePts.length >= 4) {
-        const concCurve = new THREE.CatmullRomCurve3(concoursePts, closed);
-        group.add(
-          new THREE.Mesh(
-            new THREE.TubeGeometry(concCurve, activeSegments, 1.45, 6, closed),
-            concreteMat
-          )
-        );
-      }
-
-      for (let i = 0; i < frameCount; i++) {
-        const frac = closed ? i / frameCount : i / Math.max(1, frameCount - 1);
-        const nextFrac = closed
-          ? (i + 1) / frameCount
-          : Math.min(1, (i + 1) / Math.max(1, frameCount - 1));
-        const t = tStart + frac * (tEnd - tStart);
-        const tNext = tStart + nextFrac * (tEnd - tStart);
-        const sliceIdx = Math.min(ringCount - 1, Math.floor(frac * activeSegments));
-        const [outerD, crestY] = topCrestPerSlice[sliceIdx];
-        const gradeY = Math.min(sunkenDepth, crestY * 0.65);
-        const concY = Math.min(crestY - 2.4, Math.max(gradeY + 4.2, crestY * 0.44));
-
-        const pInFoot = sampleRoundedBowlRing(bowlRing, t, Math.max(3.4, outerD * 0.28));
-        const pMidCol = sampleRoundedBowlRing(bowlRing, t, outerD * 0.62);
-        const pOutCol = sampleRoundedBowlRing(bowlRing, t, outerD - 0.35);
-
-        group.add(
-          // Inclined raker beam directly under the open concrete soffit
-          createStrut(
-            new THREE.Vector3(pInFoot.x, Math.max(0.2, gradeY * 0.4), pInFoot.z),
-            new THREE.Vector3(pOutCol.x, crestY - 1.2, pOutCol.z),
-            0.34,
-            0.44,
-            structureMat,
-            6
-          ),
-          // Outer vertical structural column
-          createStrut(
-            new THREE.Vector3(pOutCol.x, gradeY, pOutCol.z),
-            new THREE.Vector3(pOutCol.x, crestY, pOutCol.z),
-            0.32,
-            0.38,
-            structureMat,
-            6
-          ),
-          // Intermediate vertical support column
-          createStrut(
-            new THREE.Vector3(pMidCol.x, gradeY, pMidCol.z),
-            new THREE.Vector3(pMidCol.x, Math.max(gradeY + 1.5, crestY * 0.48), pMidCol.z),
-            0.28,
-            0.32,
-            structureMat,
-            6
-          )
-        );
-
-        // Diagonal exterior access stairflights on every 2nd structural bay
-        if (i % 2 === 0 && crestY - gradeY > 6.5) {
-          const pStairA = sampleRoundedBowlRing(bowlRing, t, outerD + 1.1);
-          const pStairB = sampleRoundedBowlRing(bowlRing, tNext, outerD + 1.1);
-          group.add(
-            createStrut(
-              new THREE.Vector3(pStairA.x, gradeY + 0.2, pStairA.z),
-              new THREE.Vector3(pStairB.x, concY, pStairB.z),
-              0.44,
-              0.44,
-              concreteMat,
-              4
-            )
-          );
-          if (crestY - concY > 4.5) {
-            group.add(
-              createStrut(
-                new THREE.Vector3(pStairB.x, concY, pStairB.z),
-                new THREE.Vector3(pStairA.x, crestY - 1.8, pStairA.z),
-                0.4,
-                0.4,
-                concreteMat,
-                4
-              )
-            );
-          }
-        }
-      }
-    } else if (envelope === 'colonnade_forest') {
-      // 2. COLONNADE / FOREST OF SLENDER PERIPHERAL COLUMNS:
-      // Recessed concourse glass core + monumental overhanging cornice ring + 3 staggered rings of slender columns!
-      const corePos = new Float32Array(ringCount * 2 * 3);
-      const coreUvs = new Float32Array(ringCount * 2 * 2);
-      const coreIdx: number[] = [];
-      const cornicePts: THREE.Vector3[] = [];
-
-      for (let s = 0; s < ringCount; s++) {
-        const t = tAtSlice(s);
-        const [outerD, crestY] = topCrestPerSlice[s];
-        const gradeY = Math.min(sunkenDepth, crestY * 0.65);
-        const corePt = sampleRoundedBowlRing(bowlRing, t, outerD - 1.5);
-        const cornPt = sampleRoundedBowlRing(bowlRing, t, outerD + 3.2);
-        cornicePts.push(new THREE.Vector3(cornPt.x, crestY - 0.3, cornPt.z));
-
-        const idx = s * 6;
-        corePos[idx] = corePt.x;
-        corePos[idx + 1] = gradeY;
-        corePos[idx + 2] = corePt.z;
-        corePos[idx + 3] = corePt.x;
-        corePos[idx + 4] = crestY - 0.8;
-        corePos[idx + 5] = corePt.z;
-
-        const u = (s / activeSegments) * 14;
-        coreUvs[s * 4] = u;
-        coreUvs[s * 4 + 1] = 0;
-        coreUvs[s * 4 + 2] = u;
-        coreUvs[s * 4 + 3] = 1;
-      }
-
-      for (let s = 0; s < activeSegments; s++) {
-        const nxt = closed ? (s + 1) % ringCount : s + 1;
-        const a = s * 2;
-        const b = nxt * 2;
-        const c = nxt * 2 + 1;
-        const d = s * 2 + 1;
-        coreIdx.push(a, d, b, b, d, c);
-      }
-
-      const coreGeo = new THREE.BufferGeometry();
-      coreGeo.setAttribute('position', new THREE.BufferAttribute(corePos, 3));
-      coreGeo.setAttribute('uv', new THREE.BufferAttribute(coreUvs, 2));
-      coreGeo.setIndex(coreIdx);
-      coreGeo.computeVertexNormals();
-      group.add(new THREE.Mesh(coreGeo, facadeMat));
-
-      if (cornicePts.length >= 4) {
-        const cornCurve = new THREE.CatmullRomCurve3(cornicePts, closed);
-        const cornMesh = new THREE.Mesh(
-          new THREE.TubeGeometry(cornCurve, activeSegments, 2.8, 6, closed),
-          structureMat
-        );
-        cornMesh.scale.set(1, 0.24, 1);
-        cornMesh.position.y = topCrestPerSlice[0][1] * 0.76 - 0.2;
-        group.add(cornMesh);
-      }
-
-      // 3 staggered concentric rings of ultra-slender architectural columns
-      const ringOffsets = [0.6, 2.9, 5.2];
-      const colsPerRing = Math.max(24, Math.round(58 * arcFraction * colonnadeDensity(mats)));
-      const totalCols = colsPerRing * ringOffsets.length;
-      const colGeo = new THREE.CylinderGeometry(0.21, 0.24, 1, 10);
-      const colForest = new THREE.InstancedMesh(colGeo, structureMat, totalCols);
-      colForest.castShadow = true;
-
-      const dummy = new THREE.Object3D();
-      let instIdx = 0;
-      for (let r = 0; r < ringOffsets.length; r++) {
-        const stagger = (r * 0.37) / colsPerRing;
-        for (let c = 0; c < colsPerRing; c++) {
-          const frac = closed
-            ? (c / colsPerRing + stagger) % 1
-            : Math.min(1, c / Math.max(1, colsPerRing - 1));
-          const t = tStart + frac * (tEnd - tStart);
-          const sliceIdx = Math.min(ringCount - 1, Math.floor(frac * activeSegments));
-          const [outerD, crestY] = topCrestPerSlice[sliceIdx];
-          const gradeY = Math.min(sunkenDepth, crestY * 0.65);
-          const colH = Math.max(2.0, crestY - gradeY);
-          const cp = sampleRoundedBowlRing(bowlRing, t, outerD + ringOffsets[r]);
-
-          dummy.position.set(cp.x, gradeY + colH / 2, cp.z);
-          dummy.scale.set(1, colH, 1);
-          dummy.rotation.set(0, 0, 0);
-          dummy.updateMatrix();
-          colForest.setMatrixAt(instIdx++, dummy.matrix);
-        }
-      }
-      colForest.instanceMatrix.needsUpdate = true;
-      colForest.computeBoundingSphere();
-      group.add(colForest);
-    } else {
-      // 3 & 4. `enveloping_skin` (including sculpted pneumatic ETFE cushion curve!) OR `louver_curtain`
-      const profile = mats.envelopeProfile ?? 'straight';
-      const isEtfeBelly =
-        envelope === 'enveloping_skin' && mats.facade === 'etfe_cushions_facade';
-      const isShaped = profile !== 'straight' && envelope === 'enveloping_skin';
-      const vBands = isShaped ? 9 : isEtfeBelly ? 5 : 2;
-      const facadePositions = new Float32Array(ringCount * vBands * 3);
-      const facadeUvs = new Float32Array(ringCount * vBands * 2);
-      const facadeIndices: number[] = [];
-
-      const turnstilePositions = new Float32Array(ringCount * 2 * 3);
-      const turnstileUvs = new Float32Array(ringCount * 2 * 2);
-      const turnstileIndices: number[] = [];
-
-      for (let s = 0; s < ringCount; s++) {
-        const t = tAtSlice(s);
-        const [outerD, crestY] = topCrestPerSlice[s];
-        const gradeY = Math.min(sunkenDepth, crestY * 0.65);
-        const lobbyTopY = Math.min(crestY - 0.8, gradeY + 3.5);
-
-        for (let b = 0; b < vBands; b++) {
-          const vf = b / (vBands - 1);
-          const py = lobbyTopY + vf * Math.max(0.5, crestY - lobbyTopY);
-          const skinH = Math.max(0.5, crestY - lobbyTopY);
-          const bellyOut = isShaped
-            ? profile === 'bulging'
-              ? // Calabash: swells to a sixth of its height at mid-height
-                BOWL_CURTAIN_WALL_OFFSET + Math.sin(vf * Math.PI) * Math.min(7, skinH * 0.17)
-              : // Tent: a wide concave foot leaning in to meet the roof at the crest
-                BOWL_CURTAIN_WALL_OFFSET + Math.pow(1 - vf, 1.5) * Math.min(16, skinH * 0.55)
-            : isEtfeBelly
-            ? Math.sin(vf * Math.PI) * 3.8 + vf * 0.8
-            : envelope === 'louver_curtain'
-            ? -0.25
-            : doc.shape === 'steep_cauldron'
-            ? 0.12 + vf * 0.25
-            : BOWL_CURTAIN_WALL_OFFSET;
-
-          const fp = sampleRoundedBowlRing(bowlRing, t, outerD + bellyOut);
-          const pIdx = (s * vBands + b) * 3;
-          facadePositions[pIdx] = fp.x;
-          facadePositions[pIdx + 1] = py;
-          facadePositions[pIdx + 2] = fp.z;
-
-          const uIdx = (s * vBands + b) * 2;
-          facadeUvs[uIdx] = (s / activeSegments) * 16;
-          facadeUvs[uIdx + 1] = vf;
-        }
-
-        const gPt = sampleRoundedBowlRing(bowlRing, t, outerD + 0.85);
-        const tIdx = s * 6;
-        turnstilePositions[tIdx] = gPt.x;
-        turnstilePositions[tIdx + 1] = gradeY;
-        turnstilePositions[tIdx + 2] = gPt.z;
-        turnstilePositions[tIdx + 3] = gPt.x;
-        turnstilePositions[tIdx + 4] = lobbyTopY + 0.05;
-        turnstilePositions[tIdx + 5] = gPt.z;
-
-        turnstileUvs[s * 4] = (s / activeSegments) * 24;
-        turnstileUvs[s * 4 + 1] = 0;
-        turnstileUvs[s * 4 + 2] = (s / activeSegments) * 24;
-        turnstileUvs[s * 4 + 3] = 1;
-      }
-
-      for (let s = 0; s < activeSegments; s++) {
-        const nextS = closed ? (s + 1) % ringCount : s + 1;
-        for (let b = 0; b < vBands - 1; b++) {
-          const a = s * vBands + b;
-          const nb = nextS * vBands + b;
-          const nc = nextS * vBands + b + 1;
-          const d = s * vBands + b + 1;
-          facadeIndices.push(a, d, nb, nb, d, nc);
-        }
-        const ta = s * 2;
-        const tb = nextS * 2;
-        const tc = nextS * 2 + 1;
-        const td = s * 2 + 1;
-        turnstileIndices.push(ta, td, tb, tb, td, tc);
-      }
-
-      const facadeGeo = new THREE.BufferGeometry();
-      facadeGeo.setAttribute('position', new THREE.BufferAttribute(facadePositions, 3));
-      facadeGeo.setAttribute('uv', new THREE.BufferAttribute(facadeUvs, 2));
-      facadeGeo.setIndex(facadeIndices);
-      facadeGeo.computeVertexNormals();
-
-      const facadeMesh = new THREE.Mesh(facadeGeo, facadeMat);
-      facadeMesh.castShadow = true;
-      facadeMesh.receiveShadow = true;
-      group.add(facadeMesh);
-
-      const turnGeo = new THREE.BufferGeometry();
-      turnGeo.setAttribute('position', new THREE.BufferAttribute(turnstilePositions, 3));
-      turnGeo.setAttribute('uv', new THREE.BufferAttribute(turnstileUvs, 2));
-      turnGeo.setIndex(turnstileIndices);
-      turnGeo.computeVertexNormals();
-
-      const turnMat = new THREE.MeshPhysicalMaterial({
-        map: turnstileTex,
-        emissive: new THREE.Color(isNight ? 0xfbbf24 : 0x000000),
-        emissiveMap: turnstileTex,
-        emissiveIntensity: isNight ? 0.6 : 0,
-        roughness: 0.16,
-        metalness: 0.35,
-        clearcoat: 0.85,
-        side: THREE.DoubleSide,
-      });
-      group.add(new THREE.Mesh(turnGeo, turnMat));
-
-      if (isRailDressedEnvelope(envelope)) {
-        const rail: FacadeRailSample[] = [];
-        for (let s = 0; s < ringCount; s++) {
-          if (isSliceInOpenCorner(s)) continue;
-          const [outerD, crestY] = topCrestPerSlice[s];
-          const gradeY = Math.min(sunkenDepth, crestY * 0.65);
-          const pt = sampleRoundedBowlRing(bowlRing, tAtSlice(s), outerD + BOWL_CURTAIN_WALL_OFFSET);
-          rail.push({ x: pt.x, z: pt.z, nx: pt.nx, nz: pt.nz, yBottom: gradeY, yTop: crestY });
-        }
-        const dressing = railEnvelopeDressing(
-          doc,
-          envelope,
-          rail,
-          closed && !hasCustomCornerCutout,
-          facadeMat,
-          structureMat
-        );
-        if (dressing) group.add(dressing);
-      } else if (envelope === 'louver_curtain') {
-        // Dense horizontal architectural brise-soleil rings wrapping the stadium!
-        const louverCount = 7;
-        for (let l = 0; l < louverCount; l++) {
-          const lf = (l + 0.5) / louverCount;
-          const lPts: THREE.Vector3[] = [];
-          for (let s = 0; s < ringCount; s++) {
-            const [outerD, crestY] = topCrestPerSlice[s];
-            const gradeY = Math.min(sunkenDepth, crestY * 0.65);
-            const ly = gradeY + 3.6 + lf * Math.max(1, crestY - gradeY - 3.8);
-            const p = sampleRoundedBowlRing(bowlRing, tAtSlice(s), outerD + 1.45);
-            lPts.push(new THREE.Vector3(p.x, ly, p.z));
-          }
-          if (lPts.length >= 4) {
-            const curve = new THREE.CatmullRomCurve3(lPts, closed);
-            group.add(
-              new THREE.Mesh(
-                new THREE.TubeGeometry(curve, activeSegments, 0.28, 5, closed),
-                structureMat
-              )
-            );
-          }
-        }
-      } else if (!isEtfeBelly && !isShaped) {
-        if (doc.shape === 'steep_cauldron') {
-          const pierCount = crossSectionClip ? 24 : 48;
-          const pierGeo = new THREE.BoxGeometry(1.45, 1, 2.6);
-          const piers = new THREE.InstancedMesh(pierGeo, structureMat, pierCount);
-          piers.castShadow = true;
-          const dummy = new THREE.Object3D();
-          for (let i = 0; i < pierCount; i++) {
-            const frac = closed ? i / pierCount : i / Math.max(1, pierCount - 1);
-            const t = tStart + frac * (tEnd - tStart);
-            const sliceIdx = Math.min(ringCount - 1, Math.round(frac * activeSegments));
-            const [outerD, crestY] = topCrestPerSlice[sliceIdx];
-            const gradeY = Math.min(sunkenDepth, crestY * 0.65);
-            const h = Math.max(2, crestY - gradeY);
-            const fPt = sampleRoundedBowlRing(bowlRing, t, outerD + 1.1);
-            dummy.position.set(fPt.x, gradeY + h / 2, fPt.z);
-            dummy.scale.set(1, h + 0.4, 1);
-            dummy.rotation.set(0, -fPt.angle + Math.PI / 2, 0);
-            dummy.updateMatrix();
-            piers.setMatrixAt(i, dummy.matrix);
-          }
-          piers.instanceMatrix.needsUpdate = true;
-          piers.computeBoundingSphere();
-          group.add(piers);
-        } else if (doc.shape === 'olympic_oval') {
-          const maxH = topCrestPerSlice[0][1];
-          for (const hFrac of [0.34, 0.66, 0.96]) {
-            const louverPts: THREE.Vector3[] = [];
-            for (let s = 0; s < ringCount; s++) {
-              const [outerD, crestY] = topCrestPerSlice[s];
-              const p = sampleRoundedBowlRing(
-                bowlRing,
-                tAtSlice(s),
-                outerD + 0.35 + hFrac * 1.3
-              );
-              louverPts.push(new THREE.Vector3(p.x, Math.min(crestY, maxH * hFrac), p.z));
-            }
-            if (louverPts.length >= 4) {
-              const curve = new THREE.CatmullRomCurve3(louverPts, closed);
-              group.add(
-                new THREE.Mesh(
-                  new THREE.TubeGeometry(curve, activeSegments, 0.48, 6, closed),
-                  structureMat
-                )
-              );
-            }
-          }
-        } else {
-          const rail: FacadeRailSample[] = [];
-          for (let s = 0; s < ringCount; s++) {
-            if (isSliceInOpenCorner(s)) continue;
-            const [outerD, crestY] = topCrestPerSlice[s];
-            const gradeY = Math.min(sunkenDepth, crestY * 0.65);
-            const pt = sampleRoundedBowlRing(bowlRing, tAtSlice(s), outerD + BOWL_CURTAIN_WALL_OFFSET);
-            rail.push({
-              x: pt.x,
-              z: pt.z,
-              nx: pt.nx,
-              nz: pt.nz,
-              yBottom: Math.min(crestY - 0.8, gradeY + 3.5),
-              yTop: crestY,
-            });
-          }
-          const articulation = buildCurtainWallArticulation({
-            samples: rail,
-            closed: closed && !hasCustomCornerCutout,
-            frameMat: structureMat,
-          });
-          if (articulation) group.add(articulation);
-        }
-      }
-    }
-
-    // Parametric 3D Facade Relief on swept bowl exterior when outer concourse is disabled
-    if (
-      (doc.concourse?.width ?? 0) <= 0.5 &&
-      mats.facadePattern &&
-      mats.facadePattern !== 'none'
-    ) {
-      const bowlRail: FacadeRailSample[] = [];
-      for (let s = 0; s < ringCount; s++) {
-        if (isSliceInOpenCorner(s)) continue;
-        const [outerD, crestY] = topCrestPerSlice[s];
-        const gradeY = Math.min(sunkenDepth, crestY * 0.65);
-        const pt = sampleRoundedBowlRing(bowlRing, tAtSlice(s), outerD + 1.05);
-        bowlRail.push({
-          x: pt.x,
-          z: pt.z,
-          nx: pt.nx,
-          nz: pt.nz,
-          yBottom: gradeY + 0.3,
-          yTop: Math.max(gradeY + 2.0, crestY - 0.15),
-        });
-      }
-      const pat = buildParametricFacadeOnRail({
-        samples: bowlRail,
-        closed: closed && !hasCustomCornerCutout,
-        pattern: mats.facadePattern,
-        density: mats.facadeDensity ?? 1.0,
-        depth: mats.facadeDepth ?? 0.85,
-        bulge: mats.facadeBulge ?? 0,
-        primaryMat: facadeMat,
-        accentMat: structureMat,
-      });
-      if (pat) group.add(pat);
-    }
   }
-
   return group;
 }
 
@@ -5902,24 +4937,7 @@ export function generateStandsGroup(
   const structureMat = createStructurePbrMaterial(mats.structure, maxAnisotropy);
 
   const safePitch = clampPitchToTrack(doc.pitch);
-  const cornerModes = resolveAllCorners(doc);
-  const rectLayout = computeRectangularCornerLayout({
-    shape: doc.shape,
-    cornerFill: doc.cornerFill,
-    cornerModes,
-    crossSectionClip,
-    pitchLength: safePitch.length,
-    pitchWidth: safePitch.width,
-    endTrackOffset: trackOffsets.endOffset,
-    sideTrackOffset: trackOffsets.sideOffset,
-    stands: {
-      north: doc.stands.north,
-      south: doc.stands.south,
-      east: doc.stands.east,
-      west: doc.stands.west,
-    },
-    cornerFollow: resolveCornerFollow(doc),
-  });
+  const rectLayout = stadiumCornerLayout(doc, crossSectionClip, resolveCornerFollow(doc));
 
   const sides: StandSide[] = ['north', 'south', 'east', 'west'];
 

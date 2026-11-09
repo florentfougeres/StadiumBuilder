@@ -14,10 +14,12 @@ export interface FacadeRailSample {
   yBottom: number;
   /** Crest Y of the facade at this sample */
   yTop: number;
+  /** Horizontal distance (m) back to the front of the stand, inward along -n (stand envelopes). */
+  depth?: number;
 }
 
 /** Arc-length resampling of a facade rail, so features can be spaced in metres. */
-function createRailSampler(
+export function createRailSampler(
   samples: FacadeRailSample[],
   closed: boolean
 ): { totalLen: number; sampleAtArc: (s: number) => FacadeRailSample } | null {
@@ -60,13 +62,14 @@ function createRailSampler(
       nz: nzRaw / nLen,
       yBottom: a.yBottom + (b.yBottom - a.yBottom) * f,
       yTop: a.yTop + (b.yTop - a.yTop) * f,
+      depth: a.depth === undefined || b.depth === undefined ? undefined : a.depth + (b.depth - a.depth) * f,
     };
   };
   return { totalLen, sampleAtArc };
 }
 
-/** Outward offset of a bowl's glazed envelope from the back of the stands (m). */
-export const BOWL_CURTAIN_WALL_OFFSET = 0.7;
+/** Outward offset (m) of the stands' facade wall from the back of the stands. */
+export const FACADE_WALL_OFFSET = 0.3;
 
 /** Curtain-wall module: mullion spacing, primary mullion rhythm and storey height (m). */
 const MULLION_SPACING = 1.5;

@@ -20,9 +20,6 @@ import {
   DEFAULT_STADIUM_MATERIALS,
   EnvelopeStyle,
   FloodlightRigMode,
-  IntegralShellStyle,
-  isIntegralShell,
-  isMovableRoof,
   LightingMode,
   PitchConfig,
   PlacedObject,
@@ -43,6 +40,7 @@ import {
   CornerJoin,
   TransformMode,
 } from '../stadium/schema';
+import { isIntegralShell, isMovableRoof } from '../stadium/roofCatalog';
 import { resolveStandTiers } from '../stadium/sightlines';
 import { defaultHaloHeight } from '../stadium/buildStadiumScene';
 import {
@@ -155,7 +153,7 @@ export interface StadiumStoreState {
    * Picks the outer envelope: a facade style keeps the current roof (an integral shell gives way
    * to the roof used before it), an integral shell replaces facade and roof at once.
    */
-  setEnvelope: (id: EnvelopeStyle | IntegralShellStyle) => void;
+  setEnvelope: (id: EnvelopeStyle | RoofStyle) => void;
 
   // Objects & Gizmos
   /** Adds an equipment at its default spot, or at `at` (x, z on the ground) when placed by click. */
@@ -746,9 +744,9 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
 
     setEnvelope: (id) =>
       commitChange((d) => {
-        if (isIntegralShell(id as RoofStyle)) {
+        if (isIntegralShell(id)) {
           if (!isIntegralShell(d.roof.style)) roofBeforeShell = d.roof.style;
-          d.roof = { ...d.roof, style: id as IntegralShellStyle };
+          d.roof = { ...d.roof, style: id };
           return;
         }
         d.materials = { ...DEFAULT_STADIUM_MATERIALS, ...(d.materials ?? {}), envelopeStyle: id as EnvelopeStyle };

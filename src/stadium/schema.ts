@@ -1,97 +1,18 @@
-export type StadiumShape =
-  | 'modern_bowl'
-  | 'steep_cauldron'
-  | 'olympic_oval'
-  | 'sunken_bowl'
-  | 'octagonal_arena'
-  | 'compact_urban'
-  | 'english_rectangular'
-  | 'four_stands'
-  | 'horseshoe'
-  | 'circular_bowl'
-  | 'arc_stands'
-  | 'd_shape_vertical'
-  | 'tilted_bowl'
-  | 'saddle_bowl'
-  | 'rounded_rectangle';
+import { shapeDefinition, type StadiumShape } from './shapeCatalog';
+export type { StadiumShape };
 
 export type StandSide = 'north' | 'south' | 'east' | 'west';
 
 export type SeatingType = 'seated' | 'safe_standing' | 'telescopic';
 
-export type RoofStyle =
-  | 'none'
-  | 'column_supported'
-  | 'cantilever'
-  | 'goalpost_truss'
-  | 'truss'
-  | 'suspended_masts'
-  | 'giant_arch'
-  | 'bowstring_arch'
-  | 'bicycle_wheel'
-  | 'tensile_net'
-  | 'enveloping_shell'
-  | 'twin_arch'
-  | 'retractable'
-  | 'vaulted_ring'
-  | 'folded_plate'
-  | 'fixed_dome'
-  | 'corner_pylons'
-  | 'counterweighted_cantilever'
-  | 'spanning_girders'
-  | 'concrete_portals'
-  | 'timber_lattice'
-  | 'wave_canopy'
-  | 'petal_iris'
-  | 'arched_retractable'
-  | 'historic_gable'
-  | 'sawtooth'
-  | 'butterfly'
-  | 'barrel_vault'
-  | 'hypar_shells'
-  | 'tree_columns'
-  | 'air_dome'
-  | 'cable_dome'
-  | 'girder_grid'
-  | 'saddle_vault'
-  | 'dished_canopy'
-  | 'faceted_shell'
-  | 'pleated_crown'
-  | 'serrated_canopy'
-  | 'prow_shell'
-  | 'saucer_dome'
-  | 'rising_canopy'
-  | 'crossed_arches';
+import type { RoofStyle } from './roofCatalog';
+export type { RoofStyle };
 
 /**
  * Silhouette of a continuous bowl's outer skin: upright, bulging out at mid-height (a calabash),
  * or a tent leaning in from a wide foot up to the roof.
  */
 export type EnvelopeProfile = 'straight' | 'bulging' | 'tent';
-
-/**
- * Roof systems that are one shell with the facade (roof and envelope built as a single skin).
- * The editor offers them as envelopes: choosing one replaces both the facade and the roof.
- */
-export const INTEGRAL_SHELL_STYLES = [
-  'enveloping_shell',
-  'faceted_shell',
-  'saddle_vault',
-  'pleated_crown',
-  'prow_shell',
-  'timber_lattice',
-] as const satisfies readonly RoofStyle[];
-
-export type IntegralShellStyle = (typeof INTEGRAL_SHELL_STYLES)[number];
-
-/** Roofs with movable panels (open/close settings and animation). */
-export function isMovableRoof(style: RoofStyle): boolean {
-  return style === 'retractable' || style === 'petal_iris' || style === 'arched_retractable';
-}
-
-export function isIntegralShell(style: RoofStyle): style is IntegralShellStyle {
-  return (INTEGRAL_SHELL_STYLES as readonly RoofStyle[]).includes(style);
-}
 
 export type EnvelopeStyle =
   | 'enveloping_skin'
@@ -918,20 +839,7 @@ export interface StadiumMetrics {
  * (elliptical bowl, steep cauldron, olympic oval, sunken amphitheatre, faceted octagon, or U-shaped horseshoe).
  */
 export function isContinuousBowlShape(shape: StadiumShape): boolean {
-  return (
-    shape === 'modern_bowl' ||
-    shape === 'steep_cauldron' ||
-    shape === 'olympic_oval' ||
-    shape === 'sunken_bowl' ||
-    shape === 'octagonal_arena' ||
-    shape === 'horseshoe' ||
-    shape === 'circular_bowl' ||
-    shape === 'arc_stands' ||
-    shape === 'd_shape_vertical' ||
-    shape === 'tilted_bowl' ||
-    shape === 'saddle_bowl' ||
-    shape === 'rounded_rectangle'
-  );
+  return shapeDefinition(shape).continuous;
 }
 
 /**

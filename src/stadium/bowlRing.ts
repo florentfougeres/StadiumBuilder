@@ -908,6 +908,11 @@ export function computeRectangularCornerLayout(params: {
 
   const openOverhang = shape === 'four_stands' ? 4.0 : 2.0;
 
+  // A seated corner or a corner building between two stands can keep one stand's section
+  // (`cornerJoin`); pavilions and towers are free-standing volumes and have no section to keep.
+  const keepsOneSection = (state: { active: boolean; seamlessVirage: boolean }, mode: CornerMode) =>
+    state.seamlessVirage || (state.active && mode === 'building');
+
   // A stand meets a corner flush unless the corner keeps the other stand's section.
   const joinsFlush = (state: { seamlessVirage: boolean }, cid: CornerQuadrantId, side: RectangularSideId) =>
     state.seamlessVirage && (cornerFollow[cid] === undefined || cornerFollow[cid] === side);
@@ -968,7 +973,7 @@ export function computeRectangularCornerLayout(params: {
       se: {
         id: 'se',
         active: seState.active,
-        follow: seState.seamlessVirage ? cornerFollow.se : undefined,
+        follow: keepsOneSection(seState, modeSE) ? cornerFollow.se : undefined,
         mode: modeSE,
         cx: eastX - rSE,
         cz: southZ - rSE,
@@ -982,7 +987,7 @@ export function computeRectangularCornerLayout(params: {
       sw: {
         id: 'sw',
         active: swState.active,
-        follow: swState.seamlessVirage ? cornerFollow.sw : undefined,
+        follow: keepsOneSection(swState, modeSW) ? cornerFollow.sw : undefined,
         mode: modeSW,
         cx: westX + rSW,
         cz: southZ - rSW,
@@ -996,7 +1001,7 @@ export function computeRectangularCornerLayout(params: {
       nw: {
         id: 'nw',
         active: nwState.active,
-        follow: nwState.seamlessVirage ? cornerFollow.nw : undefined,
+        follow: keepsOneSection(nwState, modeNW) ? cornerFollow.nw : undefined,
         mode: modeNW,
         cx: westX + rNW,
         cz: northZ + rNW,
@@ -1010,7 +1015,7 @@ export function computeRectangularCornerLayout(params: {
       ne: {
         id: 'ne',
         active: neState.active,
-        follow: neState.seamlessVirage ? cornerFollow.ne : undefined,
+        follow: keepsOneSection(neState, modeNE) ? cornerFollow.ne : undefined,
         mode: modeNE,
         cx: eastX - rNE,
         cz: northZ + rNE,
@@ -1082,3 +1087,110 @@ export function sampleCornerQuadrantPoint(
   };
 }
 
+
+/** Plan section of one separate stand: whether it is built, its depth and crest height (m). */
+export interface StandFootprintSection {
+  live: boolean;
+  depth: number;
+  height: number;
+}
+
+/**
+ * Plan footprint of separate stands and their built corners, as rays: from a point on the inner
+ * ring along its outward normal, how far the ray runs through the stands (up to where it leaves
+ * them) and the tallest crest it crosses. Null when it meets no stand (an open corner). This is
+ * what whole-arena roofs follow, so they cover a corner wherever it actually reaches.
+ */
+export function rectangularFootprintRay(
+  layout: RectangularCornerLayout,
+  sections: Record<RectangularSideId, StandFootprintSection>
+): (px: number, pz: number, nx: number, nz: number) => { reach: number; height: number } | null {
+  const smooth = (u: number) => u * u * (3 - 2 * u);
+  const straight = (['north', 'south', 'east', 'west'] as RectangularSideId[]).filter((s) => sections[s].live);
+  const corners = (Object.values(layout.corners) as RectangularCornerSpec[]).filter(
+    (c) => c.active && (c.mode === 'filled' || c.mode === 'building')
+  );
+
+  /** Crest height at a plan point, or -1 outside the stands. */
+  const heightAt = (x: number, z: number): number => {
+    let h = -1;
+    for (const side of straight) {
+      const spec = layout.straight[side];
+      const along = side === 'north' || side === 'south' ? x - spec.centerCoord : z - spec.centerCoord;
+      const across =
+        side === 'south' ? z - spec.frontDist : side === 'north' ? -z - spec.frontDist : side === 'east' ? x - spec.frontDist : -x - spec.frontDist;
+      if (Math.abs(along) <= spec.span / 2 + 0.05 && across >= -0.05 && across <= sections[side].depth) {
+        h = Math.max(h, sections[side].height);
+      }
+    }
+    for (const c of corners) {
+      const dx = x - c.cx;
+      const dz = z - c.cz;
+      let theta = Math.atan2(dz, dx);
+      while (theta < c.thetaStart - 1e-6) theta += Math.PI * 2;
+      if (theta > c.thetaEnd + 1e-6) continue;
+      const u = (theta - c.thetaStart) / (c.thetaEnd - c.thetaStart);
+      const a = sections[c.follow ?? c.sideA];
+      const b = sections[c.follow ?? c.sideB];
+      const w = smooth(u);
+      const rho = Math.hypot(dx, dz) - c.radius;
+      if (rho >= -0.05 && rho <= a.depth + (b.depth - a.depth) * w) h = Math.max(h, a.height + (b.height - a.height) * w);
+    }
+    return h;
+  };
+
+  const STEP = 0.5;
+  const MAX_REACH = 180;
+  return (px, pz, nx, nz) => {
+    let reach = -1;
+    let height = 0;
+    for (let s = 0; s <= MAX_REACH; s += STEP) {
+      const h = heightAt(px + nx * s, pz + nz * s);
+      if (h >= 0) {
+        reach = s;
+        height = Math.max(height, h);
+      } else if (reach >= 0 && s - reach > 2) {
+        break;
+      }
+    }
+    return reach >= 0 ? { reach, height } : null;
+  };
+}
+
+/** Outer-edge offset (m) used to space ring samples: about where roof and facade edges run. */
+const SAMPLING_OFFSET = 30;
+
+/**
+ * Ring positions `t` of `segs` bays between `tStart` and `tEnd` (`segs + 1` samples on an open
+ * arc), spaced evenly along the contour offset outward by `offset` rather than evenly in `t`.
+ * A tight corner turns through a long outer arc: spacing by `t` leaves it with too few samples
+ * and the surface cuts across it as a chamfer.
+ */
+export function ringSamplesT(
+  ring: RoundedBowlGeometry,
+  tStart: number,
+  tEnd: number,
+  closed: boolean,
+  segs: number,
+  offset: number = SAMPLING_OFFSET
+): number[] {
+  const FINE = 2048;
+  const cum = [0];
+  let prev = sampleRoundedBowlRing(ring, tStart, offset);
+  for (let i = 1; i <= FINE; i++) {
+    const p = sampleRoundedBowlRing(ring, tStart + ((tEnd - tStart) * i) / FINE, offset);
+    cum.push(cum[i - 1] + Math.hypot(p.x - prev.x, p.z - prev.z));
+    prev = p;
+  }
+  const total = cum[FINE];
+  const count = closed ? segs : segs + 1;
+  const ts: number[] = [];
+  let j = 0;
+  for (let s = 0; s < count; s++) {
+    const target = (total * s) / segs;
+    while (j < FINE - 1 && cum[j + 1] < target) j++;
+    const f = cum[j + 1] > cum[j] ? (target - cum[j]) / (cum[j + 1] - cum[j]) : 0;
+    ts.push(tStart + ((tEnd - tStart) * (j + Math.min(1, Math.max(0, f)))) / FINE);
+  }
+  return ts;
+}

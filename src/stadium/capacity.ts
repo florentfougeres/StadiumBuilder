@@ -1,4 +1,9 @@
-import { buildShapeBowlRing, computeRectangularCornerLayout, ringSideSpans } from './bowlRing';
+import {
+  buildShapeBowlRing,
+  computeRectangularCornerLayout,
+  RectangularCornerLayout,
+  ringSideSpans,
+} from './bowlRing';
 import { CORNER_ACCESS_DECK_Y, CORNER_ACCESS_WIDTH } from './generateCornerAccess';
 import {
   clampPitchToTrack,
@@ -7,13 +12,9 @@ import {
   getTrackGeometry,
   isContinuousBowlShape,
   resolveAllCorners,
-  PROW_LIFT,
-  resolveCornerPylonFrame,
-  resolveProwRise,
   resolveFloodlightRig,
   resolveStandVomitories,
   vomitoryLevelsOfTier,
-  resolveWaveAmplitude,
   RoofStyle,
   SeatingType,
   slopeDegFromRiser,
@@ -23,9 +24,37 @@ import {
   StandMetrics,
   StandSide,
 } from './schema';
+import { ENVELOPE_STYLE_CATALOG } from './materials';
+import { roofCostPerSeat, roofPeakHeight } from './roofCatalog';
+import { shapeDefinition } from './shapeCatalog';
 import { computeStandSection, computeStandSightlines, resolveStandTiers } from './sightlines';
 
 const STAND_SIDES: StandSide[] = ['north', 'south', 'east', 'west'];
+
+/**
+ * Spans of the separate stands and their corner quadrants, as the stands, roofs, lights and
+ * capacity all lay them out. `cornerFollow` names the stand whose section a seated corner keeps.
+ */
+export function stadiumCornerLayout(
+  doc: StadiumDocument,
+  crossSectionClip: boolean = false,
+  cornerFollow?: Partial<Record<CornerId, StandSide>>
+): RectangularCornerLayout {
+  const safePitch = clampPitchToTrack(doc.pitch);
+  const trackOffsets = getTrackRadialOffset(doc);
+  return computeRectangularCornerLayout({
+    shape: doc.shape,
+    cornerFill: doc.cornerFill,
+    cornerModes: resolveAllCorners(doc),
+    crossSectionClip,
+    pitchLength: safePitch.length,
+    pitchWidth: safePitch.width,
+    endTrackOffset: trackOffsets.endOffset,
+    sideTrackOffset: trackOffsets.sideOffset,
+    stands: doc.stands,
+    cornerFollow,
+  });
+}
 
 /**
  * Computes running track radial offset around the clamped pitch when the official 400m athletics
@@ -270,17 +299,7 @@ export function calculateStandMetrics(
   let cornerRadius = bowlRing.cornerRadius;
   if (!isContinuousBowlShape(doc.shape)) {
     // Separate stands: the same spans and corner quadrants the 3D stands are built on.
-    const layout = computeRectangularCornerLayout({
-      shape: doc.shape,
-      cornerFill: doc.cornerFill,
-      cornerModes,
-      crossSectionClip: false,
-      pitchLength: safePitch.length,
-      pitchWidth: safePitch.width,
-      endTrackOffset: trackOffsets.endOffset,
-      sideTrackOffset: trackOffsets.sideOffset,
-      stands: doc.stands,
-    });
+    const layout = stadiumCornerLayout(doc);
     straightFrontSpan = layout.straight[side].span;
     const seatedCorners = adjEnds
       .map(({ corner }) => layout.corners[corner])
@@ -544,51 +563,7 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
   const rigMode = resolveFloodlightRig(doc);
   const mastHeight =
     rigMode === 'corner_masts' || rigMode === 'both' ? maxStandHeight + 16 : 0;
-  const roofStructuralHeight =
-    doc.roof.style === 'none'
-      ? maxStandHeight
-      : doc.roof.style === 'fixed_dome'
-      ? Number((maxStandHeight + doc.roof.heightOffset + 22).toFixed(1))
-      : doc.roof.style === 'air_dome'
-      ? Number((maxStandHeight + Math.max(2.4, doc.roof.heightOffset * 0.7) + 11).toFixed(1))
-      : doc.roof.style === 'cable_dome'
-      ? Number((maxStandHeight + Math.max(2.4, doc.roof.heightOffset * 0.7) + 14).toFixed(1))
-      : doc.roof.style === 'giant_arch'
-      ? Number((maxStandHeight + doc.roof.heightOffset + 38).toFixed(1))
-      : doc.roof.style === 'timber_lattice'
-      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 9).toFixed(1))
-      : doc.roof.style === 'wave_canopy'
-      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 1.8 + resolveWaveAmplitude(doc.roof)).toFixed(1))
-      : doc.roof.style === 'concrete_portals'
-      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 10.6).toFixed(1))
-      : doc.roof.style === 'spanning_girders'
-      ? Number((maxStandHeight + Math.max(2.8, doc.roof.heightOffset * 0.7) + 10).toFixed(1))
-      : doc.roof.style === 'counterweighted_cantilever'
-      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 10).toFixed(1))
-      : doc.roof.style === 'corner_pylons'
-      ? Number(resolveCornerPylonFrame(doc.roof, maxStandHeight).pylonTopY.toFixed(1))
-      : doc.roof.style === 'crossed_arches'
-      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 21).toFixed(1))
-      : doc.roof.style === 'saddle_vault'
-      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 14).toFixed(1))
-      : doc.roof.style === 'rising_canopy' || doc.roof.style === 'dished_canopy'
-      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 8).toFixed(1))
-      : doc.roof.style === 'saucer_dome' || doc.roof.style === 'girder_grid'
-      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 7.5).toFixed(1))
-      : doc.roof.style === 'prow_shell'
-      ? (() => {
-          const roofY = maxStandHeight + Math.max(4, doc.roof.heightOffset);
-          return Number((roofY + 2 + resolveProwRise(roofY) + PROW_LIFT).toFixed(1));
-        })()
-      : doc.roof.style === 'serrated_canopy'
-      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 5.3).toFixed(1))
-      : doc.roof.style === 'faceted_shell'
-      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 4.5).toFixed(1))
-      : doc.roof.style === 'arched_retractable'
-      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 32).toFixed(1))
-      : doc.roof.style === 'twin_arch'
-      ? Number((maxStandHeight + Math.max(4, doc.roof.heightOffset) + 29).toFixed(1))
-      : Number((maxStandHeight + doc.roof.heightOffset).toFixed(1));
+  const roofStructuralHeight = Number(roofPeakHeight(doc.roof, maxStandHeight).toFixed(1));
   const maxRoofHeight = Number(Math.max(roofStructuralHeight, mastHeight).toFixed(1));
 
   const standsFootprint = activeStands.reduce(
@@ -625,9 +600,7 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
   );
 
   let baseCostPerSeat = 2650 + (maxTiers - 1) * 310;
-  if (isContinuousBowlShape(doc.shape)) baseCostPerSeat += 520;
-  if (doc.shape === 'steep_cauldron') baseCostPerSeat += 180;
-  if (doc.shape === 'compact_urban') baseCostPerSeat += 420;
+  baseCostPerSeat += shapeDefinition(doc.shape).costPerSeat;
   if (totalCapacity > 55000) baseCostPerSeat += 550;
 
   const sunkenDepth = getEffectiveSunkenDepth(doc);
@@ -636,21 +609,7 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
   }
 
   const envelopeStyle = doc.materials?.envelopeStyle ?? 'enveloping_skin';
-  if (envelopeStyle === 'exposed_structure') {
-    baseCostPerSeat -= 210;
-  } else if (envelopeStyle === 'colonnade_forest') {
-    baseCostPerSeat += 190;
-  } else if (envelopeStyle === 'louver_curtain') {
-    baseCostPerSeat += 150;
-  } else if (envelopeStyle === 'stacked_arcades') {
-    baseCostPerSeat += 230;
-  } else if (envelopeStyle === 'media_mesh') {
-    baseCostPerSeat += 320;
-  } else if (envelopeStyle === 'helical_ramps') {
-    baseCostPerSeat += 260;
-  } else if (envelopeStyle === 'horizontal_strata') {
-    baseCostPerSeat += 210;
-  }
+  baseCostPerSeat += ENVELOPE_STYLE_CATALOG.find((e) => e.id === envelopeStyle)?.costPerSeat ?? 0;
 
   // Podium of shops and car parks under the forecourt.
   baseCostPerSeat += Math.round(Math.max(0, doc.site?.podiumHeight ?? 0) * 28);
@@ -669,113 +628,7 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
     baseCostPerSeat += Math.round(260 * facadeDensity);
   }
 
-  switch (doc.roof.style) {
-    case 'column_supported':
-      baseCostPerSeat += 310 * doc.roof.coverageRatio;
-      break;
-    case 'cantilever':
-      baseCostPerSeat += 520 * doc.roof.coverageRatio;
-      break;
-    case 'truss':
-      baseCostPerSeat += 560 * doc.roof.coverageRatio;
-      break;
-    case 'goalpost_truss':
-      baseCostPerSeat += 720 * doc.roof.coverageRatio;
-      break;
-    case 'bowstring_arch':
-      baseCostPerSeat += 780 * doc.roof.coverageRatio;
-      break;
-    case 'bicycle_wheel':
-      baseCostPerSeat += 840 * doc.roof.coverageRatio;
-      break;
-    case 'tensile_net':
-      baseCostPerSeat += 910 * doc.roof.coverageRatio;
-      break;
-    case 'enveloping_shell':
-      baseCostPerSeat += 940 * doc.roof.coverageRatio;
-      break;
-    case 'suspended_masts':
-      baseCostPerSeat += 980 * doc.roof.coverageRatio;
-      break;
-    case 'giant_arch':
-      baseCostPerSeat += 1180 * doc.roof.coverageRatio;
-      break;
-    case 'twin_arch':
-      baseCostPerSeat += 1100 * doc.roof.coverageRatio;
-      break;
-    case 'vaulted_ring':
-      baseCostPerSeat += 960 * doc.roof.coverageRatio;
-      break;
-    case 'folded_plate':
-      baseCostPerSeat += 900 * doc.roof.coverageRatio;
-      break;
-    case 'timber_lattice':
-      baseCostPerSeat += 1260 * doc.roof.coverageRatio;
-      break;
-    case 'wave_canopy':
-      baseCostPerSeat += 1320 * doc.roof.coverageRatio;
-      break;
-    case 'dished_canopy':
-    case 'rising_canopy':
-      baseCostPerSeat += 980 * doc.roof.coverageRatio;
-      break;
-    case 'serrated_canopy':
-      baseCostPerSeat += 980 * doc.roof.coverageRatio;
-      break;
-    case 'prow_shell':
-      baseCostPerSeat += 1450;
-      break;
-    case 'pleated_crown':
-    case 'faceted_shell':
-      baseCostPerSeat += 1240 * doc.roof.coverageRatio;
-      break;
-    case 'saucer_dome':
-    case 'saddle_vault':
-      baseCostPerSeat += 1380 * doc.roof.coverageRatio;
-      break;
-    case 'girder_grid':
-    case 'crossed_arches':
-      baseCostPerSeat += 1300 * doc.roof.coverageRatio;
-      break;
-    case 'historic_gable':
-    case 'sawtooth':
-    case 'butterfly':
-      baseCostPerSeat += 520 * doc.roof.coverageRatio;
-      break;
-    case 'barrel_vault':
-    case 'tree_columns':
-      baseCostPerSeat += 760 * doc.roof.coverageRatio;
-      break;
-    case 'hypar_shells':
-      baseCostPerSeat += 880 * doc.roof.coverageRatio;
-      break;
-    case 'air_dome':
-      baseCostPerSeat += 1050;
-      break;
-    case 'cable_dome':
-      baseCostPerSeat += 1500;
-      break;
-    case 'concrete_portals':
-      baseCostPerSeat += 1180 * doc.roof.coverageRatio;
-      break;
-    case 'spanning_girders':
-      baseCostPerSeat += 1450 * doc.roof.coverageRatio;
-      break;
-    case 'counterweighted_cantilever':
-      baseCostPerSeat += 1020 * doc.roof.coverageRatio;
-      break;
-    case 'corner_pylons':
-      baseCostPerSeat += (doc.roof.spaceFrame ? 1280 : 1150) * doc.roof.coverageRatio;
-      break;
-    case 'retractable':
-    case 'petal_iris':
-    case 'arched_retractable':
-      baseCostPerSeat += 1350 * doc.roof.coverageRatio;
-      break;
-    case 'fixed_dome':
-      baseCostPerSeat += 1520 * doc.roof.coverageRatio;
-      break;
-  }
+  baseCostPerSeat += roofCostPerSeat(doc.roof);
 
   if (doc.roof.skylightMode && doc.roof.skylightMode !== 'none') {
     baseCostPerSeat += Math.round(95 * (doc.roof.skylightRatio ?? 0.3));

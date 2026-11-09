@@ -4,11 +4,11 @@ import { bowlCrestAtNormal, buildBowlSectionModel, usesBowlSectionModel } from '
 import {
   bowlSideWeights,
   buildShapeBowlRing,
-  computeRectangularCornerLayout,
   CornerQuadrantId,
   getBowlArcRange,
+  rectangularFootprintRay,
+  ringSamplesT,
   MIN_PITCH_SETBACK,
-  RectangularCornerSpec,
   sampleCornerQuadrantPoint,
   sampleRoundedBowlRing,
 } from './bowlRing';
@@ -16,6 +16,7 @@ import {
   calculateStandMetrics,
   getTrackRadialOffset,
   resolveStandRoofStyle,
+  stadiumCornerLayout,
 } from './capacity';
 import {
   createConcreteBowlMaterial,
@@ -30,7 +31,6 @@ import {
   getEffectiveSunkenDepth,
   isContinuousBowlShape,
   LightingMode,
-  resolveAllCorners,
   resolveCornerPylonFrame,
   resolveCounterweightTrusses,
   resolveFloodlightRig,
@@ -49,6 +49,7 @@ import {
 } from './schema';
 import { standTreadHeightAt } from './sightlines';
 import { buildRetractablePanels } from './generateRetractableRoof';
+import { arenaRoofY } from './roofCatalog';
 import { beamGeometry, chordAt, gridSurfaceGeometry, mergedMesh, tubeGeometry } from './roofBeams';
 
 function hasRoofGantryLights(doc: StadiumDocument): boolean {
@@ -135,6 +136,51 @@ function createStrutBetween(
   return mesh;
 }
 
+/**
+ * Reach and crest height of separate stands along the ring normal `(nx, nz)`, from their real plan
+ * footprint, or null where the normal meets no stand (an open corner).
+ */
+function footprintLookup(
+  doc: StadiumDocument,
+  ring: ReturnType<typeof buildShapeBowlRing>,
+  metrics: Record<StandSide, { enabled: boolean; totalDepth: number; maxHeight: number }>
+): (nx: number, nz: number) => { reach: number; height: number } | null {
+  const section = (side: StandSide) => ({
+    live: metrics[side].enabled && doc.stands[side].rows > 0,
+    depth: metrics[side].totalDepth,
+    height: metrics[side].maxHeight,
+  });
+  const ray = rectangularFootprintRay(stadiumCornerLayout(doc, false, resolveCornerFollow(doc)), {
+    north: section('north'),
+    south: section('south'),
+    east: section('east'),
+    west: section('west'),
+  });
+  const SAMPLES = 360;
+  const table: { angle: number; reach: number; height: number }[] = [];
+  for (let i = 0; i < SAMPLES; i++) {
+    const p = sampleRoundedBowlRing(ring, i / SAMPLES, 0);
+    const hit = ray(p.x, p.z, p.nx, p.nz);
+    if (hit) table.push({ angle: Math.atan2(p.nz, p.nx), ...hit });
+  }
+  table.sort((a, b) => a.angle - b.angle);
+  // Wider than this between two hits, the normal falls in a gap (an open corner).
+  const maxGap = (3 * Math.PI * 2) / SAMPLES;
+  return (nx, nz) => {
+    if (table.length < 2) return null;
+    const angle = Math.atan2(nz, nx);
+    let hi = table.findIndex((e) => e.angle >= angle);
+    if (hi < 0) hi = 0;
+    const lo = (hi - 1 + table.length) % table.length;
+    const a = table[lo];
+    const b = table[hi];
+    const span = (b.angle - a.angle + Math.PI * 4) % (Math.PI * 2);
+    if (span > maxGap) return null;
+    const f = span < 1e-9 ? 0 : (((angle - a.angle + Math.PI * 4) % (Math.PI * 2)) / span);
+    return { reach: a.reach + (b.reach - a.reach) * f, height: a.height + (b.height - a.height) * f };
+  };
+}
+
 export function computeStadiumRingBounds(doc: StadiumDocument) {
   const safePitch = clampPitchToTrack(doc.pitch);
   const trackOffsets = getTrackRadialOffset(doc);
@@ -158,14 +204,39 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     18
   );
 
+  const avgDistX =
+    (doc.stands.east.distanceToPitch + doc.stands.west.distanceToPitch) * 0.5;
+  const avgDistZ =
+    (doc.stands.north.distanceToPitch + doc.stands.south.distanceToPitch) * 0.5;
+
+  const ring = buildShapeBowlRing(
+    doc.shape,
+    safePitch.length,
+    safePitch.width,
+    avgDistX,
+    avgDistZ,
+    trackOffsets.endOffset,
+    trackOffsets.sideOffset,
+    safePitch.hasTrack,
+    doc.cornerRoundness
+  );
+
+  // Separate stands: depth and crest height along each ring normal come from the stands' real
+  // plan footprint (straight stands and corners), so whole-arena roofs reach every corner.
+  const separate = !isContinuousBowlShape(doc.shape);
+  const footprintAt = separate
+    ? footprintLookup(doc, ring, { south: southMetrics, north: northMetrics, east: eastMetrics, west: westMetrics })
+    : () => null;
+
   // Continuous bowls: the crest of the bowl's own section there (stands keep their rows and the
   // corners end the extra ones), so roofs and facades follow the stands exactly.
   const sectionModel = usesBowlSectionModel(doc.shape) ? buildBowlSectionModel(doc, false) : null;
-  // Only called once `ring` below is built.
   const bowlCrest = (nx: number, nz: number) => bowlCrestAtNormal(sectionModel!, ring, nx, nz);
 
   const standHeightAtNormal = (nx: number, nz: number): number => {
     if (sectionModel) return bowlCrest(nx, nz).height;
+    const hit = footprintAt(nx, nz);
+    if (hit) return hit.height;
     const { east: wE, west: wW, south: wS, north: wN } = bowlSideWeights(doc.shape, nx, nz);
     const hE = eastMetrics.enabled ? eastMetrics.maxHeight : maxStandH * 0.5;
     const hW = westMetrics.enabled ? westMetrics.maxHeight : maxStandH * 0.5;
@@ -176,6 +247,8 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
 
   const standDepthAtNormal = (nx: number, nz: number): number => {
     if (sectionModel) return bowlCrest(nx, nz).depth;
+    const hit = footprintAt(nx, nz);
+    if (hit) return hit.reach;
     const { east: wE, west: wW, south: wS, north: wN } = bowlSideWeights(doc.shape, nx, nz);
     const dE = eastMetrics.enabled ? eastMetrics.totalDepth : avgDepth * 0.6;
     const dW = westMetrics.enabled ? westMetrics.totalDepth : avgDepth * 0.6;
@@ -186,9 +259,8 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
 
   // Separate stands sit at their own distance from the pitch, while the ring uses the mean per
   // axis: this is how far a stand's front (and back) is pushed out from the ring.
-  const separateStands = !isContinuousBowlShape(doc.shape);
   const standShiftAtNormal = (nx: number, nz: number): number => {
-    if (!separateStands) return 0;
+    if (!separate) return 0;
     const wE = Math.pow(Math.max(0, nx), 2.2);
     const wW = Math.pow(Math.max(0, -nx), 2.2);
     const wS = Math.pow(Math.max(0, nz), 2.2);
@@ -209,7 +281,8 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     defaultExtra: number = 3.4
   ): number => {
     if (!hasConcourse) {
-      return avgDepth + defaultExtra;
+      const hit = footprintAt(nx, nz);
+      return (hit ? hit.reach : avgDepth) + defaultExtra;
     }
     const d = standDepthAtNormal(nx, nz);
     return overConcourse ? d + concourseWidth + 0.45 : d + 0.8;
@@ -227,11 +300,6 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     return hasConcourse ? d + concourseWidth + 1.6 : d + 2.2;
   };
 
-  const avgDistX =
-    (doc.stands.east.distanceToPitch + doc.stands.west.distanceToPitch) * 0.5;
-  const avgDistZ =
-    (doc.stands.north.distanceToPitch + doc.stands.south.distanceToPitch) * 0.5;
-
   const innerHalfX =
     safePitch.length / 2 +
     Math.max(safePitch.hasTrack ? 0 : MIN_PITCH_SETBACK, avgDistX) +
@@ -241,17 +309,6 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     Math.max(safePitch.hasTrack ? 0 : MIN_PITCH_SETBACK, avgDistZ) +
     trackOffsets.sideOffset;
 
-  const ring = buildShapeBowlRing(
-    doc.shape,
-    safePitch.length,
-    safePitch.width,
-    avgDistX,
-    avgDistZ,
-    trackOffsets.endOffset,
-    trackOffsets.sideOffset,
-    safePitch.hasTrack,
-    doc.cornerRoundness
-  );
 
   return {
     ring,
@@ -496,8 +553,9 @@ function buildAnnularCanopyMesh(
   const uvs = new Float32Array(ringCount * 2 * 2);
   const indices: number[] = [];
 
+  const ringTs = ringSamplesT(ring, tStart, tEnd, closed, activeSegs);
   for (let s = 0; s < ringCount; s++) {
-    const t = tStart + (s / activeSegs) * (tEnd - tStart);
+    const t = ringTs[s];
     const inPt = sampleRoundedBowlRing(ring, t, innerOffset);
     const resolvedOuter =
       typeof outerOffset === 'function' ? outerOffset(inPt.nx, inPt.nz) : outerOffset;
@@ -737,8 +795,9 @@ function buildEnvelopingShellRoof(
   const uvs = new Float32Array(ringCount * pCount * 2);
   const indices: number[] = [];
 
+  const ringTs = ringSamplesT(ring, tStart, tEnd, closed, activeSegs);
   for (let s = 0; s < ringCount; s++) {
-    const t = tStart + (s / activeSegs) * (tEnd - tStart);
+    const t = ringTs[s];
     const n = sampleRoundedBowlRing(ring, t, 0);
     const sliceProfile = shellProfileAt(n.nx, n.nz);
     for (let p = 0; p < pCount; p++) {
@@ -1002,8 +1061,9 @@ function buildShapedCanopyMesh(
   const positions = new Float32Array(ringCount * cols * 3);
   const uvs = new Float32Array(ringCount * cols * 2);
   const indices: number[] = [];
+  const ringTs = ringSamplesT(ring, tStart, tEnd, closed, activeSegs);
   for (let s = 0; s < ringCount; s++) {
-    const t = tStart + (s / activeSegs) * (tEnd - tStart);
+    const t = ringTs[s];
     const n = sampleRoundedBowlRing(ring, t, 0);
     const resolvedOuter =
       typeof outerOffset === 'function' ? outerOffset(n.nx, n.nz) : outerOffset;
@@ -1905,8 +1965,9 @@ function buildWaveCanopyRoof(
   const pos: number[] = [];
   const uv: number[] = [];
   const idx: number[] = [];
+  const laceTs = ringSamplesT(ring, tStart, tEnd, closed, segs);
   for (let s = 0; s < count; s++) {
-    const t = tStart + (s / segs) * (tEnd - tStart);
+    const t = laceTs[s];
     const n = sampleRoundedBowlRing(ring, t, 0);
     const p = sampleRoundedBowlRing(ring, t, outerOffsetFn(n.nx, n.nz) + 0.4);
     pos.push(p.x, 0, p.z, p.x, surface(t, 1) + 0.2, p.z);
@@ -4050,8 +4111,9 @@ function buildRingLoft(
   const pos: number[] = [];
   const uv: number[] = [];
   let cols = 0;
+  const ts = ringSamplesT(ring, tStart, tEnd, closed, segs);
   for (let s = 0; s < count; s++) {
-    const t = tStart + (s / segs) * (tEnd - tStart);
+    const t = ts[s];
     const n = sampleRoundedBowlRing(ring, t, 0);
     const pts = profile(t, n.nx, n.nz, s);
     cols = pts.length;
@@ -4102,7 +4164,7 @@ function buildSaddleVaultRoof(
   const mats = resolveStadiumMaterials(doc);
   const { ring, maxStandH, avgDepth, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
   const { surfaceMat, shadowDepthMat } = buildCanopyMaterialBundle(doc, maxAnisotropy, 24, 6, 1);
-  const roofY = maxStandH + Math.max(4, doc.roof.heightOffset);
+  const roofY = arenaRoofY(doc.roof, maxStandH);
   const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
   const shell: RingProfile = (_t, nx, nz) => {
     const outer = canopyOuterOffsetAt(nx, nz, 3.8) + 2;
@@ -4211,7 +4273,7 @@ function buildFacetedShellRoof(
 ): THREE.Group {
   const group = new THREE.Group();
   const { ring, maxStandH, avgDepth, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
-  const roofY = maxStandH + Math.max(4, doc.roof.heightOffset);
+  const roofY = arenaRoofY(doc.roof, maxStandH);
   const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
   // An even number of facets so the alternation closes around the bowl; ~30 m facets keep the
   // straight chords close to the bowl outline, so the shell hugs it instead of spiking at corners.
@@ -4334,7 +4396,7 @@ function buildSerratedCanopyRoof(
   const group = new THREE.Group();
   const { ring, maxStandH, avgDepth, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
   const { surfaceMat, shadowDepthMat } = buildCanopyMaterialBundle(doc, maxAnisotropy, 24, 4, 1);
-  const roofY = maxStandH + Math.max(4, doc.roof.heightOffset);
+  const roofY = arenaRoofY(doc.roof, maxStandH);
   const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
   // ~5 m between a ridge and the next valley; even, so the folds close around the bowl.
   const folds = 2 * Math.max(24, Math.round(ring.perimeter / 10));
@@ -4379,8 +4441,9 @@ function buildSerratedCanopyRoof(
   const segs = Math.max(8, Math.round(folds * Math.max(0.25, tEnd - tStart)));
   const count = closed ? segs : segs + 1;
   const footY = Math.max(4, roofY - 8);
+  const foldTs = ringSamplesT(ring, tStart, tEnd, closed, segs);
   const samples = Array.from({ length: count }, (_, s) => {
-    const t = tStart + (s / segs) * (tEnd - tStart);
+    const t = foldTs[s];
     const n = sampleRoundedBowlRing(ring, t, 0);
     const line = pleat(t, n.nx, n.nz, s).map((pt) => {
       const p = sampleRoundedBowlRing(ring, t, pt.r);
@@ -4427,7 +4490,7 @@ function buildProwShellRoof(
 ): THREE.Group {
   const group = new THREE.Group();
   const { ring, maxStandH, avgDepth, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
-  const roofY = maxStandH + Math.max(4, doc.roof.heightOffset);
+  const roofY = arenaRoofY(doc.roof, maxStandH);
   const rise = resolveProwRise(roofY);
   const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
   // Widest footprint around each normal, plus margin: straight facets must clear every facade.
@@ -4545,7 +4608,7 @@ function buildSaucerDomeRoof(
   const mats = resolveStadiumMaterials(doc);
   const { ring, maxStandH, avgDepth, canopyOuterOffsetAt } = computeStadiumRingBounds(doc);
   const { surfaceMat, shadowDepthMat } = buildCanopyMaterialBundle(doc, maxAnisotropy, 24, 4, 1);
-  const roofY = maxStandH + Math.max(4, doc.roof.heightOffset);
+  const roofY = arenaRoofY(doc.roof, maxStandH);
   const innerOffset = avgDepth * (1 - doc.roof.coverageRatio);
   const rimAt = (nx: number, nz: number) => canopyOuterOffsetAt(nx, nz, 3.8) + 3;
   const saucer: RingProfile = (_t, nx, nz) => {
@@ -4964,9 +5027,32 @@ function buildCableDomeRoof(doc: StadiumDocument, crossSectionClip: boolean, max
   return group;
 }
 
-const SIGNATURE_ROOF_BUILDERS: Partial<
-  Record<RoofStyle, (doc: StadiumDocument, crossSectionClip: boolean, maxAnisotropy: number) => THREE.Group>
-> = {
+type RoofBuilder = (doc: StadiumDocument, crossSectionClip: boolean, maxAnisotropy: number) => THREE.Group;
+
+/**
+ * Whole-arena roofs. A style missing here is built stand by stand on separate stands, or as the
+ * spine cantilever canopy on continuous bowls.
+ */
+const ARENA_ROOF_BUILDERS: Partial<Record<RoofStyle, RoofBuilder>> = {
+  enveloping_shell: buildEnvelopingShellRoof,
+  suspended_masts: buildSuspendedMastsRoof,
+  arched_retractable: buildArchedRetractableRoof,
+  twin_arch: buildTwinArchRoof,
+  petal_iris: buildRetractableRoof,
+  timber_lattice: buildTimberLatticeRoof,
+  wave_canopy: buildWaveCanopyRoof,
+  concrete_portals: buildConcretePortalsRoof,
+  spanning_girders: buildSpanningGirdersRoof,
+  counterweighted_cantilever: buildCounterweightedCantileverRoof,
+  corner_pylons: buildCornerPylonsRoof,
+  vaulted_ring: buildVaultedRingRoof,
+  folded_plate: buildFoldedPlateRoof,
+  giant_arch: buildGiantArchRoof,
+  bowstring_arch: buildBowstringArchRoof,
+  bicycle_wheel: buildBicycleWheelCableRoof,
+  tensile_net: buildTensileNetMembraneRoof,
+  fixed_dome: buildFixedDomeRoof,
+  retractable: buildRetractableRoof,
   girder_grid: buildGirderGridRoof,
   saddle_vault: buildSaddleVaultRoof,
   dished_canopy: buildDishedCanopyRoof,
@@ -5072,99 +5158,9 @@ function buildRoofAssembly(
 
   // Whole-arena roof systems (when no heterogeneous per-stand overrides are active)
   if (!hasPerStandOverrides) {
-    if (doc.roof.style === 'enveloping_shell') {
-      root.add(buildEnvelopingShellRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'suspended_masts') {
-      root.add(buildSuspendedMastsRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'arched_retractable') {
-      root.add(buildArchedRetractableRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'twin_arch') {
-      root.add(buildTwinArchRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'retractable' || doc.roof.style === 'petal_iris') {
-      root.add(buildRetractableRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'timber_lattice') {
-      root.add(buildTimberLatticeRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    const signatureBuilder = SIGNATURE_ROOF_BUILDERS[doc.roof.style];
-    if (signatureBuilder) {
-      root.add(signatureBuilder(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'wave_canopy') {
-      root.add(buildWaveCanopyRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'concrete_portals') {
-      root.add(buildConcretePortalsRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'spanning_girders') {
-      root.add(buildSpanningGirdersRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'counterweighted_cantilever') {
-      root.add(buildCounterweightedCantileverRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'corner_pylons') {
-      root.add(buildCornerPylonsRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'vaulted_ring') {
-      root.add(buildVaultedRingRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'folded_plate') {
-      root.add(buildFoldedPlateRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'giant_arch') {
-      root.add(buildGiantArchRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'bowstring_arch') {
-      root.add(buildBowstringArchRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'bicycle_wheel') {
-      root.add(buildBicycleWheelCableRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'tensile_net') {
-      root.add(buildTensileNetMembraneRoof(doc, crossSectionClip, maxAnisotropy));
-      return root;
-    }
-
-    if (doc.roof.style === 'fixed_dome') {
-      root.add(buildFixedDomeRoof(doc, crossSectionClip, maxAnisotropy));
+    const arenaBuilder = ARENA_ROOF_BUILDERS[doc.roof.style];
+    if (arenaBuilder) {
+      root.add(arenaBuilder(doc, crossSectionClip, maxAnisotropy));
       return root;
     }
 
@@ -5297,29 +5293,11 @@ function buildRoofAssembly(
   }
 
   // Stand-by-Stand Anchored Roofs (`cantilever`, `truss`, `column_supported`, `goalpost_truss`)
-  const safePitch = clampPitchToTrack(doc.pitch);
   const concourseWidth = Math.max(0, doc.concourse?.width ?? 0);
   const hasConcourse = concourseWidth > 0.5;
   const overConcourse = doc.roof.overConcourse !== false;
-  const trackOffsets = getTrackRadialOffset(doc);
-  const cornerModes = resolveAllCorners(doc);
-  const rectLayout = computeRectangularCornerLayout({
-    shape: doc.shape,
-    cornerFill: doc.cornerFill,
-    cornerModes,
-    crossSectionClip,
-    pitchLength: safePitch.length,
-    pitchWidth: safePitch.width,
-    endTrackOffset: trackOffsets.endOffset,
-    sideTrackOffset: trackOffsets.sideOffset,
-    stands: {
-      north: doc.stands.north,
-      south: doc.stands.south,
-      east: doc.stands.east,
-      west: doc.stands.west,
-    },
-    cornerFollow: resolveCornerFollow(doc),
-  });
+  const rectLayout = stadiumCornerLayout(doc, crossSectionClip, resolveCornerFollow(doc));
+
 
   const standRoofBounds: Partial<
     Record<

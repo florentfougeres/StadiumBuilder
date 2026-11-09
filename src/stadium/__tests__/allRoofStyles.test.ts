@@ -5,6 +5,7 @@ import { generateRoofGroup } from '../generateRoof';
 import { createPresetDocument, STADIUM_PRESETS } from '../presets';
 import { calculateStadiumMetrics } from '../capacity';
 import { RoofStyle } from '../schema';
+import { isIntegralShell, roofDefinition } from '../roofCatalog';
 
 /**
  * Every roof style with the name of a mesh it must build. Typed as a full record so that adding a
@@ -55,7 +56,6 @@ const SIGNATURE: Record<RoofStyle, string | null> = {
   crossed_arches: 'CrossedArchTubes',
 };
 
-const PER_STAND = new Set<RoofStyle>(['historic_gable', 'sawtooth', 'butterfly', 'barrel_vault', 'hypar_shells', 'tree_columns', 'truss', 'column_supported', 'goalpost_truss']);
 
 describe('every roof style has a builder', () => {
   for (const [style, signature] of Object.entries(SIGNATURE) as [RoofStyle, string | null][]) {
@@ -63,7 +63,7 @@ describe('every roof style has a builder', () => {
     it(`builds ${style}`, () => {
       // Per-stand styles are checked on a four-stand ground, whole-arena styles on a bowl.
       const doc = createPresetDocument(
-        PER_STAND.has(style) ? 'traditional_four_stands_42k' : 'bowl_bowstring_60k'
+        roofDefinition(style).placement !== 'arena' ? 'traditional_four_stands_42k' : 'bowl_bowstring_60k'
       );
       doc.roof.style = style;
       doc.roof.retractable = { openRatio: 0.3 };
@@ -104,4 +104,12 @@ describe('every roof style has a builder', () => {
       disposeObject3D(roof);
     });
   }
+});
+
+describe('roof catalog', () => {
+  it('tells envelope ids apart from integral shells', () => {
+    expect(isIntegralShell('prow_shell')).toBe(true);
+    expect(isIntegralShell('cantilever')).toBe(false);
+    expect(isIntegralShell('colonnade_forest')).toBe(false);
+  });
 });

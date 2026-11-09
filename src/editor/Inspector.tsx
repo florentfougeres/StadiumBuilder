@@ -31,9 +31,6 @@ import {
   EnvelopeProfile,
   EnvelopeStyle,
   getEffectiveSunkenDepth,
-  IntegralShellStyle,
-  isIntegralShell,
-  isMovableRoof,
   getMaxPitchLengthForTrack,
   isContinuousBowlShape,
   CORNER_PYLON_MAX_HEIGHT,
@@ -65,6 +62,8 @@ import {
   StandSide,
   TRACK_MAX_PITCH_WIDTH_M,
 } from '../stadium/schema';
+import { isIntegralShell, isMovableRoof, roofDefinition, ROOF_STYLES } from '../stadium/roofCatalog';
+import { OFFERED_SHAPES, shapeDefinition } from '../stadium/shapeCatalog';
 import { resolveSeatTierStyle } from '../stadium/seatPattern';
 import {
   computeStandSightlines,
@@ -94,291 +93,17 @@ import {
   ToggleField,
 } from './ui';
 
-export const SHAPE_OPTIONS: { id: StadiumShape; label: string; desc: string }[] = [
-  {
-    id: 'four_stands',
-    label: 'Stade « à l’anglaise » (4 tribunes)',
-    desc: '4 tribunes indépendantes collées au terrain & coins ouverts',
-  },
-  {
-    id: 'compact_urban',
-    label: 'Rectangulaire à coins fermés',
-    desc: 'Angles remplis en enceinte continue UEFA & tours d’accès',
-  },
-  {
-    id: 'english_rectangular',
-    label: 'Rectangulaire modulable',
-    desc: 'Tribunes hétérogènes à coins ouverts ou fermés au choix',
-  },
-  {
-    id: 'modern_bowl',
-    label: 'Bowl (cuvette) continu',
-    desc: 'Gradins elliptiques continus 360° sans rupture',
-  },
-  {
-    id: 'steep_cauldron',
-    label: 'Chaudron parabolique raide',
-    desc: 'Pente forte (34–37°), proximité immédiate & fort surplomb',
-  },
-  {
-    id: 'olympic_oval',
-    label: 'Bowl avec piste d’athlétisme',
-    desc: 'Cuvette évasée autour d’une piste 8 couloirs',
-  },
-  {
-    id: 'horseshoe',
-    label: 'Fer à cheval (en U ouvert)',
-    desc: '3 côtés continus & extrémité ouverte sur parvis panoramique',
-  },
-  {
-    id: 'sunken_bowl',
-    label: 'Amphithéâtre semi-enterré',
-    desc: 'Anneaux bas creusés dans le sol, seuls le haut et le toit émergent',
-  },
-  {
-    id: 'octagonal_arena',
-    label: 'Arène octogonale facettée',
-    desc: '8 pans coupés géométriques & virages à 45°',
-  },
-  {
-    id: 'circular_bowl',
-    label: 'Bol circulaire',
-    desc: 'Enceinte ronde : virages près des buts, tribunes latérales éloignées',
-  },
-  {
-    id: 'arc_stands',
-    label: 'Tribunes en arc de cercle',
-    desc: '4 tribunes cintrées tournées vers le centre, virages très arrondis, coins ouverts',
-  },
-  {
-    id: 'rounded_rectangle',
-    label: 'Rectangle aux angles arrondis',
-    desc: 'Entre le rectangle anglais et le bowl : arrondi des angles réglable',
-  },
-  {
-    id: 'tilted_bowl',
-    label: 'Bol incliné',
-    desc: 'Le bord des gradins suit une pente continue, de la tribune nord haute à la sud basse',
-  },
-  {
-    id: 'saddle_bowl',
-    label: 'Bol en selle',
-    desc: 'Côtés hauts et virages bas, le bord ondule sans rupture autour du bol',
-  },
-];
+export const SHAPE_OPTIONS: { id: StadiumShape; label: string; desc: string }[] = OFFERED_SHAPES.map((id) => ({
+  id,
+  label: shapeDefinition(id).label,
+  desc: shapeDefinition(id).desc,
+}));
 
-export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = [
-  {
-    id: 'cantilever',
-    label: 'Porte-à-faux (cantilever)',
-    desc: 'Fléaux encastrés à l’arrière sans poteaux gênants',
-  },
-  {
-    id: 'column_supported',
-    label: 'Sur poteaux dans les gradins',
-    desc: 'Poteaux fins plantés dans les gradins (économique, vue gênée)',
-  },
-  {
-    id: 'goalpost_truss',
-    label: 'Poutre-portique (goalpost)',
-    desc: 'Mégapoutre franchissant la tribune sur 2 pylônes latéraux',
-  },
-  {
-    id: 'truss',
-    label: 'Charpente treillis & frontons',
-    desc: 'Toitures indépendantes à frontons vitrés d’angles',
-  },
-  {
-    id: 'suspended_masts',
-    label: 'Haubané / suspendu sur mâts',
-    desc: 'Mâts extérieurs et nappes de câbles portant le toit par le dessus',
-  },
-  {
-    id: 'giant_arch',
-    label: 'Arche géante porteuse',
-    desc: 'Grand arc métallique franchissant le stade & câbles suspente',
-  },
-  {
-    id: 'timber_lattice',
-    label: 'Résille en bois',
-    desc: 'Losanges de bois lamellé-collé qui enveloppent la façade et couvrent les tribunes',
-  },
-  {
-    id: 'wave_canopy',
-    label: 'Dentelle ondulante',
-    desc: 'Peau ajourée en béton fibré dont la hauteur ondule autour du stade',
-  },
-  {
-    id: 'girder_grid',
-    label: 'Grille de méga-poutres',
-    desc: '4 poutres en « # » au bord du toit, poutres secondaires jusqu’aux rives',
-  },
-  {
-    id: 'crossed_arches',
-    label: 'Arches entrecroisées',
-    desc: '4 arcs tubulaires qui se croisent aux angles, suspentes en zigzag',
-  },
-  {
-    id: 'saddle_vault',
-    label: 'Voûte en selle',
-    desc: 'Coque translucide d’un seul tenant, plus haute le long des touches',
-  },
-  {
-    id: 'saucer_dome',
-    label: 'Coupole soucoupe',
-    desc: 'Toit bombé à rive arrondie sur couronne de poteaux en V',
-  },
-  {
-    id: 'rising_canopy',
-    label: 'Toit montant vers le centre',
-    desc: 'Toit qui s’élève vers le terrain, anneau treillis autour de l’ouverture',
-  },
-  {
-    id: 'dished_canopy',
-    label: 'Toit creusé',
-    desc: 'Toit concave relevé aux deux rives, coins retroussés et rive épaisse',
-  },
-  {
-    id: 'faceted_shell',
-    label: 'Coque à facettes',
-    desc: 'Toit et façade d’un seul tenant en facettes triangulaires de métal',
-  },
-  {
-    id: 'serrated_canopy',
-    label: 'Auvent plissé dentelé',
-    desc: 'Membrane translucide plissée vers l’extérieur, rive en dents de scie sur béquilles en V',
-  },
-  {
-    id: 'prow_shell',
-    label: 'Coque en proue',
-    desc: 'Toit à un seul pan avec champ ETFE, façade sombre à facettes et proue en surplomb',
-  },
-  {
-    id: 'pleated_crown',
-    label: 'Couronne plissée',
-    desc: 'Façade métallique plissée en losanges intégrée au toit vitré',
-  },
-  {
-    id: 'historic_gable',
-    label: 'Toit à pignon historique',
-    desc: 'Toit à deux pans sur fermes rivetées, fronton au centre (stades d’avant-guerre)',
-  },
-  {
-    id: 'sawtooth',
-    label: 'Toit en dents de scie',
-    desc: 'Sheds à un pan et faces vitrées, en zigzag face au terrain (tribunes séparées)',
-  },
-  {
-    id: 'butterfly',
-    label: 'Toit papillon',
-    desc: 'Deux pans en V vers un chéneau central : le bord se relève côté terrain (tribunes séparées)',
-  },
-  {
-    id: 'barrel_vault',
-    label: 'Voûte en berceau',
-    desc: 'Voûte cintrée dans la longueur de chaque tribune, nervures en arc et tirants (tribunes séparées)',
-  },
-  {
-    id: 'hypar_shells',
-    label: 'Coques paraboloïdes',
-    desc: 'Voiles minces en béton en selle, porte-à-faux festonné sur la tribune (tribunes séparées)',
-  },
-  {
-    id: 'tree_columns',
-    label: 'Colonnes arborescentes',
-    desc: 'Auvent plat porté par des poteaux qui se ramifient en branches (tribunes séparées)',
-  },
-  {
-    id: 'air_dome',
-    label: 'Dôme gonflable',
-    desc: 'Membrane très plate tenue par la pression de l’air, filet de câbles en losanges',
-  },
-  {
-    id: 'cable_dome',
-    label: 'Dôme à câbles',
-    desc: 'Dôme surbaissé en tenségrité : câbles radiaux, anneaux et mâts volants sous toile',
-  },
-  {
-    id: 'concrete_portals',
-    label: 'Portiques en béton',
-    desc: 'Nervures en béton précontraint hors façade, en porte-à-faux sans poteau',
-  },
-  {
-    id: 'counterweighted_cantilever',
-    label: 'Fermes à contre-poids',
-    desc: 'Fermes rayonnantes en porte-à-faux, ancrées par tirants derrière les tribunes',
-  },
-  {
-    id: 'corner_pylons',
-    label: 'Méga-pylônes d’angle',
-    desc: '4 pylônes portant des méga-poutres au-dessus du bord de toit',
-  },
-  {
-    id: 'bowstring_arch',
-    label: 'Bi-poutres lenticulaires',
-    desc: '2 mégapoutres tubulaires sur 4 tours d’angles',
-  },
-  {
-    id: 'bicycle_wheel',
-    label: 'Roue de vélo (anneau tendu)',
-    desc: 'Anneau extérieur comprimé, anneau intérieur tendu & câbles radiaux',
-  },
-  {
-    id: 'tensile_net',
-    label: 'Résille & membranes tendues',
-    desc: 'Voile anticlastic PTFE/ETFE sur mâts inclinés & haubans',
-  },
-  {
-    id: 'enveloping_shell',
-    label: 'Coque intégrale enveloppante',
-    desc: 'Continuité fluide entre façade et couverture',
-  },
-  {
-    id: 'vaulted_ring',
-    label: 'Couronne voûtée',
-    desc: 'Anneau de toiture en arc sur toute sa profondeur, nervures cintrées',
-  },
-  {
-    id: 'folded_plate',
-    label: 'Toiture plissée',
-    desc: 'Plis en dents de scie tout autour du stade, poutre sur chaque faîtage',
-  },
-  {
-    id: 'twin_arch',
-    label: 'Arches jumelles',
-    desc: '2 arcs treillis parallèles portant l’anneau de couverture',
-  },
-  {
-    id: 'retractable',
-    label: 'Toit rétractable motorisé',
-    desc: 'Panneaux mobiles : coulissants, pivotants, à volets ou membrane repliable',
-  },
-  {
-    id: 'arched_retractable',
-    label: 'Arches sur tours & toit coulissant',
-    desc: 'Deux arches treillis longitudinales sur tours d’angle, panneaux coulissant entre elles',
-  },
-  {
-    id: 'petal_iris',
-    label: 'Toit iris à pétales',
-    desc: 'Pétales qui pivotent sur la couronne comme un diaphragme d’appareil photo',
-  },
-  {
-    id: 'spanning_girders',
-    label: 'Toit fermé sur méga-poutres',
-    desc: 'Toit plat fermé porté par des poutres de grande portée, comme une arène',
-  },
-  {
-    id: 'fixed_dome',
-    label: 'Dôme fixe intégral',
-    desc: 'Coupole fermée à résille géodésique & oculus zénithal',
-  },
-  {
-    id: 'none',
-    label: 'Découvert (ciel ouvert)',
-    desc: 'Gradins à l’air libre sans couverture',
-  },
-];
+export const ROOF_OPTIONS: { id: RoofStyle; label: string; desc: string }[] = ROOF_STYLES.map((id) => ({
+  id,
+  label: roofDefinition(id).label,
+  desc: roofDefinition(id).desc,
+}));
 
 const SEATING_TYPE_OPTIONS: { id: SeatingType; label: string; desc: string }[] = [
   {
@@ -910,17 +635,10 @@ const STAND_LABELS: Record<StandSide, string> = {
 
 const STAND_ROOF_OVERRIDES: { id: RoofStyle | 'inherit'; label: string }[] = [
   { id: 'inherit', label: 'Comme le stade' },
-  { id: 'cantilever', label: 'Porte-à-faux' },
-  { id: 'column_supported', label: 'Sur poteaux' },
-  { id: 'historic_gable', label: 'Pignon historique' },
-  { id: 'sawtooth', label: 'Dents de scie' },
-  { id: 'butterfly', label: 'Papillon' },
-  { id: 'barrel_vault', label: 'Voûte en berceau' },
-  { id: 'hypar_shells', label: 'Coques paraboloïdes' },
-  { id: 'tree_columns', label: 'Colonnes arborescentes' },
-  { id: 'goalpost_truss', label: 'Poutre-portique' },
-  { id: 'truss', label: 'Charpente treillis' },
-  { id: 'none', label: 'Découverte' },
+  ...ROOF_STYLES.flatMap((id) => {
+    const label = roofDefinition(id).standLabel;
+    return label ? [{ id, label }] : [];
+  }),
 ];
 
 const fr = (n: number) => n.toLocaleString('fr-FR');
@@ -952,7 +670,7 @@ const ROOF_GALLERY: GalleryOption<RoofStyle>[] = ROOF_OPTIONS.filter((o) => !isI
   image: thumbnailUrl('roofs', o.id),
 }));
 
-const ENVELOPE_GALLERY: GalleryOption<EnvelopeStyle | IntegralShellStyle>[] = [
+const ENVELOPE_GALLERY: GalleryOption<EnvelopeStyle | RoofStyle>[] = [
   ...ENVELOPE_STYLE_CATALOG.map((o) => ({
     id: o.id,
     label: o.label,
@@ -960,7 +678,7 @@ const ENVELOPE_GALLERY: GalleryOption<EnvelopeStyle | IntegralShellStyle>[] = [
     image: thumbnailUrl('envelopes', o.id),
   })),
   ...ROOF_OPTIONS.filter((o) => isIntegralShell(o.id)).map((o) => ({
-    id: o.id as IntegralShellStyle,
+    id: o.id as RoofStyle,
     label: o.label,
     detail: `${o.desc} · remplace le toit`,
     image: thumbnailUrl('roofs', o.id),

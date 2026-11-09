@@ -39,6 +39,8 @@ export interface EnvelopeCatalogEntry {
   id: EnvelopeStyle;
   label: string;
   subtitle: string;
+  /** Building cost per seat (€) relative to the plain enveloping skin. */
+  costPerSeat: number;
 }
 
 export const ENVELOPE_STYLE_CATALOG: EnvelopeCatalogEntry[] = [
@@ -46,41 +48,49 @@ export const ENVELOPE_STYLE_CATALOG: EnvelopeCatalogEntry[] = [
     id: 'enveloping_skin',
     label: 'Peau enveloppante continue',
     subtitle: 'Façade unifiée (coussins ETFE, mur-rideau, brique ou résille)',
+    costPerSeat: 0,
   },
   {
     id: 'exposed_structure',
     label: 'Structure apparente',
     subtitle: 'Dessous des gradins, poutres crémaillères & escaliers visibles',
+    costPerSeat: -210,
   },
   {
     id: 'colonnade_forest',
     label: 'Colonnade / forêt de poteaux',
     subtitle: 'Péristyle dense de colonnes élancées filtrant les coursives',
+    costPerSeat: 190,
   },
   {
     id: 'louver_curtain',
     label: 'Brise-soleil à lames ajourées',
     subtitle: 'Double peau en lames horizontales devant noyau vitré',
+    costPerSeat: 150,
   },
   {
     id: 'stacked_arcades',
     label: 'Arcades superposées',
     subtitle: 'Étages d’arches en plein cintre sur piliers, corniche à chaque niveau',
+    costPerSeat: 230,
   },
   {
     id: 'media_mesh',
     label: 'Façade média LED',
     subtitle: 'Peau de pixels lumineux aux couleurs du club, éclatante la nuit',
+    costPerSeat: 320,
   },
   {
     id: 'helical_ramps',
     label: 'Rampes hélicoïdales',
     subtitle: 'Rampes d’accès enroulées autour du stade en bandes diagonales',
+    costPerSeat: 260,
   },
   {
     id: 'horizontal_strata',
     label: 'Strates horizontales',
     subtitle: 'Coursives et balcons empilés, plus ou moins ajourés, au relief ondulant',
+    costPerSeat: 210,
   },
 ];
 
