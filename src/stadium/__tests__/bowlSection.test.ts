@@ -8,7 +8,7 @@ import {
   bowlStepJunctions,
   buildBowlSectionModel,
 } from '../bowlSection';
-import { computeStadiumRingBounds } from '../generateRoof';
+import { computeStadiumRingBounds } from '../roofs/ringBounds';
 import { generateStandsGroup } from '../generateStand';
 import { createPresetDocument } from '../presets';
 import { StadiumDocument, StandSide } from '../schema';

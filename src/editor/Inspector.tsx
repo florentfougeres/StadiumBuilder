@@ -1788,20 +1788,6 @@ const RoofPanel: React.FC = () => {
           />
         </PanelSection>
       )}
-      {roof.style === 'wave_canopy' && (
-        <PanelSection title="Dentelle ondulante">
-          <SliderField
-            label="Amplitude de l’ondulation"
-            hint="Écart de hauteur entre les creux et les crêtes du toit"
-            min={0}
-            max={14}
-            step={0.5}
-            value={resolveWaveAmplitude(roof)}
-            display={`${resolveWaveAmplitude(roof)} m`}
-            onChange={(v) => updateRoof({ waveAmplitude: v })}
-          />
-        </PanelSection>
-      )}
       {roof.style === 'concrete_portals' && (
         <PanelSection title="Portiques en béton">
           <SliderField
@@ -2245,6 +2231,7 @@ const FacadePanel: React.FC = () => {
   const density = mats.facadeDensity ?? 1.0;
   const depth = mats.facadeDepth ?? 0.85;
   const setEnvelope = useStadiumStore((s) => s.setEnvelope);
+  const updateRoof = useStadiumStore((s) => s.updateRoof);
   const shell = isIntegralShell(doc.roof.style) ? doc.roof.style : null;
   const envelope = shell ?? mats.envelopeStyle ?? 'enveloping_skin';
 
@@ -2262,6 +2249,18 @@ const FacadePanel: React.FC = () => {
           <p className="text-2xs text-ink-faint">
             Coque intégrale : elle forme à la fois la façade et le toit. Choisis une autre enveloppe pour retrouver un toit séparé.
           </p>
+        )}
+        {shell === 'wave_canopy' && (
+          <SliderField
+            label="Amplitude de l’ondulation"
+            hint="Écart de hauteur entre les creux et les crêtes de la peau"
+            min={0}
+            max={14}
+            step={0.5}
+            value={resolveWaveAmplitude(doc.roof)}
+            display={`${resolveWaveAmplitude(doc.roof)} m`}
+            onChange={(waveAmplitude) => updateRoof({ waveAmplitude })}
+          />
         )}
         {envelope === 'colonnade_forest' && (
           <SliderField

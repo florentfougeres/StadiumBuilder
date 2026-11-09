@@ -13,7 +13,8 @@ import {
   generatePlacedObjectGroup,
 } from './generateLights';
 import { ApronOutline, generatePitchGroup } from './generatePitch';
-import { computeStadiumRingBounds, generateRoofGroup } from './generateRoof';
+import { generateRoofGroup } from './generateRoof';
+import { computeStadiumRingBounds } from './roofs/ringBounds';
 import { generateSiteGroup, SiteFootprint } from './generateSite';
 import { generateStandsGroup } from './generateStand';
 import {

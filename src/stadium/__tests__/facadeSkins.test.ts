@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { disposeObject3D } from '../buildStadiumScene';
 import { createFacadePbrMaterial } from '../materials';
-import { buildParametricFacadeOnRail, FacadeRailSample } from '../parametricFacade';
+import type { FacadeRailSample } from '../envelopes/rail';
+import { buildParametricFacadeOnRail } from '../parametricFacade';
 import { FacadeMaterialId } from '../schema';
 
 const rail: FacadeRailSample[] = [

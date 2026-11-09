@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import { getBowlArcRange, sampleRoundedBowlRing } from './bowlRing';
-import { computeStadiumRingBounds } from './generateRoof';
+import { computeStadiumRingBounds } from './roofs/ringBounds';
 import {
   createConcreteBowlMaterial,
   createFacadePbrMaterial,
   createStructurePbrMaterial,
   resolveStadiumMaterials,
 } from './materials';
-import { buildEnvelopeDressing, buildParametricFacadeOnRail } from './parametricFacade';
+import { buildEnvelopeDressing } from './envelopes';
+import { buildParametricFacadeOnRail } from './parametricFacade';
 import { StadiumDocument } from './schema';
 
 /** Storey height of the concourse levels, read on the facade as slab bands. */

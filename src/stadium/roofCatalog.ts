@@ -48,7 +48,8 @@ const lowDome =
 
 /**
  * Every roof style, in the order the editor offers them. Adding a style is one entry here plus
- * its builder in `generateRoof.ts`; the editor, costs, heights and thumbnails follow.
+ * its builder in the family table of `roofs/` (shells, canopies, structures, closed roofs) or, for
+ * a stand-by-stand roof, in `roofs/standRoofs.ts`; the editor, costs, heights and thumbnails follow.
  */
 export const ROOF_CATALOG = {
   cantilever: {
@@ -104,6 +105,7 @@ export const ROOF_CATALOG = {
     label: 'Dentelle ondulante',
     desc: 'Peau ajourée en béton fibré dont la hauteur ondule autour du stade',
     placement: 'arena',
+    integralShell: true,
     costPerSeat: 1320,
     peak: (roof, h) => arenaRoofY(roof, h) + 1.8 + resolveWaveAmplitude(roof),
   },

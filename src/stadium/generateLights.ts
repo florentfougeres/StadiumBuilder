@@ -4,9 +4,9 @@ import {
   sampleCornerQuadrantPoint,
   sampleRoundedBowlRing,
 } from './bowlRing';
-import { getTrackRadialOffset, stadiumCornerLayout } from './capacity';
+import { stadiumCornerLayout } from './capacity';
 import { CORNER_ACCESS_WIDTH } from './generateCornerAccess';
-import { computeStadiumRingBounds } from './generateRoof';
+import { computeStadiumRingBounds } from './roofs/ringBounds';
 import {
   createConcreteBowlMaterial,
   createFacadePbrMaterial,

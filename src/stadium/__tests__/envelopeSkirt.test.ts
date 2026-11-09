@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { disposeObject3D } from '../buildStadiumScene';
-import { computeStadiumRingBounds, generateRoofGroup } from '../generateRoof';
+import { generateRoofGroup } from '../generateRoof';
+import { computeStadiumRingBounds } from '../roofs/ringBounds';
 import { generateEnvelopeSkirt } from '../generateEnvelopeSkirt';
 import { createPresetDocument } from '../presets';
 import { StadiumDocument, StandSide } from '../schema';

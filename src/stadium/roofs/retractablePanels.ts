@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { beamGeometry, chordAt, mergedMesh } from './roofBeams';
-import { RoundedBowlGeometry, sampleRoundedBowlRing } from './bowlRing';
-import { createRoofPbrMaterial, createRoofShadowDepthMaterial } from './materials';
-import { RetractableConfig, resolveRetractable, StadiumDocument } from './schema';
+import { RoundedBowlGeometry, sampleRoundedBowlRing } from '../bowlRing';
+import { createRoofPbrMaterial, createRoofShadowDepthMaterial } from '../materials';
+import { RetractableConfig, resolveRetractable, StadiumDocument } from '../schema';
 
 /**
  * Movable panels of `retractable` and `petal_iris` roofs, laid over the opening left by the

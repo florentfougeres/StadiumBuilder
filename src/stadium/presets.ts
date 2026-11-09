@@ -1,5 +1,7 @@
-import { computeKopWallStandPatch, fitStandRowsToCapacity } from './capacity';
+import { calculateStandMetrics, computeKopWallStandPatch, fitStandRowsToCapacity, stadiumCornerLayout } from './capacity';
+import { FACADE_WALL_OFFSET } from './envelopes/rail';
 import {
+  isContinuousBowlShape,
   riserFromSlopeDeg,
   StadiumDocument,
   StandConfig,
@@ -1832,11 +1834,49 @@ const LEGACY_TEMPLATE_ALIASES: Record<string, string> = {
   english_ground: 'traditional_four_stands_42k',
 };
 
+/** Plan size (m) of a shop: along its front, and from its back to its storefront. */
+const SHOP_SIZE = { width: 20, depth: 15 };
+/** Clearance (m) behind a stand's facade: the entrance canopy, then a walkway. */
+const BEHIND_FACADE = FACADE_WALL_OFFSET + 3.4 + 2;
+
+/**
+ * Presets place their shops by eye behind a stand; this sets each one just clear of the facade and
+ * entrance canopy of the stand it stands behind, whatever depth that stand has in this preset or
+ * in one derived from it.
+ */
+function placeShopsBehindStands(doc: StadiumDocument): void {
+  if (isContinuousBowlShape(doc.shape)) return;
+  const layout = stadiumCornerLayout(doc);
+  const back = (side: StandSide) => (doc.stands[side].enabled ? calculateStandMetrics(doc, side).totalDepth : 0);
+  const lines = {
+    south: layout.southZ + back('south'),
+    north: -layout.northZ + back('north'),
+    east: layout.eastX + back('east'),
+    west: -layout.westX + back('west'),
+  };
+  for (const obj of doc.objects) {
+    if (obj.type !== 'shop') continue;
+    const [x, y, z] = obj.position;
+    // Across the stand is the shop's depth, unless it is turned a quarter.
+    const quarter = Math.abs(Math.sin(obj.rotation[1])) > 0.7;
+    const alongZ = Math.abs(z) / lines.south > Math.abs(x) / lines.east;
+    const half = (alongZ !== quarter ? SHOP_SIZE.depth : SHOP_SIZE.width) / 2;
+    if (alongZ) {
+      const line = z >= 0 ? lines.south : lines.north;
+      obj.position = [x, y, Math.sign(z || 1) * Math.max(Math.abs(z), line + BEHIND_FACADE + half)];
+    } else {
+      const line = x >= 0 ? lines.east : lines.west;
+      obj.position = [Math.sign(x || 1) * Math.max(Math.abs(x), line + BEHIND_FACADE + half), y, z];
+    }
+  }
+}
+
 export function createPresetDocument(presetId: string): StadiumDocument {
   const normalizedId = LEGACY_TEMPLATE_ALIASES[presetId] ?? presetId;
   const found =
     STADIUM_PRESETS.find((p) => p.id === normalizedId) ?? STADIUM_PRESETS[0];
   const doc = found.createDocument();
+  placeShopsBehindStands(doc);
   if (doc.roof.overConcourse === undefined) {
     doc.roof.overConcourse = true;
   }

@@ -41,6 +41,8 @@ export interface EnvelopeCatalogEntry {
   subtitle: string;
   /** Building cost per seat (€) relative to the plain enveloping skin. */
   costPerSeat: number;
+  /** The underside of the stands stays open to view, so stands are built as hollow raked slabs. */
+  hollowStands?: boolean;
 }
 
 export const ENVELOPE_STYLE_CATALOG: EnvelopeCatalogEntry[] = [
@@ -55,12 +57,14 @@ export const ENVELOPE_STYLE_CATALOG: EnvelopeCatalogEntry[] = [
     label: 'Structure apparente',
     subtitle: 'Dessous des gradins, poutres crémaillères & escaliers visibles',
     costPerSeat: -210,
+    hollowStands: true,
   },
   {
     id: 'colonnade_forest',
     label: 'Colonnade / forêt de poteaux',
     subtitle: 'Péristyle dense de colonnes élancées filtrant les coursives',
     costPerSeat: 190,
+    hollowStands: true,
   },
   {
     id: 'louver_curtain',

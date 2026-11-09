@@ -1,13 +1,10 @@
 import * as THREE from 'three';
 import { getBowlArcRange, sampleRoundedBowlRing } from './bowlRing';
-import { computeStadiumRingBounds } from './generateRoof';
+import { computeStadiumRingBounds } from './roofs/ringBounds';
 import { createFacadePbrMaterial, createStructurePbrMaterial, resolveStadiumMaterials } from './materials';
-import {
-  FACADE_WALL_OFFSET,
-  buildEnvelopeDressing,
-  buildParametricFacadeOnRail,
-  FacadeRailSample,
-} from './parametricFacade';
+import { buildEnvelopeDressing } from './envelopes';
+import { FACADE_WALL_OFFSET, type FacadeRailSample } from './envelopes/rail';
+import { buildParametricFacadeOnRail } from './parametricFacade';
 import { StadiumDocument, StandSide } from './schema';
 
 const SIDES: StandSide[] = ['north', 'south', 'east', 'west'];
