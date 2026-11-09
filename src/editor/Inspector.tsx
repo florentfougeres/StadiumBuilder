@@ -11,6 +11,7 @@ import {
   ENVELOPE_STYLE_CATALOG,
   FACADE_MATERIAL_CATALOG,
   FACADE_PATTERN_CATALOG,
+  resolveFacadePalette,
   FLOODLIGHT_RIG_CATALOG,
   getMaterialPreviewDataUrl,
   PLAZA_MATERIAL_CATALOG,
@@ -48,6 +49,7 @@ import {
   vomitoryLevelsOfTier,
   VOMITORY_ROWS_PER_LEVEL,
   resolveCrossAisles,
+  RETRACTABLE_MAX_PYLONS,
   RETRACTABLE_PANEL_LIMITS,
   RetractableConfig,
   RetractableMotion,
@@ -137,6 +139,7 @@ const ENVELOPE_PROFILE_OPTIONS: { id: EnvelopeProfile; label: string; detail: st
   { id: 'straight', label: 'Verticale', detail: 'Peau droite le long des tribunes' },
   { id: 'bulging', label: 'Calebasse bombée', detail: 'Se gonfle à mi-hauteur, comme une calebasse' },
   { id: 'tent', label: 'Tente inclinée', detail: 'Large pied concave qui se replie jusqu’au toit, comme une tente' },
+  { id: 'saucer', label: 'Soucoupe évasée', detail: 'Pied en retrait, la peau s’évase vers le bord du toit' },
 ];
 
 /**
@@ -1655,7 +1658,7 @@ const StandsPanel: React.FC = () => {
       </PanelSection>
       {(separateStands || !editAll) && (
         <PanelSection
-          title={separateStands ? 'Toit et structure' : 'Tribune mobile'}
+          title={separateStands ? 'Toit, structure et façade' : 'Tribune mobile et façade'}
           persistKey="stands:structure"
         >
           {!editAll && (
@@ -1703,6 +1706,26 @@ const StandsPanel: React.FC = () => {
               />
             </>
           )}
+          <SelectField
+            label="Façade"
+            disabled={off}
+            value={stand.envelopeStyleOverride ?? 'inherit'}
+            onChange={(v) => updateStand(target, { envelopeStyleOverride: v === 'inherit' ? undefined : v })}
+            options={[
+              { id: 'inherit', label: 'Comme le stade' },
+              ...ENVELOPE_STYLE_CATALOG.map((o) => ({ id: o.id, label: o.label })),
+            ]}
+          />
+          <SelectField
+            label="Revêtement de façade"
+            disabled={off}
+            value={stand.facadeMaterialOverride ?? 'inherit'}
+            onChange={(v) => updateStand(target, { facadeMaterialOverride: v === 'inherit' ? undefined : v })}
+            options={[
+              { id: 'inherit', label: 'Comme le stade' },
+              ...FACADE_MATERIAL_CATALOG.map((o) => ({ id: o.id, label: o.label })),
+            ]}
+          />
         </PanelSection>
       )}
       <PanelSection title="Public" persistKey="stands:crowd">
@@ -2206,7 +2229,7 @@ function RetractableRoofSection({
   horseshoe: boolean;
   onChange: (patch: Partial<RetractableConfig>) => void;
 }) {
-  const { motion, openRatio, panelCount, panelKind, panelMaterial, parkEnd, suspensionMast } =
+  const { motion, openRatio, panelCount, panelKind, panelMaterial, parkEnd, suspensionMast, mastPosition, pylonCount } =
     retractable;
   const limits = RETRACTABLE_PANEL_LIMITS[motion];
   const parks =
@@ -2259,12 +2282,32 @@ function RetractableRoofSection({
         />
       )}
       {motion === 'fold_central' && (
-        <ToggleField
-          label="Mât incliné porteur"
-          checked={suspensionMast}
-          onChange={(v) => onChange({ suspensionMast: v })}
-        />
+        <FieldRow label="Mât porteur">
+          <Segmented
+            label="Mât porteur"
+            size="sm"
+            value={!suspensionMast ? 'none' : mastPosition}
+            onChange={(v) =>
+              onChange(v === 'none' ? { suspensionMast: false } : { suspensionMast: true, mastPosition: v })
+            }
+            options={[
+              { id: 'none', label: 'Aucun' },
+              { id: 'outside', label: 'Incliné' },
+              { id: 'central', label: 'Aiguille' },
+            ]}
+          />
+        </FieldRow>
       )}
+      <SliderField
+        label="Pylônes porteurs"
+        hint="Pylônes inclinés autour du stade, qui tiennent la couronne fixe par des haubans"
+        min={0}
+        max={RETRACTABLE_MAX_PYLONS}
+        step={1}
+        value={pylonCount}
+        display={pylonCount === 0 ? 'Aucun' : String(pylonCount)}
+        onChange={(v) => onChange({ pylonCount: v })}
+      />
       <Segmented
         label="Type de panneaux"
         value={panelKind}
@@ -2321,6 +2364,18 @@ const FacadePanel: React.FC = () => {
           />
         )}
         {envelope === 'colonnade_forest' && (
+          <Segmented
+            label="Forme des poteaux"
+            size="sm"
+            value={mats.colonnadeShape ?? 'straight'}
+            onChange={(colonnadeShape) => updateMaterials({ colonnadeShape })}
+            options={[
+              { id: 'straight', label: 'Fûts droits' },
+              { id: 'palm', label: 'Palmiers' },
+            ]}
+          />
+        )}
+        {envelope === 'colonnade_forest' && (
           <SliderField
             label="Densité des poteaux"
             hint="Jusqu’à 4 fois plus de poteaux, pour une vraie forêt"
@@ -2368,6 +2423,33 @@ const FacadePanel: React.FC = () => {
             detail: o.subtitle,
           }))}
         />
+        {(pattern === 'pixel_mosaic' || pattern === 'woven_basket') && (
+          <>
+            {resolveFacadePalette(doc)
+              .slice(0, pattern === 'woven_basket' ? 2 : 4)
+              .map((hex, i) => (
+                <ColorField
+                  key={i}
+                  label={pattern === 'woven_basket' ? `Bandes ${i === 0 ? 'montantes' : 'descendantes'}` : `Couleur ${i + 1}`}
+                  value={hex}
+                  onChange={(v) => {
+                    const facadePalette = resolveFacadePalette(doc);
+                    facadePalette[i] = v;
+                    updateMaterials({ facadePalette });
+                  }}
+                />
+              ))}
+            {mats.facadePalette && (
+              <button
+                type="button"
+                onClick={() => updateMaterials({ facadePalette: undefined })}
+                className="text-2xs text-ink-faint underline underline-offset-2 hover:text-ink"
+              >
+                Revenir aux couleurs du club
+              </button>
+            )}
+          </>
+        )}
         <SliderField
           label="Densité du motif"
           min={0.4}

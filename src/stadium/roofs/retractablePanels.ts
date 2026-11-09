@@ -477,7 +477,23 @@ function buildCentralFoldRoof(group: THREE.Group, contour: Pt[], kit: PanelKit, 
     );
   }
 
-  if (cfg.suspensionMast) {
+  if (cfg.suspensionMast && cfg.mastPosition === 'central') {
+    // Needle over the centre: the ring hangs at its foot, stays from its tip fan out to the rim.
+    const tip = new THREE.Vector3(0, ringY + 48, 0);
+    const foot = new THREE.Vector3(0, ringY - 6, 0);
+    const needle = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 2.4, tip.y - foot.y, 10), ctx.primaryStructMat);
+    needle.position.y = (tip.y + foot.y) / 2;
+    needle.castShadow = true;
+    needle.name = 'RetractableRoofCentralNeedle';
+    group.add(needle);
+    const stays = 16;
+    for (let k = 0; k < stays; k++) {
+      const a = (k / stays) * 2 * Math.PI;
+      if (!visible(a)) continue;
+      const rim = rayHit(contour, a);
+      cables.push(beamGeometry(tip, new THREE.Vector3(rim.x, leafY + 1, rim.z), 0.22, 0.22));
+    }
+  } else if (cfg.suspensionMast) {
     // Inclined tower rising beyond the west end and leaning over the bowl.
     const westRim = rayHit(contour, Math.PI);
     const foot = new THREE.Vector3(westRim.x - (ctx.outerOffset - ctx.innerOffset) - 30, 0, 0);
@@ -608,6 +624,46 @@ function buildCombinedStackRoof(group: THREE.Group, contour: Pt[], kit: PanelKit
 }
 
 /**
+ * Inclined pylons standing outside the bowl, leaning out, their tips staying the canopy at its
+ * inner rim and its outer edge; they hold the fixed part of the roof, the panels slide below.
+ */
+function buildPeripheralPylons(cfg: RetractableConfig, ctx: RetractableContext): THREE.Group | null {
+  if (cfg.pylonCount <= 0) return null;
+  const group = new THREE.Group();
+  group.name = 'RetractableRoofPylons';
+  const stays: THREE.BufferGeometry[] = [];
+  const height = ctx.roofY + 42;
+  for (let k = 0; k < cfg.pylonCount; k++) {
+    // Offset by half a step so no pylon sits on a cut axis.
+    const t = (k + 0.5) / cfg.pylonCount;
+    const outer = sampleRoundedBowlRing(ctx.ring, t, ctx.outerOffset + 14);
+    if (ctx.crossSectionClip && outer.z > 0) continue;
+    const foot = new THREE.Vector3(outer.x, 0, outer.z);
+    const tip = new THREE.Vector3(outer.x + outer.nx * 9, height, outer.z + outer.nz * 9);
+    const dir = new THREE.Vector3().subVectors(tip, foot);
+    const pylon = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 2.6, dir.length(), 8), ctx.primaryStructMat);
+    pylon.position.copy(foot).add(tip).multiplyScalar(0.5);
+    pylon.quaternion.setFromUnitVectors(UP, dir.normalize());
+    pylon.castShadow = true;
+    group.add(pylon);
+    for (const dt of [-0.35, 0, 0.35].map((d) => d / cfg.pylonCount)) {
+      const rim = sampleRoundedBowlRing(ctx.ring, t + dt, ctx.innerOffset + 1);
+      const edge = sampleRoundedBowlRing(ctx.ring, t + dt, ctx.outerOffset);
+      stays.push(
+        beamGeometry(tip, new THREE.Vector3(rim.x, ctx.roofY + 2, ctx.crossSectionClip ? Math.min(0, rim.z) : rim.z), 0.2, 0.2),
+        beamGeometry(tip, new THREE.Vector3(edge.x, ctx.roofY + 1, ctx.crossSectionClip ? Math.min(0, edge.z) : edge.z), 0.2, 0.2)
+      );
+    }
+    // Backstay to the ground, anchoring the pull of the canopy.
+    const anchor = sampleRoundedBowlRing(ctx.ring, t, ctx.outerOffset + 34);
+    stays.push(beamGeometry(tip, new THREE.Vector3(anchor.x, 0, anchor.z), 0.3, 0.3));
+  }
+  const cables = mergedMesh(stays, ctx.primaryStructMat, 'RetractableRoofPylonStays');
+  if (cables) group.add(cables);
+  return group.children.length ? group : null;
+}
+
+/**
  * Movable panels at the document's `openRatio`. The group's `userData.rebuildAt(ratio)` rebuilds
  * them at another opening with the same materials, so the editor can animate the roof frame by
  * frame without regenerating the stadium.
@@ -661,6 +717,8 @@ export function buildRetractablePanels(doc: StadiumDocument, ctx: RetractableCon
         buildCombinedStackRoof(group, contour, kit, ctx);
         break;
     }
+    const pylons = buildPeripheralPylons(cfg, ctx);
+    if (pylons) group.add(pylons);
     // Kept out of the static mesh merge so it can be swapped while the roof moves.
     group.userData.keepSeparate = true;
     group.userData.rebuildAt = buildAt;

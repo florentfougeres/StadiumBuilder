@@ -259,6 +259,16 @@ export function applyShape(d: StadiumDocument, shape: StadiumShape): void {
         );
       }
     });
+  } else if (shape === 'cricket_oval') {
+    // A low bowl of gentle terraces around the oval outfield, no running track.
+    d.cornerFill = true;
+    d.pitch.hasTrack = false;
+    if (d.roof.style === 'truss') d.roof.style = 'cantilever';
+    (['north', 'south', 'east', 'west'] as StandSide[]).forEach((s) => {
+      d.stands[s].enabled = true;
+      d.stands[s].slopeAngleDeg = 24;
+      d.stands[s].riserHeight = Number((Math.tan((24 * Math.PI) / 180) * d.stands[s].rowDepth).toFixed(3));
+    });
   } else if (shape === 'octagonal_arena') {
     d.cornerFill = true;
     if (d.roof.style === 'truss') d.roof.style = 'cantilever';

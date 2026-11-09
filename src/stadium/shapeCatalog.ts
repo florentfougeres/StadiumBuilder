@@ -118,6 +118,14 @@ export const SHAPE_CATALOG = {
     costPerSeat: BOWL,
     thumbnailLowView: true,
   },
+  cricket_oval: {
+    label: 'Ovale de cricket',
+    desc: 'Bol bas autour d’un grand terrain ovale engazonné, pour le cricket et le rugby',
+    continuous: true,
+    costPerSeat: BOWL,
+    thumbnailStands: 'olympic_masts_80k',
+    thumbnailLowView: true,
+  },
   d_shape_vertical: {
     label: 'Chaudron en D',
     desc: 'Trois côtés en cuvette face à une tribune d’honneur verticale',

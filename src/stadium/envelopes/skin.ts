@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { resolveStadiumMaterials } from '../materials';
-import type { FacadeMaterialId, StadiumDocument } from '../schema';
+import type { FacadeMaterialId, StadiumMaterialsConfig } from '../schema';
 import {
   createRailSampler,
   FACADE_WALL_OFFSET,
@@ -100,11 +99,12 @@ export function buildCurtainWallArticulation(params: {
 }
 
 /** Outward offset (m) of a plain skin at height fraction `vf` for the chosen silhouette, or null when upright. */
-function skinSilhouette(doc: StadiumDocument): ((h: number, vf: number) => number) | null {
-  const mats = resolveStadiumMaterials(doc);
+function skinSilhouette(mats: StadiumMaterialsConfig): ((h: number, vf: number) => number) | null {
   const profile = mats.envelopeProfile ?? 'straight';
   if (profile === 'bulging') return (h, vf) => FACADE_WALL_OFFSET + Math.sin(vf * Math.PI) * Math.min(7, h * 0.17);
   if (profile === 'tent') return (h, vf) => FACADE_WALL_OFFSET + Math.pow(1 - vf, 1.5) * Math.min(16, h * 0.55);
+  // Glazed foot set back under the stands, the skin flaring out to the roof edge like a saucer.
+  if (profile === 'saucer') return (h, vf) => FACADE_WALL_OFFSET - 1.5 + Math.pow(vf, 1.4) * Math.min(12, h * 0.4);
   if (mats.facade === 'etfe_cushions_facade') return (_h, vf) => Math.sin(vf * Math.PI) * 3.8 + vf * 0.8;
   return null;
 }
@@ -158,7 +158,7 @@ function plainSkinFinish(ctx: EnvelopeStandContext): void {
 /** `enveloping_skin`: one continuous skin, upright or shaped (bulging, tent, ETFE cushions). */
 export const envelopingSkin: EnvelopeDrawer = {
   stand(ctx) {
-    const silhouette = skinSilhouette(ctx.doc);
+    const silhouette = skinSilhouette(ctx.mats);
     if (silhouette) {
       ctx.add(
         ctx.loft((pt) => {

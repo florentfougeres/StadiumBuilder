@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { ENVELOPE_STYLE_CATALOG, resolveStadiumMaterials } from '../materials';
+import { ENVELOPE_STYLE_CATALOG, resolveFacadePalette, resolveStadiumMaterials } from '../materials';
 import { buildParametricFacadeOnRail } from '../parametricFacade';
-import type { EnvelopeStyle, StadiumDocument, StructureMaterialId } from '../schema';
+import type { EnvelopeStyle, FacadeMaterialId, StadiumDocument, StandConfig } from '../schema';
 import { colonnadeForest } from './colonnadeForest';
 import { exposedStructure } from './exposedStructure';
+import { externalStairs } from './externalStairs';
 import { helicalRamps } from './helicalRamps';
 import { horizontalStrata } from './horizontalStrata';
 import { louverCurtain } from './louverCurtain';
@@ -31,6 +32,7 @@ export const ENVELOPE_DRAWERS: Record<EnvelopeStyle, EnvelopeDrawer> = {
   media_mesh: mediaMesh,
   helical_ramps: helicalRamps,
   horizontal_strata: horizontalStrata,
+  external_stairs: externalStairs,
 };
 
 /** Ground level (m) of the facade: the berm of a sunken bowl, never above two thirds of the crest. */
@@ -38,13 +40,36 @@ export function facadeGradeY(sunkenDepth: number, crestY: number): number {
   return Math.min(sunkenDepth, Math.max(0, crestY * 0.68));
 }
 
+/** Envelope style and cladding of `stand`'s facade: its own overrides, else the stadium's. */
+export function resolveStandFacade(
+  doc: StadiumDocument,
+  stand?: StandConfig
+): { envelopeStyle: EnvelopeStyle; facade: FacadeMaterialId } {
+  const mats = resolveStadiumMaterials(doc);
+  const ownStyle = stand?.envelopeStyleOverride;
+  const ownFacade = stand?.facadeMaterialOverride;
+  return {
+    envelopeStyle: ownStyle && ownStyle !== 'inherit' ? ownStyle : (mats.envelopeStyle ?? 'enveloping_skin'),
+    facade: ownFacade && ownFacade !== 'inherit' ? ownFacade : mats.facade,
+  };
+}
+
+/** Whether `stand` (or, without one, the stadium) overrides the stadium's envelope or cladding. */
+export function hasOwnFacade(stand: StandConfig): boolean {
+  return (
+    (stand.envelopeStyleOverride !== undefined && stand.envelopeStyleOverride !== 'inherit') ||
+    (stand.facadeMaterialOverride !== undefined && stand.facadeMaterialOverride !== 'inherit')
+  );
+}
+
 /**
  * Stands whose underside is left open to view (an envelope that shows it, or a steel or timber
  * frame of their own), so the stand is built as a hollow raked slab rather than a solid block.
  */
-export function isHollowStand(doc: StadiumDocument, ownStructure?: StructureMaterialId | 'inherit'): boolean {
+export function isHollowStand(doc: StadiumDocument, stand?: StandConfig): boolean {
   if (doc.roof.style === 'enveloping_shell') return false;
-  const envelope = resolveStadiumMaterials(doc).envelopeStyle ?? 'enveloping_skin';
+  const envelope = resolveStandFacade(doc, stand).envelopeStyle;
+  const ownStructure = stand?.structureMaterialOverride;
   return (
     ENVELOPE_STYLE_CATALOG.find((e) => e.id === envelope)?.hollowStands === true ||
     (ownStructure !== undefined && ownStructure !== 'inherit' && ownStructure !== 'reinforced_concrete')
@@ -67,6 +92,8 @@ export interface StandEnvelopeParams {
   turnstileTex: THREE.Texture;
   /** Accent of an upright plain skin instead of pilasters (bowl shapes with their own elevation). */
   skinAccent?: 'piers' | 'bands';
+  /** The stand this facade belongs to, for its own envelope style (none for shared corners). */
+  stand?: StandConfig;
   name?: string;
 }
 
@@ -77,8 +104,9 @@ export function buildStandEnvelope(params: StandEnvelopeParams): THREE.Group {
   group.name = params.name ?? 'StandEnvelope';
   if (doc.roof.style === 'enveloping_shell' || rail.length < 2) return group;
 
-  const mats = resolveStadiumMaterials(doc);
-  const envelope: EnvelopeStyle = mats.envelopeStyle ?? 'enveloping_skin';
+  const own = resolveStandFacade(doc, params.stand);
+  const mats = { ...resolveStadiumMaterials(doc), envelopeStyle: own.envelopeStyle, facade: own.facade };
+  const envelope = own.envelopeStyle;
   const drawer = ENVELOPE_DRAWERS[envelope];
   const night = doc.lighting !== 'day';
   const wallMat = facadeMat.clone();
@@ -154,6 +182,7 @@ export function buildStandEnvelope(params: StandEnvelopeParams): THREE.Group {
         bulge: mats.facadeBulge ?? 0,
         primaryMat: facadeMat,
         accentMat: structureMat,
+        palette: resolveFacadePalette(doc),
       })
     );
   }

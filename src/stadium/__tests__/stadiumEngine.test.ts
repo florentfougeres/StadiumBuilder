@@ -121,7 +121,7 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
     }
 
     const shapes = Object.keys(STADIUM_SHAPE_LABELS) as StadiumShape[];
-    expect(shapes.length).toBe(15);
+    expect(shapes.length).toBe(16);
 
     const countWorldIntrusions = (docToTest: ReturnType<typeof createPresetDocument>) => {
       const bowlGroup = generateStandsGroup(docToTest, false);

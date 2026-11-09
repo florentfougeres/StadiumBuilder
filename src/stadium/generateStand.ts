@@ -71,7 +71,7 @@ import {
   resolveCrowdAttendance,
 } from './schema';
 import { createStandSeatPainter, SeatPainter } from './seatPattern';
-import { buildStandEnvelope, facadeGradeY, isHollowStand } from './envelopes';
+import { buildStandEnvelope, facadeGradeY, hasOwnFacade, isHollowStand, resolveStandFacade } from './envelopes';
 import { splitRail } from './envelopes/rail';
 import { CORNER_STRUCTURES } from './corners';
 import { createStrut } from './meshKit';
@@ -662,7 +662,7 @@ function buildStraightStandMesh(
 ): THREE.Group {
   const group = new THREE.Group();
   const mats = resolveStadiumMaterials(doc);
-  const isHollow = isHollowStand(doc, stand.structureMaterialOverride);
+  const isHollow = isHollowStand(doc, stand);
   const isNight = doc.lighting !== 'day';
 
   const {
@@ -1267,6 +1267,7 @@ function buildStraightStandMesh(
         depth: totalDepth,
       })),
       closed: false,
+      stand,
       facadeMat,
       structureMat,
       concreteMat,
@@ -2133,7 +2134,7 @@ export function resolveCornerFollow(doc: StadiumDocument): Partial<Record<Corner
   const sections = new Map<StandSide, StandProfile>();
   const section = (side: StandSide) => {
     const stand = doc.stands[side];
-    if (!sections.has(side)) sections.set(side, buildStandProfilePoints(stand, isHollowStand(doc, stand.structureMaterialOverride)));
+    if (!sections.has(side)) sections.set(side, buildStandProfilePoints(stand, isHollowStand(doc, stand)));
     return sections.get(side)!;
   };
   const follow: Partial<Record<CornerQuadrantId, StandSide>> = {};
@@ -2190,7 +2191,7 @@ function buildCornerVirageQuadrant(
   const mats = resolveStadiumMaterials(doc);
   const envelope: EnvelopeStyle = mats.envelopeStyle ?? 'enveloping_skin';
   const isHollow =
-    isHollowStand(doc, standA.structureMaterialOverride) || isHollowStand(doc, standB.structureMaterialOverride);
+    isHollowStand(doc, standA) || isHollowStand(doc, standB);
 
   const profA = buildStandProfilePoints(standA, isHollow);
   const profB = buildStandProfilePoints(standB, isHollow);
@@ -4262,21 +4263,51 @@ function buildModernBowlSweep(
       depth: outerD,
     };
   });
-  for (const run of splitRail(bowlRail, closed)) {
-    group.add(
-      buildStandEnvelope({
-        doc,
-        rail: run.samples,
-        closed: run.closed,
-        facadeMat,
-        structureMat,
-        concreteMat,
-        turnstileTex,
-        skinAccent:
-          doc.shape === 'steep_cauldron' ? 'piers' : doc.shape === 'olympic_oval' ? 'bands' : undefined,
-        name: 'BowlEnvelope',
-      })
-    );
+  // Quarters of the ring from t = 0: east, south, west, north (as the seats). A stand with its own
+  // envelope or cladding gets its quarter of the facade; the others share one rail.
+  const quarterSides: StandSide[] = ['east', 'south', 'west', 'north'];
+  const ownFacades = quarterSides.some((side) => hasOwnFacade(doc.stands[side]));
+  const quarterOf = (s: number) => ((Math.round(tAtSlice(s) * 4) % 4) + 4) % 4;
+  const facadeRuns: { samples: (typeof bowlRail)[number][]; closed: boolean; side?: StandSide }[] = [];
+  if (!ownFacades) facadeRuns.push({ samples: bowlRail, closed });
+  else {
+    for (let q = 0; q < 4; q++) {
+      // Each quarter keeps the first sample of the next one so the facade stays continuous.
+      const samples = bowlRail.map((pt, s) =>
+        quarterOf(s) === q || quarterOf((s - 1 + bowlRail.length) % bowlRail.length) === q ? pt : null
+      );
+      facadeRuns.push({ samples, closed: false, side: quarterSides[q] });
+    }
+  }
+  for (const facadeRun of facadeRuns) {
+    const stand = facadeRun.side ? doc.stands[facadeRun.side] : undefined;
+    const runFacadeMat =
+      stand && hasOwnFacade(stand)
+        ? createFacadePbrMaterial(
+            resolveStandFacade(doc, stand).facade,
+            doc.lighting,
+            doc.shape === 'octagonal_arena',
+            maxAnisotropy,
+            mats.facadeGlowHex
+          )
+        : facadeMat;
+    for (const run of splitRail(facadeRun.samples, facadeRun.closed)) {
+      group.add(
+        buildStandEnvelope({
+          doc,
+          rail: run.samples,
+          closed: run.closed,
+          stand,
+          facadeMat: runFacadeMat,
+          structureMat,
+          concreteMat,
+          turnstileTex,
+          skinAccent:
+            doc.shape === 'steep_cauldron' ? 'piers' : doc.shape === 'olympic_oval' ? 'bands' : undefined,
+          name: facadeRun.side ? `BowlEnvelope_${facadeRun.side}` : 'BowlEnvelope',
+        })
+      );
+    }
   }
   return group;
 }
@@ -4350,7 +4381,9 @@ export function generateStandsGroup(
       doc,
       seatMat,
       concreteMat,
-      facadeMat,
+      hasOwnFacade(stand)
+        ? createFacadePbrMaterial(resolveStandFacade(doc, stand).facade, doc.lighting, false, maxAnisotropy, mats.facadeGlowHex)
+        : facadeMat,
       stand.structureMaterialOverride && stand.structureMaterialOverride !== 'inherit'
         ? createStructurePbrMaterial(stand.structureMaterialOverride, maxAnisotropy)
         : structureMat,

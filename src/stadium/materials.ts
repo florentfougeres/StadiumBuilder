@@ -96,6 +96,12 @@ export const ENVELOPE_STYLE_CATALOG: EnvelopeCatalogEntry[] = [
     subtitle: 'Coursives et balcons empilés, plus ou moins ajourés, au relief ondulant',
     costPerSeat: 210,
   },
+  {
+    id: 'external_stairs',
+    label: 'Escaliers extérieurs',
+    subtitle: 'Ossature acier apparente et volées d’escaliers en zigzag sur la façade',
+    costPerSeat: 140,
+  },
 ];
 
 export const FACADE_MATERIAL_CATALOG: MaterialCatalogEntry<FacadeMaterialId>[] = [
@@ -672,7 +678,30 @@ export const FACADE_PATTERN_CATALOG: SimpleCatalogEntry<FacadePatternId>[] = [
     label: 'Voronoï',
     subtitle: 'Cellules organiques irrégulières, plus fines vers le haut',
   },
+  {
+    id: 'pixel_mosaic',
+    label: 'Mosaïque de pixels',
+    subtitle: 'Panneaux plats de plusieurs couleurs tirées au hasard',
+  },
+  {
+    id: 'woven_basket',
+    label: 'Tressage',
+    subtitle: 'Bandes diagonales de deux couleurs qui passent dessus-dessous',
+  },
 ];
+
+/**
+ * The four colours of the multicolour facade patterns: each chosen one, else the club colours
+ * followed by a lighter and a darker shade of the main one.
+ */
+export function resolveFacadePalette(doc: StadiumDocument): string[] {
+  const own = resolveStadiumMaterials(doc).facadePalette ?? [];
+  const { seatsPrimary, seatsSecondary } = doc.colors;
+  const shade = (hex: string, toward: number, t: number) =>
+    `#${new THREE.Color(hex).lerp(new THREE.Color(toward), t).getHexString()}`;
+  const club = [seatsPrimary, seatsSecondary, shade(seatsPrimary, 0xffffff, 0.45), shade(seatsPrimary, 0x000000, 0.35)];
+  return club.map((hex, i) => own[i] ?? hex);
+}
 
 export const SKYLIGHT_MODE_CATALOG: SimpleCatalogEntry<SkylightMode>[] = [
   {

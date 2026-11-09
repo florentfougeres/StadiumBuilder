@@ -574,6 +574,10 @@ const ARC_STANDS_END_BOW = 0.26;
 /** Smallest gap between the pitch edge and the front of the stands when there is no track (m). */
 export const MIN_PITCH_SETBACK = 4.5;
 
+/** Half-length and half-width (m) of a cricket ground's outfield, inside its boundary rope. */
+export const CRICKET_OUTFIELD_HALF_X = 74;
+export const CRICKET_OUTFIELD_HALF_Z = 64;
+
 export function buildShapeBowlRing(
   shape: StadiumShape,
   pitchLength: number,
@@ -594,6 +598,13 @@ export function buildShapeBowlRing(
       Math.hypot(pitchLength / 2 + endTrackOffset, pitchWidth / 2 + sideTrackOffset) +
       Math.max(3, Math.min(avgDistX, avgDistZ) * 0.6);
     return createRoundedBowlRing(radius, radius, radius, false);
+  }
+
+  if (shape === 'cricket_oval') {
+    // The stands ring the whole oval outfield, a few metres behind its boundary rope.
+    const halfX = Math.max(CRICKET_OUTFIELD_HALF_X, pitchLength / 2 + MIN_PITCH_SETBACK) + Math.max(3, avgDistX * 0.5);
+    const halfZ = Math.max(CRICKET_OUTFIELD_HALF_Z, pitchWidth / 2 + MIN_PITCH_SETBACK) + Math.max(3, avgDistZ * 0.5);
+    return createRoundedBowlRing(halfX, halfZ, halfZ * 0.96, false);
   }
 
   const octPush = shape === 'octagonal_arena' ? 6.2 : 0;

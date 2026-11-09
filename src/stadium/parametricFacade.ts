@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { FacadePatternId } from './schema';
-import { createRailSampler, type FacadeRailSample, referenceHeight } from './envelopes/rail';
+import { createRailSampler, type FacadeRailSample, referenceHeight, slabMatrix } from './envelopes/rail';
 
 /**
  * Parametric relief patterns (honeycomb, voronoi, triangulated lace, scales…) laid over a facade
@@ -141,6 +141,127 @@ function honeycombCells(
     }
   }
   return cells;
+}
+
+/** Panel colours when none are given: blues and whites. */
+const DEFAULT_FACADE_PALETTE = ['#1d4ed8', '#e2e8f0', '#60a5fa', '#f8fafc'];
+
+/** Instanced mesh whose instances take their colour from `colors`, on a white satin panel. */
+function colouredInstances(
+  name: string,
+  geo: THREE.BufferGeometry,
+  matrices: THREE.Matrix4[],
+  colors: THREE.Color[]
+): THREE.InstancedMesh | null {
+  if (matrices.length === 0) return null;
+  const mat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.38, metalness: 0.12, clearcoat: 0.6 });
+  const inst = new THREE.InstancedMesh(geo, mat, matrices.length);
+  inst.name = name;
+  matrices.forEach((m, i) => {
+    inst.setMatrixAt(i, m);
+    inst.setColorAt(i, colors[i]);
+  });
+  inst.instanceMatrix.needsUpdate = true;
+  if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
+  inst.computeBoundingSphere();
+  inst.castShadow = true;
+  inst.receiveShadow = true;
+  return inst;
+}
+
+/**
+ * `pixel_mosaic`: a grid of flat panels, each one a colour of the palette drawn at random, a few
+ * left out and the others set at slightly different depths, so the facade reads as pixels.
+ */
+function buildPixelMosaic(
+  sampleAtArc: (s: number) => FacadeRailSample,
+  totalLen: number,
+  closed: boolean,
+  density: number,
+  depth: number,
+  palette: string[],
+  group: THREE.Group
+): THREE.Group | null {
+  const colours = (palette.length ? palette : DEFAULT_FACADE_PALETTE).map((c) => new THREE.Color(c));
+  const panelW = Math.max(1, 2.4 / density);
+  const panelH = Math.max(0.8, 1.7 / density);
+  const cols = Math.max(2, Math.round(totalLen / panelW));
+  const stepS = totalLen / cols;
+  const dummy = new THREE.Object3D();
+  const matrices: THREE.Matrix4[] = [];
+  const colors: THREE.Color[] = [];
+  for (let c = 0; c < cols; c++) {
+    const pt = sampleAtArc(closed ? ((c + 0.5) * stepS) % totalLen : (c + 0.5) * stepS);
+    const wallH = pt.yTop - pt.yBottom - 0.3;
+    const rows = Math.floor(wallH / panelH);
+    for (let r = 0; r < rows; r++) {
+      if (hash01(c, r + 0.37) < 0.06) continue;
+      const out = depth * (0.25 + hash01(c + 0.5, r) * 0.3);
+      dummy.position.set(pt.x + pt.nx * out, pt.yBottom + 0.15 + (r + 0.5) * panelH, pt.z + pt.nz * out);
+      dummy.rotation.set(0, Math.atan2(pt.nx, pt.nz), 0);
+      dummy.scale.set(stepS * 0.94, panelH * 0.92, 0.08);
+      dummy.updateMatrix();
+      matrices.push(dummy.matrix.clone());
+      colors.push(colours[Math.floor(hash01(c * 1.7, r * 2.3) * colours.length) % colours.length]);
+    }
+  }
+  const mesh = colouredInstances('FacadePixelMosaic', new THREE.BoxGeometry(1, 1, 1), matrices, colors);
+  if (!mesh) return null;
+  group.add(mesh);
+  return group;
+}
+
+/**
+ * `woven_basket`: two families of diagonal strips, one per palette colour, passing over and under
+ * each other at every crossing like the weave of a basket.
+ */
+function buildWovenBasket(
+  sampleAtArc: (s: number) => FacadeRailSample,
+  totalLen: number,
+  closed: boolean,
+  density: number,
+  depth: number,
+  palette: string[],
+  group: THREE.Group
+): THREE.Group | null {
+  const pal = palette.length ? palette : DEFAULT_FACADE_PALETTE;
+  const colours = [new THREE.Color(pal[0]), new THREE.Color(pal[1] ?? pal[0])];
+  const pitch = Math.max(2, 4.2 / density);
+  const half = pitch / 2;
+  const stripW = pitch * 0.46;
+  const refH = referenceHeight(sampleAtArc, totalLen) + 0.5;
+  const at = (s: number, y: number, out: number) => {
+    const pt = sampleAtArc(closed ? ((s % totalLen) + totalLen) % totalLen : Math.max(0, Math.min(totalLen, s)));
+    return { v: new THREE.Vector3(pt.x + pt.nx * out, pt.yBottom + y, pt.z + pt.nz * out), h: pt.yTop - pt.yBottom - 0.2 };
+  };
+  const matrices: THREE.Matrix4[] = [];
+  const colors: THREE.Color[] = [];
+  const cells = Math.ceil(totalLen / half);
+  const rows = Math.ceil(refH / half);
+  // Each segment runs across one diagonal cell between two crossings; its family (rising or
+  // falling) alternates its depth with the other family's from one cell to the next.
+  for (let i = closed ? 0 : -rows; i < cells; i++) {
+    for (let k = 0; k < rows; k++) {
+      for (const fam of [0, 1]) {
+        const s0 = i * half;
+        const s1 = s0 + half;
+        const y0 = k * half;
+        const y1 = y0 + half;
+        if (!closed && (s0 < 0 || s1 > totalLen)) continue;
+        const over = (i + k + fam) % 2 === 0;
+        const out = depth * (over ? 0.6 : 0.3);
+        const a = at(s0, fam === 0 ? y0 : y1, out);
+        const b = at(s1, fam === 0 ? y1 : y0, out);
+        if (Math.max(y0, y1) > Math.min(a.h, b.h)) continue;
+        matrices.push(slabMatrix(a.v, b.v, 0.14, stripW));
+        colors.push(colours[fam]);
+      }
+    }
+  }
+  const mesh = colouredInstances('FacadeWovenBasket', new THREE.BoxGeometry(1, 1, 1), matrices, colors);
+  if (!mesh) return null;
+  group.add(mesh);
+  return group;
 }
 
 /** Deterministic pseudo-random in `[0, 1)`. */
@@ -313,6 +434,8 @@ export function buildParametricFacadeOnRail(params: {
   bulge?: number;
   primaryMat: THREE.Material;
   accentMat: THREE.Material;
+  /** Colours of `pixel_mosaic` panels and `woven_basket` strips (see `resolveFacadePalette`). */
+  palette?: string[];
   name?: string;
 }): THREE.Group | null {
   const {
@@ -324,6 +447,7 @@ export function buildParametricFacadeOnRail(params: {
     bulge = 0,
     primaryMat,
     accentMat,
+    palette = DEFAULT_FACADE_PALETTE,
     name = 'ParametricFacadeRelief',
   } = params;
 
@@ -348,6 +472,14 @@ export function buildParametricFacadeOnRail(params: {
   const dir = new THREE.Vector3();
   const mid = new THREE.Vector3();
   const qOrient = new THREE.Quaternion();
+
+  if (pattern === 'pixel_mosaic') {
+    return buildPixelMosaic(sampleAtArc, totalLen, closed, safeDensity, safeDepth, palette, group);
+  }
+
+  if (pattern === 'woven_basket') {
+    return buildWovenBasket(sampleAtArc, totalLen, closed, safeDensity, safeDepth, palette, group);
+  }
 
   if (pattern === 'triangulated_lace' || pattern === 'scales') {
     return buildTiledSkin(pattern, sampleAtArc, totalLen, closed, safeDensity, safeDepth, bulge, primaryMat, group);

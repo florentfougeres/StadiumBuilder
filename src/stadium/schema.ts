@@ -10,9 +10,9 @@ export type { RoofStyle };
 
 /**
  * Silhouette of a continuous bowl's outer skin: upright, bulging out at mid-height (a calabash),
- * or a tent leaning in from a wide foot up to the roof.
+ * a tent leaning in from a wide foot up to the roof, or a saucer flaring out from a recessed foot.
  */
-export type EnvelopeProfile = 'straight' | 'bulging' | 'tent';
+export type EnvelopeProfile = 'straight' | 'bulging' | 'tent' | 'saucer';
 
 export type EnvelopeStyle =
   | 'enveloping_skin'
@@ -22,7 +22,8 @@ export type EnvelopeStyle =
   | 'stacked_arcades'
   | 'media_mesh'
   | 'helical_ramps'
-  | 'horizontal_strata';
+  | 'horizontal_strata'
+  | 'external_stairs';
 
 export type PlacedObjectType =
   | 'screen'
@@ -106,7 +107,9 @@ export type FacadePatternId =
   | 'triangulated_lace'
   | 'scales'
   | 'honeycomb'
-  | 'voronoi';
+  | 'voronoi'
+  | 'pixel_mosaic'
+  | 'woven_basket';
 
 export type FloodlightRigMode = 'roof_gantry' | 'corner_masts' | 'both' | 'none';
 
@@ -139,6 +142,10 @@ export interface StandConfig {
   retractShift?: number;
   /** Structure of this stand only (rectangular grounds); steel or timber leaves the underside open. */
   structureMaterialOverride?: StructureMaterialId | 'inherit';
+  /** Envelope style of this stand's facade, for stands built in different eras or styles. */
+  envelopeStyleOverride?: EnvelopeStyle | 'inherit';
+  /** Facade cladding of this stand. */
+  facadeMaterialOverride?: FacadeMaterialId | 'inherit';
   /** Default forward cantilever advance (m) for upper tiers on this stand (`0..8.5`). */
   tierOverhang?: number;
   /** Independent per-tier row counts, slopes, and cantilever overhangs. */
@@ -297,9 +304,16 @@ export interface RetractableConfig {
   panelMaterial: RoofMaterialId;
   /** Sliding motions: end(s) of the long axis where open panels park. */
   parkEnd: 'east' | 'west' | 'both';
-  /** `fold_central`: the central ring hangs from an inclined mast outside the bowl. */
+  /** `fold_central`: the central ring hangs from a mast. */
   suspensionMast: boolean;
+  /** `fold_central` with `suspensionMast`: an inclined tower outside the bowl, or a needle over the centre. */
+  mastPosition: 'outside' | 'central';
+  /** Inclined pylons standing around the bowl and holding the fixed canopy by stays (`0` = none). */
+  pylonCount: number;
 }
+
+/** Most pylons a retractable roof can stand on. */
+export const RETRACTABLE_MAX_PYLONS = 12;
 
 /** Allowed `panelCount` range and default per motion. */
 export const RETRACTABLE_PANEL_LIMITS: Record<
@@ -336,6 +350,8 @@ export function resolveRetractable(roof: RoofConfig): RetractableConfig {
       r.panelMaterial ?? (panelKind === 'membrane' ? 'ptfe_membrane' : 'polycarbonate_glass'),
     parkEnd: r.parkEnd ?? 'both',
     suspensionMast: r.suspensionMast ?? false,
+    mastPosition: r.mastPosition ?? 'outside',
+    pylonCount: Math.max(0, Math.min(RETRACTABLE_MAX_PYLONS, Math.round(r.pylonCount ?? 0))),
   };
 }
 
@@ -653,6 +669,8 @@ export interface StadiumMaterialsConfig {
   facadeGlowHex?: string;
   /** Parametric 3D geometric relief pattern overlaid on the exterior facade. */
   facadePattern?: FacadePatternId;
+  /** Colours of the `pixel_mosaic` panels and `woven_basket` strips; absent uses the club colours. */
+  facadePalette?: string[];
   /** Parametric pattern repetition density (`0.4..2.2`). */
   facadeDensity?: number;
   /** Outward 3D relief projection depth in metres (`0.15..2.4`). */
@@ -661,6 +679,8 @@ export interface StadiumMaterialsConfig {
   facadeBulge?: number;
   /** `colonnade_forest`: column density multiplier (`0.5..4`, default 1). */
   colonnadeDensity?: number;
+  /** `colonnade_forest`: slender straight columns, or date palms fanning out under the cornice. */
+  colonnadeShape?: 'straight' | 'palm';
 }
 
 export const DEFAULT_STADIUM_MATERIALS: StadiumMaterialsConfig = {
@@ -979,6 +999,7 @@ export const STADIUM_SHAPE_LABELS: Record<StadiumShape, string> = {
   steep_cauldron: 'Chaudron parabolique raide',
   d_shape_vertical: 'Cuvette en D & loges verticales',
   olympic_oval: 'Stade avec piste d’athlétisme',
+  cricket_oval: 'Ovale de cricket',
   horseshoe: 'Fer à cheval (en U)',
   sunken_bowl: 'Amphithéâtre semi-enterré',
   octagonal_arena: 'Arène octogonale facettée',

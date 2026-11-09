@@ -6,6 +6,7 @@ import {
   createFacadePbrMaterial,
   createStructurePbrMaterial,
   resolveStadiumMaterials,
+  resolveFacadePalette,
 } from './materials';
 import { buildEnvelopeDressing } from './envelopes';
 import { buildParametricFacadeOnRail } from './parametricFacade';
@@ -161,6 +162,7 @@ export function generateConcourseGroup(
       bulge: mats.facadeBulge ?? 0,
       primaryMat: facadeMat,
       accentMat: structMat,
+      palette: resolveFacadePalette(doc),
       name: 'ConcourseParametricFacade',
     });
     if (relief) {
