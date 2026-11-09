@@ -2,14 +2,19 @@ import * as THREE from 'three';
 import { createRailSampler, instancedBoxes, railPoint, railStations, slab, strutMatrix, verticals } from './rail';
 import type { FacadeRailSample } from './rail';
 import { dressingGroup, place } from './dressingKit';
-import type { EnvelopeDrawer } from './types';
+import type { EnvelopeDrawer, EnvelopeStandContext } from './types';
 
 /**
  * `colonnade_forest`: behind the stands, a recessed glazed core, a deep cornice and three
  * staggered rows of slender columns (density adjustable); in front of a wall, two staggered rows.
  */
 export const colonnadeForest: EnvelopeDrawer = {
-  stand({ rail, closed, mats, structureMat, loft, wall, add }) {
+  stand({ rail, closed, mats, structureMat, facadeMat, loft, wall, add }) {
+    if (mats.colonnadeShape === 'doric') {
+      add(wall(-1.6, 0.8));
+      doricColonnade(rail, closed, mats.colonnadeDensity ?? 1, facadeMat, loft, add);
+      return;
+    }
     add(wall(-1.6, 0.8), loft(slab(-1.6, 6, 0.95, (pt) => pt.yTop - 0.8), structureMat));
     if (mats.colonnadeShape === 'palm') {
       add(palmColumns(railStations(rail, closed, 7.5 / Math.max(0.5, Math.min(4, mats.colonnadeDensity ?? 1))), structureMat));
@@ -87,4 +92,99 @@ function palmColumns(stations: FacadeRailSample[], mat: THREE.Material): THREE.G
     }
   }
   return group.children.length ? group : null;
+}
+
+/** Doric order: 20 flutes, an entablature 1/4 of the column height, columns 7 diameters tall. */
+const DORIC_FLUTES = 20;
+const COLUMN_OUT = 3.2;
+
+/** Unit-height fluted shaft of unit radius, slightly tapering toward the top. */
+function flutedShaft(): THREE.BufferGeometry {
+  const geo = new THREE.CylinderGeometry(0.86, 1, 1, DORIC_FLUTES * 4, 1, false);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const r = Math.hypot(x, z);
+    if (r < 1e-4) continue;
+    const a = Math.atan2(z, x);
+    // Shallow concave flutes meeting at sharp arrises.
+    const k = 1 - 0.07 * Math.abs(Math.sin((a * DORIC_FLUTES) / 2));
+    pos.setX(i, x * k);
+    pos.setZ(i, z * k);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Neoclassical Doric portico in front of the facade: a stepped stylobate, a row of fluted columns
+ * with their capitals, and an entablature (architrave, frieze with triglyphs, projecting cornice).
+ */
+function doricColonnade(
+  rail: EnvelopeStandContext['rail'],
+  closed: boolean,
+  density: number,
+  stone: THREE.Material,
+  loft: EnvelopeStandContext['loft'],
+  add: EnvelopeStandContext['add']
+): void {
+  const tall = Math.max(...rail.map((pt) => pt.yTop - pt.yBottom));
+  if (tall < 6) return;
+  const entH = Math.max(1.6, Math.min(5, tall * 0.2));
+  const stepH = 0.3;
+  // Stylobate: three steps widening toward the ground.
+  for (let k = 0; k < 3; k++) {
+    add(loft(slab(-1.6, COLUMN_OUT + 2.4 - k * 0.45, stepH, (pt) => pt.yBottom + k * stepH), stone));
+  }
+  const entY = (pt: FacadeRailSample) => pt.yTop - 0.2 - entH;
+  add(
+    loft(slab(-1.6, COLUMN_OUT + 1.2, entH * 0.42, entY), stone),
+    loft(slab(-1.6, COLUMN_OUT + 1.05, entH * 0.4, (pt) => entY(pt) + entH * 0.42), stone),
+    loft(slab(-1.6, COLUMN_OUT + 1.9, entH * 0.18, (pt) => entY(pt) + entH * 0.82), stone)
+  );
+
+  const colH = (pt: FacadeRailSample) => entY(pt) - (pt.yBottom + 3 * stepH);
+  const radius = Math.max(0.55, Math.min(1.3, (tall - entH) / 14));
+  const spacing = (radius * 2 * 3.2) / Math.max(0.5, Math.min(4, density));
+  const stations = railStations(rail, closed, spacing).filter((pt) => colH(pt) > 3);
+  if (!stations.length) return;
+
+  const shafts = new THREE.InstancedMesh(flutedShaft(), stone, stations.length);
+  shafts.name = 'EnvelopeDoricColumns';
+  const echinus = new THREE.InstancedMesh(new THREE.CylinderGeometry(1.32, 0.9, 1, 24), stone, stations.length);
+  const abaci: THREE.Matrix4[] = [];
+  const triglyphs: THREE.Matrix4[] = [];
+  const dummy = new THREE.Object3D();
+  stations.forEach((pt, i) => {
+    const y0 = pt.yBottom + 3 * stepH;
+    const h = colH(pt);
+    const capH = Math.min(1.2, h * 0.08);
+    const shaftH = h - capH;
+    const yaw = Math.atan2(pt.nx, pt.nz);
+    dummy.position.copy(railPoint(pt, COLUMN_OUT, y0 + shaftH / 2));
+    dummy.rotation.set(0, yaw, 0);
+    dummy.scale.set(radius, shaftH, radius);
+    dummy.updateMatrix();
+    shafts.setMatrixAt(i, dummy.matrix);
+    dummy.position.copy(railPoint(pt, COLUMN_OUT, y0 + shaftH + capH * 0.3));
+    dummy.scale.set(radius, capH * 0.6, radius);
+    dummy.updateMatrix();
+    echinus.setMatrixAt(i, dummy.matrix);
+    abaci.push(new THREE.Matrix4().compose(
+      railPoint(pt, COLUMN_OUT, y0 + h - capH * 0.2),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0)),
+      new THREE.Vector3(radius * 2.7, capH * 0.4, radius * 2.7)
+    ));
+    // One triglyph over each column on the frieze face.
+    const friezeY = entY(pt) + entH * 0.63;
+    triglyphs.push(place(pt, COLUMN_OUT + 1.1, friezeY, radius * 1.2, entH * 0.36, 0.2));
+  });
+  for (const inst of [shafts, echinus]) {
+    inst.instanceMatrix.needsUpdate = true;
+    inst.computeBoundingSphere();
+    inst.castShadow = true;
+    inst.receiveShadow = true;
+  }
+  add(shafts, echinus, instancedBoxes('EnvelopeDoricAbaci', abaci, stone), instancedBoxes('EnvelopeTriglyphs', triglyphs, stone));
 }

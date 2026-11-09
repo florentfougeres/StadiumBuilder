@@ -665,6 +665,10 @@ export function calculateStadiumMetrics(doc: StadiumDocument): StadiumMetrics {
         return sum + 1.2;
       case 'monumental_gate':
         return sum + 0.8;
+      case 'lighthouse':
+        return sum + 4.5;
+      case 'galleon':
+        return sum + 3;
       default:
         return sum + 0.15;
     }

@@ -388,6 +388,14 @@ export const ROOF_MATERIAL_CATALOG: MaterialCatalogEntry<RoofMaterialId>[] = [
     swatchBackground:
       'radial-gradient(circle, rgba(15,23,42,0.45) 0 1.2px, transparent 1.4px) 0 0 / 5px 5px, linear-gradient(135deg, #e5e7eb 0%, #a8adb4 100%)',
   },
+  {
+    id: 'green_roof',
+    label: 'Toiture végétalisée',
+    subtitle: 'Tapis de sedum en bacs, allées de gravier',
+    fallbackHex: '#5f7d3a',
+    swatchBackground:
+      'repeating-linear-gradient(90deg, #b8b2a2 0 2px, transparent 2px 22px), radial-gradient(circle at 30% 40%, #8a9a3c 0 3px, transparent 4px) 0 0 / 9px 9px, radial-gradient(circle at 70% 60%, #8f4a3a 0 2px, transparent 3px) 0 0 / 11px 11px, linear-gradient(135deg, #6b8a3e 0%, #3f5a2a 100%)',
+  },
 ];
 
 export const STRUCTURE_MATERIAL_CATALOG: MaterialCatalogEntry<StructureMaterialId>[] = [
@@ -2285,6 +2293,27 @@ export function createRoofPbrMaterial(
         a: 255,
         height: 0.5,
         roughness: cellLine ? 0.4 : 0.1,
+      };
+    }
+
+    if (roofId === 'green_roof') {
+      // Sedum trays: mottled greens with reddish patches, gravel walkways every few trays.
+      const walkway = ((u * 8) % 1) < 0.07;
+      if (walkway) {
+        const g = 178 + (fine - 0.5) * 30;
+        return { r: g, g: g * 0.97, b: g * 0.88, a: 255, height: 0.3, roughness: 0.92 };
+      }
+      const tray = ((v * 16) % 1) < 0.03;
+      const clump = periodicNoise2D(u, v, 48, 48, 1777);
+      const red = clump > 0.72;
+      const k = 0.75 + clump * 0.45 + (fbm - 0.5) * 0.2;
+      return {
+        r: (red ? 140 : 92) * k * (tray ? 0.7 : 1),
+        g: (red ? 82 : 128) * k * (tray ? 0.7 : 1),
+        b: (red ? 58 : 52) * k * (tray ? 0.7 : 1),
+        a: 255,
+        height: 0.4 + clump * 0.5,
+        roughness: 0.9,
       };
     }
 

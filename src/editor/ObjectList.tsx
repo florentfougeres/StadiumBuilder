@@ -12,6 +12,8 @@ import {
   MoveUpRight,
   MonitorPlay,
   Plus,
+  Sailboat,
+  TowerControl,
   ShoppingBag,
   Tent,
   Trash2,
@@ -28,10 +30,12 @@ const ADDABLE_ASSETS: {
   icon: React.ReactNode;
 }[] = [
   { type: 'screen', label: 'Écran géant', icon: <MonitorPlay className="w-3.5 h-3.5" /> },
-  { type: 'halo_screen', label: 'Écran halo central', icon: <CircleDot className="w-3.5 h-3.5" /> },
+  { type: 'halo_screen', label: 'Écran central suspendu', icon: <CircleDot className="w-3.5 h-3.5" /> },
   { type: 'inclined_mast', label: 'Mât incliné', icon: <MoveUpRight className="w-3.5 h-3.5" /> },
   { type: 'monumental_arch', label: 'Arche d’entrée', icon: <Landmark className="w-3.5 h-3.5" /> },
   { type: 'monumental_gate', label: 'Porte monumentale', icon: <DoorOpen className="w-3.5 h-3.5" /> },
+  { type: 'lighthouse', label: 'Phare', icon: <TowerControl className="w-3.5 h-3.5" /> },
+  { type: 'galleon', label: 'Galion', icon: <Sailboat className="w-3.5 h-3.5" /> },
   { type: 'floodlight', label: 'Projecteur', icon: <Lightbulb className="w-3.5 h-3.5" /> },
   { type: 'dugout', label: 'Bancs de touche', icon: <Users className="w-3.5 h-3.5" /> },
   { type: 'locker_room', label: 'Vestiaires', icon: <Building2 className="w-3.5 h-3.5" /> },
@@ -196,8 +200,18 @@ const HaloControls: React.FC = () => {
   const updateObjectTransform = useStadiumStore((s) => s.updateObjectTransform);
   if (!obj) return null;
   const { rx, bandHeight } = resolveHaloSize(obj);
+  const box = obj.haloShape === 'box';
   return (
-    <PanelSection title="Écran halo">
+    <PanelSection title="Écran central">
+      <Segmented
+        label="Forme de l’écran"
+        value={obj.haloShape ?? 'ring'}
+        onChange={(haloShape) => updateObjectTransform(obj.id, { haloShape })}
+        options={[
+          { id: 'ring', label: 'Anneau', title: 'Anneau elliptique à 360°' },
+          { id: 'box', label: 'Caisson', title: 'Quatre écrans en caisson au-dessus du milieu de terrain' },
+        ]}
+      />
       <SliderField
         label="Hauteur au-dessus du terrain"
         min={10}
@@ -208,7 +222,7 @@ const HaloControls: React.FC = () => {
         onChange={(v) => updateObjectTransform(obj.id, { position: [obj.position[0], v, obj.position[2]] })}
       />
       <SliderField
-        label="Diamètre"
+        label={box ? 'Longueur' : 'Diamètre'}
         min={HALO_LIMITS.diameter.min}
         max={HALO_LIMITS.diameter.max}
         step={1}

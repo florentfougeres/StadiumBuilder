@@ -6,6 +6,7 @@ import { createRoofShadowDepthMaterial, createStructurePbrMaterial, resolveStadi
 import { getEffectiveSunkenDepth, isContinuousBowlShape, RoofStyle, StadiumDocument, StandSide } from './schema';
 import { CANOPY_ROOF_BUILDERS } from './roofs/canopyRoofs';
 import { CLOSED_ROOF_BUILDERS } from './roofs/closedRoofs';
+import { buildForecourtCanopy } from './roofs/forecourtCanopy';
 import { computeStadiumRingBounds } from './roofs/ringBounds';
 import { RoofBuilder, addSlabDeckDetail, buildAnnularCanopyMesh, buildAnnularCatwalkFloodlights, buildCanopyMaterialBundle, createStrutBetween, hasRoofGantryLights } from './roofs/roofKit';
 import { SHELL_ROOF_BUILDERS } from './roofs/shellRoofs';
@@ -84,10 +85,13 @@ export function generateRoofGroup(
   crossSectionClip: boolean = false,
   maxAnisotropy: number = 4
 ): THREE.Group {
-  const roof = buildRoofAssembly(doc, crossSectionClip, maxAnisotropy);
+  const built = buildRoofAssembly(doc, crossSectionClip, maxAnisotropy);
   const covered = doc.roof.coveredSides;
-  if (!isContinuousBowlShape(doc.shape) || !covered || covered.length >= 4) return roof;
-  return clipRoofToSides(doc, roof, covered);
+  const roof =
+    !isContinuousBowlShape(doc.shape) || !covered || covered.length >= 4 ? built : clipRoofToSides(doc, built, covered);
+  const forecourt = buildForecourtCanopy(doc, roof, maxAnisotropy);
+  if (forecourt) roof.add(forecourt);
+  return roof;
 }
 
 function buildRoofAssembly(

@@ -32,6 +32,7 @@ import {
   EnvelopeProfile,
   EnvelopeStyle,
   getEffectiveSunkenDepth,
+  SUNKEN_MAX_DEPTH,
   getMaxPitchLengthForTrack,
   isContinuousBowlShape,
   CORNER_PYLON_MAX_HEIGHT,
@@ -49,6 +50,7 @@ import {
   vomitoryLevelsOfTier,
   VOMITORY_ROWS_PER_LEVEL,
   resolveCrossAisles,
+  RETRACTABLE_MAX_PITCH_DEG,
   RETRACTABLE_MAX_PYLONS,
   RETRACTABLE_PANEL_LIMITS,
   RetractableConfig,
@@ -73,6 +75,7 @@ import {
   resolveStandTiers,
   verticalBoxStandPatch,
 } from '../stadium/sightlines';
+import { FORECOURT_CANOPY_MAX_DEPTH } from '../stadium/roofs/forecourtCanopy';
 import { StandTarget, useStadiumStore } from '../state/useStadiumStore';
 import { ObjectList } from './ObjectList';
 import { Plus, X } from 'lucide-react';
@@ -912,9 +915,9 @@ const ShapePanel: React.FC = () => {
         <SubGroup title="Enfouissement">
           <SliderField
             label="Profondeur sous le sol"
-            hint="Creuse les gradins bas sous un talus pour réduire la hauteur visible"
+            hint="Creuse les gradins bas sous un talus pour réduire la hauteur visible ; jusqu’à 30 m, le terrain est sous la rue"
             min={0}
-            max={15}
+            max={SUNKEN_MAX_DEPTH}
             step={0.5}
             value={sunken}
             display={sunken > 0 ? `−${fr1(sunken)} m` : 'Au niveau du sol'}
@@ -961,39 +964,73 @@ const PitchPanel: React.FC = () => {
     ? Math.min(115, getMaxPitchLengthForTrack(doc.pitch.width))
     : 115;
   const movable = doc.pitch.movablePitch ?? 'none';
+  const gridiron = doc.pitch.sport === 'american_football';
 
   return (
     <>
-      <PanelHeader title="Terrain" meta={`${doc.pitch.length} × ${doc.pitch.width} m`} />
-      <PanelSection title="Dimensions">
-        <SliderField
-          label="Longueur"
-          hint={
-            doc.pitch.hasTrack
-              ? `Limitée à ${maxPitchLength} m pour rester dans la corde de 36,5 m`
-              : undefined
-          }
-          min={95}
-          max={maxPitchLength}
-          step={1}
-          value={doc.pitch.length}
-          display={`${doc.pitch.length} m`}
-          onChange={(v) => updatePitch({ length: v })}
+      <PanelHeader title="Terrain" meta={gridiron ? '120 × 53⅓ yards' : `${doc.pitch.length} × ${doc.pitch.width} m`} />
+      <PanelSection title="Sport">
+        <Segmented
+          label="Sport"
+          value={doc.pitch.sport ?? 'football'}
+          onChange={(sport) => updatePitch({ sport })}
+          options={[
+            { id: 'football', label: 'Football' },
+            { id: 'american_football', label: 'Football américain' },
+          ]}
         />
-        <SliderField
-          label="Largeur"
-          hint={
-            doc.pitch.hasTrack
-              ? `Limitée à ${TRACK_MAX_PITCH_WIDTH_M} m à l’intérieur de la piste`
-              : undefined
-          }
-          min={60}
-          max={maxPitchWidth}
-          step={1}
-          value={doc.pitch.width}
-          display={`${doc.pitch.width} m`}
-          onChange={(v) => updatePitch({ width: v })}
-        />
+        {gridiron ? (
+          <>
+            <p className="text-2xs text-ink-faint">
+              Terrain NFL réglementaire : 109,7 × 48,8 m, en-buts compris. Les zones d’équipes se peignent sur les
+              bords de touche quand la marge latérale le permet.
+            </p>
+            <ColorField
+              label="Couleur des en-buts"
+              value={doc.pitch.endZoneColor ?? '#1d3c78'}
+              onChange={(endZoneColor) => updatePitch({ endZoneColor })}
+            />
+            <TextField
+              label="Texte des en-buts"
+              value={doc.pitch.endZoneText ?? ''}
+              placeholder="Nom de l’équipe"
+              maxLength={14}
+              onChange={(endZoneText) => updatePitch({ endZoneText })}
+            />
+          </>
+        ) : (
+          <>
+            <SliderField
+              label="Longueur"
+              hint={
+                doc.pitch.hasTrack
+                  ? `Limitée à ${maxPitchLength} m pour rester dans la corde de 36,5 m`
+                  : undefined
+              }
+              min={95}
+              max={maxPitchLength}
+              step={1}
+              value={doc.pitch.length}
+              display={`${doc.pitch.length} m`}
+              onChange={(v) => updatePitch({ length: v })}
+            />
+            <SliderField
+              label="Largeur"
+              hint={
+                doc.pitch.hasTrack
+                  ? `Limitée à ${TRACK_MAX_PITCH_WIDTH_M} m à l’intérieur de la piste`
+                  : undefined
+              }
+              min={60}
+              max={maxPitchWidth}
+              step={1}
+              value={doc.pitch.width}
+              display={`${doc.pitch.width} m`}
+              onChange={(v) => updatePitch({ width: v })}
+            />
+      
+          </>
+        )}
       </PanelSection>
       <PanelSection title="Pelouse">
         <GalleryPicker
@@ -2149,6 +2186,79 @@ const RoofPanel: React.FC = () => {
             checked={roof.enclosureGlazed === true}
             onChange={(enclosureGlazed) => updateRoof({ enclosureGlazed })}
           />
+          <SelectField
+            label="Canopée sur le parvis"
+            disabled={none}
+            value={roof.forecourtCanopy?.side ?? 'none'}
+            onChange={(side) =>
+              updateRoof({
+                forecourtCanopy: side === 'none' ? undefined : { depth: 40, ...roof.forecourtCanopy, side },
+              })
+            }
+            options={[
+              { id: 'none', label: 'Aucune' },
+              { id: 'north', label: 'Nord' },
+              { id: 'south', label: 'Sud' },
+              { id: 'east', label: 'Est' },
+              { id: 'west', label: 'Ouest' },
+            ]}
+          />
+          {roof.forecourtCanopy && (
+            <SliderField
+              label="Avancée sur le parvis"
+              hint="Le toit continue au-dessus de la place, ouvert sur les côtés et porté par des poteaux"
+              min={8}
+              max={FORECOURT_CANOPY_MAX_DEPTH}
+              step={1}
+              value={roof.forecourtCanopy.depth}
+              display={`${roof.forecourtCanopy.depth} m`}
+              onChange={(depth) => updateRoof({ forecourtCanopy: { ...roof.forecourtCanopy!, depth } })}
+            />
+          )}
+          <SelectField
+            label="Mur vitré géant"
+            disabled={none || roof.enclosed === false}
+            value={roof.glassWall?.side ?? 'none'}
+            onChange={(side) =>
+              updateRoof({
+                glassWall: side === 'none' ? undefined : { motion: 'pivot', openRatio: 0, ...roof.glassWall, side },
+              })
+            }
+            options={[
+              { id: 'none', label: 'Aucun' },
+              { id: 'north', label: 'Nord' },
+              { id: 'south', label: 'Sud' },
+              { id: 'east', label: 'Est' },
+              { id: 'west', label: 'Ouest' },
+            ]}
+          />
+          {roof.glassWall && (
+            <>
+              <Segmented
+                label="Mouvement du mur vitré"
+                size="sm"
+                value={roof.glassWall.motion}
+                onChange={(motion) => updateRoof({ glassWall: { ...roof.glassWall!, motion } })}
+                options={[
+                  { id: 'fixed', label: 'Fixe' },
+                  { id: 'pivot', label: 'Portes pivotantes' },
+                  { id: 'slide', label: 'Panneaux coulissants' },
+                ]}
+              />
+              {roof.glassWall.motion !== 'fixed' && (
+                <SliderField
+                  label="Ouverture du mur vitré"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  scale={100}
+                  value={roof.glassWall.openRatio}
+                  display={`${Math.round(roof.glassWall.openRatio * 100)} %`}
+                  onChange={(openRatio) => updateRoof({ glassWall: { ...roof.glassWall!, openRatio } })}
+                />
+              )}
+            </>
+          )}
         </SubGroup>
         <SubGroup title="Charpente">
           <GalleryPicker
@@ -2252,7 +2362,7 @@ function RetractableRoofSection({
   horseshoe: boolean;
   onChange: (patch: Partial<RetractableConfig>) => void;
 }) {
-  const { motion, openRatio, panelCount, panelKind, panelMaterial, parkEnd, suspensionMast, mastPosition, pylonCount } =
+  const { motion, openRatio, panelCount, panelKind, panelMaterial, parkEnd, suspensionMast, mastPosition, pylonCount, pitchDeg } =
     retractable;
   const limits = RETRACTABLE_PANEL_LIMITS[motion];
   const parks =
@@ -2331,6 +2441,18 @@ function RetractableRoofSection({
         display={pylonCount === 0 ? 'Aucun' : String(pylonCount)}
         onChange={(v) => onChange({ pylonCount: v })}
       />
+      {motion.startsWith('slide') && (
+        <SliderField
+          label="Toit à deux pans"
+          hint="Les panneaux montent vers un faîtage central et glissent le long de la pente"
+          min={0}
+          max={RETRACTABLE_MAX_PITCH_DEG}
+          step={1}
+          value={pitchDeg}
+          display={pitchDeg === 0 ? 'Plat' : `${pitchDeg}°`}
+          onChange={(v) => onChange({ pitchDeg: v })}
+        />
+      )}
       <Segmented
         label="Type de panneaux"
         value={panelKind}
@@ -2395,6 +2517,7 @@ const FacadePanel: React.FC = () => {
             options={[
               { id: 'straight', label: 'Fûts droits' },
               { id: 'palm', label: 'Palmiers' },
+              { id: 'doric', label: 'Doriques', title: 'Portique néoclassique : colonnes cannelées, chapiteaux, entablement' },
             ]}
           />
         )}
@@ -2465,6 +2588,21 @@ const FacadePanel: React.FC = () => {
           <ColorField
             label="Couleur d’éclairage la nuit"
             value={mats.facadeGlowHex ?? '#ffffff'}
+            onChange={(facadeGlowHex) => updateMaterials({ facadeGlowHex })}
+          />
+        )}
+        {envelope === 'louver_curtain' && (
+          <ToggleField
+            label="Lames éclairées la nuit"
+            hint="Projecteurs colorés derrière les lames, au crépuscule et la nuit"
+            checked={Boolean(mats.facadeGlowHex)}
+            onChange={(on) => updateMaterials({ facadeGlowHex: on ? doc.colors.seatsPrimary : undefined })}
+          />
+        )}
+        {envelope === 'louver_curtain' && mats.facadeGlowHex && mats.facade !== 'etfe_cushions_facade' && (
+          <ColorField
+            label="Couleur de l’éclairage"
+            value={mats.facadeGlowHex}
             onChange={(facadeGlowHex) => updateMaterials({ facadeGlowHex })}
           />
         )}

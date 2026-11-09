@@ -39,6 +39,8 @@ export interface EnvelopeDressingParams {
   ledColors?: [string, string];
   /** `media_mesh`: brighter pixels at dusk and night. */
   night?: boolean;
+  /** `louver_curtain`: colour of the lights washing the blades at dusk and night (none = unlit). */
+  glowHex?: string;
 }
 
 /**

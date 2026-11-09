@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBowlGeometry, sampleRoundedBowlRing } from './bowlRing';
 import { buildMovablePitch } from './generateMovablePitch';
+import { createGridironFurniture, drawGridironMarkings } from './gridiron';
 import {
   applyTurfCloseUpDetail,
   createGrassBladeNormalMap,
@@ -20,6 +21,11 @@ import {
   StadiumMaterialsConfig,
 } from './schema';
 
+/** Mowing stripes down the field: 5-yard bands on a gridiron (end zones included). */
+function mowingStripeCount(pitch: PitchConfig): number {
+  return pitch.sport === 'american_football' ? 24 : 18;
+}
+
 /**
  * Generates high-resolution broadcast-grade FIFA football pitch diffuse + directional mowing roughness map:
  * - Natural UEFA mowing stripes / checker with directional blade roughness sheen contrast
@@ -36,6 +42,7 @@ function createPitchTextures(
   const totalW = pitch.length + effectiveMarginEnd * 2;
   const totalH = pitch.width + effectiveMarginSide * 2;
   const turfColors = getTurfPresetColors(turfId);
+  const gridiron = pitch.sport === 'american_football';
 
   // ~30 px/m keeps 12 cm markings crisp at touchline camera distance.
   const pxPerMeter = 30;
@@ -51,7 +58,8 @@ function createPitchTextures(
   const scaleY = ch / totalH;
 
   // 1. Perimeter grass surround (or narrow technical moat border on non-track pitches)
-  ctx.fillStyle = pitch.hasTrack ? turfColors.surround : '#243242';
+  // A gridiron's whole floor is turf, sidelines and team areas included.
+  ctx.fillStyle = pitch.hasTrack || gridiron ? turfColors.surround : '#243242';
   ctx.fillRect(0, 0, cw, ch);
 
   const px0 = effectiveMarginEnd * scaleX;
@@ -60,8 +68,8 @@ function createPitchTextures(
   const ph = pitch.width * scaleY;
 
   // Hybrid synthetic green surround border around touchlines/goallines
-  const greenBorderX = pitch.hasTrack ? effectiveMarginEnd : Math.min(effectiveMarginEnd, 4.2);
-  const greenBorderY = pitch.hasTrack ? effectiveMarginSide : Math.min(effectiveMarginSide, 3.8);
+  const greenBorderX = pitch.hasTrack || gridiron ? effectiveMarginEnd : Math.min(effectiveMarginEnd, 4.2);
+  const greenBorderY = pitch.hasTrack || gridiron ? effectiveMarginSide : Math.min(effectiveMarginSide, 3.8);
   ctx.fillStyle = turfColors.surround;
   ctx.fillRect(
     px0 - greenBorderX * scaleX,
@@ -81,7 +89,7 @@ function createPitchTextures(
 
   // 2. UEFA Mowing pattern inside field
   if (pitch.grassPattern === 'stripes') {
-    const stripeCount = 18;
+    const stripeCount = mowingStripeCount(pitch);
     const stripeW = pw / stripeCount;
     for (let i = 0; i < stripeCount; i++) {
       ctx.fillStyle = i % 2 === 0 ? turfColors.primary : turfColors.secondary;
@@ -112,7 +120,7 @@ function createPitchTextures(
   // Goal-mouth & center-circle organic turf wear
   const midX = px0 + pw / 2;
   const midY = py0 + ph / 2;
-  if (turfColors.wearOpacity > 0.04) {
+  if (turfColors.wearOpacity > 0.04 && !gridiron) {
     for (const gx of [px0 + 2.4 * scaleX, px0 + pw - 2.4 * scaleX]) {
       const wearGrad = ctx.createRadialGradient(
         gx,
@@ -156,116 +164,120 @@ function createPitchTextures(
     ctx.fillRect(rx * cw, ry * ch, 2.0, 2.0);
   }
 
-  // 3. Crisp white FIFA pitch markings (12 cm line width)
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-  ctx.lineWidth = Math.max(2.4, 0.13 * scaleX);
+  if (gridiron) {
+    drawGridironMarkings(ctx, pitch, px0, py0, scaleX, scaleY, effectiveMarginSide);
+  } else {
+    // 3. Crisp white FIFA pitch markings (12 cm line width)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.lineWidth = Math.max(2.4, 0.13 * scaleX);
 
-  ctx.strokeRect(px0, py0, pw, ph);
+    ctx.strokeRect(px0, py0, pw, ph);
 
-  ctx.beginPath();
-  ctx.moveTo(midX, py0);
-  ctx.lineTo(midX, py0 + ph);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.ellipse(midX, midY, 9.15 * scaleX, 9.15 * scaleY, 0, 0, Math.PI * 2);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.ellipse(midX, midY, 0.26 * scaleX, 0.26 * scaleY, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  const penDepth = 16.5 * scaleX;
-  const penWidth = Math.min(pitch.width * 0.85, 40.32) * scaleY;
-  const goalAreaDepth = 5.5 * scaleX;
-  const goalAreaWidth = Math.min(pitch.width * 0.5, 18.32) * scaleY;
-
-  ctx.strokeRect(px0, midY - penWidth / 2, penDepth, penWidth);
-  ctx.strokeRect(px0, midY - goalAreaWidth / 2, goalAreaDepth, goalAreaWidth);
-
-  ctx.strokeRect(px0 + pw - penDepth, midY - penWidth / 2, penDepth, penWidth);
-  ctx.strokeRect(
-    px0 + pw - goalAreaDepth,
-    midY - goalAreaWidth / 2,
-    goalAreaDepth,
-    goalAreaWidth
-  );
-
-  const penSpotOffset = 11.0 * scaleX;
-  const arcAngle = Math.acos(5.5 / 9.15);
-
-  ctx.beginPath();
-  ctx.ellipse(
-    px0 + penSpotOffset,
-    midY,
-    0.24 * scaleX,
-    0.24 * scaleY,
-    0,
-    0,
-    Math.PI * 2
-  );
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(
-    px0 + penSpotOffset,
-    midY,
-    9.15 * scaleX,
-    9.15 * scaleY,
-    0,
-    -arcAngle,
-    arcAngle
-  );
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.ellipse(
-    px0 + pw - penSpotOffset,
-    midY,
-    0.24 * scaleX,
-    0.24 * scaleY,
-    0,
-    0,
-    Math.PI * 2
-  );
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(
-    px0 + pw - penSpotOffset,
-    midY,
-    9.15 * scaleX,
-    9.15 * scaleY,
-    0,
-    Math.PI - arcAngle,
-    Math.PI + arcAngle
-  );
-  ctx.stroke();
-
-  const cornerR = 1.0;
-  const corners: [number, number, number, number][] = [
-    [px0, py0, 0, Math.PI / 2],
-    [px0 + pw, py0, Math.PI / 2, Math.PI],
-    [px0 + pw, py0 + ph, Math.PI, Math.PI * 1.5],
-    [px0, py0 + ph, Math.PI * 1.5, Math.PI * 2],
-  ];
-  for (const [cx, cy, a0, a1] of corners) {
     ctx.beginPath();
-    ctx.ellipse(cx, cy, cornerR * scaleX, cornerR * scaleY, 0, a0, a1);
+    ctx.moveTo(midX, py0);
+    ctx.lineTo(midX, py0 + ph);
     ctx.stroke();
-  }
 
-  // Technical Coaching Areas
-  ctx.save();
-  ctx.setLineDash([6, 5]);
-  ctx.lineWidth = Math.max(1.5, 0.1 * scaleX);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-  const techW = 14 * scaleX;
-  const techD = Math.min(effectiveMarginSide - 0.6, 3.6) * scaleY;
-  if (techD > 0.5) {
-    ctx.strokeRect(midX - 18 * scaleX, py0 + ph + 0.5 * scaleY, techW, techD);
-    ctx.strokeRect(midX + 4 * scaleX, py0 + ph + 0.5 * scaleY, techW, techD);
+    ctx.beginPath();
+    ctx.ellipse(midX, midY, 9.15 * scaleX, 9.15 * scaleY, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.ellipse(midX, midY, 0.26 * scaleX, 0.26 * scaleY, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const penDepth = 16.5 * scaleX;
+    const penWidth = Math.min(pitch.width * 0.85, 40.32) * scaleY;
+    const goalAreaDepth = 5.5 * scaleX;
+    const goalAreaWidth = Math.min(pitch.width * 0.5, 18.32) * scaleY;
+
+    ctx.strokeRect(px0, midY - penWidth / 2, penDepth, penWidth);
+    ctx.strokeRect(px0, midY - goalAreaWidth / 2, goalAreaDepth, goalAreaWidth);
+
+    ctx.strokeRect(px0 + pw - penDepth, midY - penWidth / 2, penDepth, penWidth);
+    ctx.strokeRect(
+      px0 + pw - goalAreaDepth,
+      midY - goalAreaWidth / 2,
+      goalAreaDepth,
+      goalAreaWidth
+    );
+
+    const penSpotOffset = 11.0 * scaleX;
+    const arcAngle = Math.acos(5.5 / 9.15);
+
+    ctx.beginPath();
+    ctx.ellipse(
+      px0 + penSpotOffset,
+      midY,
+      0.24 * scaleX,
+      0.24 * scaleY,
+      0,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(
+      px0 + penSpotOffset,
+      midY,
+      9.15 * scaleX,
+      9.15 * scaleY,
+      0,
+      -arcAngle,
+      arcAngle
+    );
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.ellipse(
+      px0 + pw - penSpotOffset,
+      midY,
+      0.24 * scaleX,
+      0.24 * scaleY,
+      0,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(
+      px0 + pw - penSpotOffset,
+      midY,
+      9.15 * scaleX,
+      9.15 * scaleY,
+      0,
+      Math.PI - arcAngle,
+      Math.PI + arcAngle
+    );
+    ctx.stroke();
+
+    const cornerR = 1.0;
+    const corners: [number, number, number, number][] = [
+      [px0, py0, 0, Math.PI / 2],
+      [px0 + pw, py0, Math.PI / 2, Math.PI],
+      [px0 + pw, py0 + ph, Math.PI, Math.PI * 1.5],
+      [px0, py0 + ph, Math.PI * 1.5, Math.PI * 2],
+    ];
+    for (const [cx, cy, a0, a1] of corners) {
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, cornerR * scaleX, cornerR * scaleY, 0, a0, a1);
+      ctx.stroke();
+    }
+
+    // Technical Coaching Areas
+    ctx.save();
+    ctx.setLineDash([6, 5]);
+    ctx.lineWidth = Math.max(1.5, 0.1 * scaleX);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    const techW = 14 * scaleX;
+    const techD = Math.min(effectiveMarginSide - 0.6, 3.6) * scaleY;
+    if (techD > 0.5) {
+      ctx.strokeRect(midX - 18 * scaleX, py0 + ph + 0.5 * scaleY, techW, techD);
+      ctx.strokeRect(midX + 4 * scaleX, py0 + ph + 0.5 * scaleY, techW, techD);
+    }
+    ctx.restore();
   }
-  ctx.restore();
 
   const colorMap = new THREE.CanvasTexture(canvas);
   colorMap.colorSpace = THREE.SRGBColorSpace;
@@ -291,7 +303,7 @@ function createPitchTextures(
         const fu = (u - uStart) / Math.max(0.01, uEnd - uStart);
         const fv = (v - vStart) / Math.max(0.01, vEnd - vStart);
         if (pitch.grassPattern === 'stripes') {
-          const sIdx = Math.floor(fu * 18);
+          const sIdx = Math.floor(fu * mowingStripeCount(pitch));
           rVal = sIdx % 2 === 0 ? 0.58 : 0.79;
         } else if (pitch.grassPattern === 'checker') {
           const sIdx = Math.floor(fu * 18) + Math.floor(fv * 12);
@@ -1167,6 +1179,8 @@ export function generatePitchGroup(
       posts.position.x = (sx * pitch.length) / 2;
       root.add(posts);
     }
+  } else if (pitch.sport === 'american_football') {
+    root.add(createGridironFurniture(pitch));
   } else {
     // Two FIFA Goals with woven hexagonal nets
     const netTex = createGoalNetTexture();
@@ -1196,7 +1210,7 @@ export function generatePitchGroup(
     [pitch.length / 2, pitch.width / 2],
     [-pitch.length / 2, pitch.width / 2],
   ];
-  for (const [cx, cz] of cornerCoords) {
+  for (const [cx, cz] of pitch.sport === 'american_football' ? [] : cornerCoords) {
     const pole = new THREE.Mesh(flagPoleGeo, flagPoleMat);
     pole.position.set(cx, 0.8, cz);
     const pennant = new THREE.Mesh(pennantGeo, pennantMat);

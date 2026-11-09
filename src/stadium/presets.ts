@@ -1,6 +1,7 @@
 import { calculateStandMetrics, computeKopWallStandPatch, fitStandRowsToCapacity, stadiumCornerLayout } from './capacity';
 import { FACADE_WALL_OFFSET } from './envelopes/rail';
 import {
+  clampPitchToTrack,
   isContinuousBowlShape,
   riserFromSlopeDeg,
   StadiumDocument,
@@ -1809,6 +1810,50 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
     50000,
     (doc) => {
       doc.roof = { ...doc.roof, style: 'retractable', retractable: { motion: 'combined_stack', openRatio: 0.5 } };
+    }
+  ),
+  derivedPreset(
+    'bowl_bowstring_60k',
+    'gridiron_arches_70k',
+    'Stade de Football Américain à Arches',
+    'Terrain NFL · toit coulissant sous deux arches · écran caisson · mur vitré pivotant',
+    'Stade Football Américain',
+    70000,
+    (doc) => {
+      doc.pitch = clampPitchToTrack({
+        ...doc.pitch,
+        sport: 'american_football',
+        endZoneColor: '#1d3c78',
+        endZoneText: 'HOME',
+        marginSide: 12,
+        marginEnd: 6,
+        grassPattern: 'stripes',
+        adBoards: false,
+      });
+      for (const side of ['north', 'south'] as const) doc.stands[side].distanceToPitch = 12.5;
+      for (const side of ['east', 'west'] as const) doc.stands[side].distanceToPitch = 7;
+      // A low west end stand leaves a tall band under the roof for the glass wall.
+      doc.stands.west = { ...doc.stands.west, tiers: 1, rows: 22 };
+      doc.roof = {
+        ...doc.roof,
+        style: 'arched_retractable',
+        retractable: { motion: 'slide_transverse', panelCount: 2, openRatio: 0.35, pitchDeg: 8 },
+        glassWall: { side: 'west', motion: 'pivot', openRatio: 0.4 },
+      };
+      doc.objects = [
+        {
+          id: 'obj-board-nfl',
+          type: 'halo_screen',
+          name: 'Écran caisson central',
+          position: [0, 32, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          haloShape: 'box',
+          haloDiameter: 50,
+          haloBandHeight: 16,
+        },
+      ];
+      withMaterials(doc, { pitchTurf: 'pro_synthetic', facade: 'glass_curtain' });
     }
   ),
 ];

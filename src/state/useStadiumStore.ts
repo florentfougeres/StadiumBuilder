@@ -14,6 +14,8 @@ import { createBlankDocument, createPresetDocument } from '../stadium/presets';
 import {
   CameraPresetMode,
   clampPitchToTrack,
+  patchPitch,
+  SUNKEN_MAX_DEPTH,
   ConcourseConfig,
   CornerId,
   CornerMode,
@@ -58,6 +60,8 @@ const OBJECT_TYPE_LABELS: Record<PlacedObjectType, string> = {
   inclined_mast: 'Mât incliné',
   monumental_arch: 'Arche monumentale',
   monumental_gate: 'Porte monumentale',
+  lighthouse: 'Phare',
+  galleon: 'Galion',
   floodlight: 'Pylône d’Éclairage',
   dugout: 'Bancs de Touche',
   locker_room: 'Vestiaires & Médias',
@@ -76,6 +80,10 @@ const OBJECT_DEFAULT_SPAWN: Record<PlacedObjectType, [number, number, number]> =
   inclined_mast: [-190, 0, 0],
   monumental_arch: [0, 0, 110],
   monumental_gate: [-40, 0, 110],
+  // Beyond the north end, its bridge reaching toward the bowl.
+  lighthouse: [-150, 0, -40],
+  // Behind the north end stand, above the seats like a ship moored there.
+  galleon: [0, 0, -120],
   floodlight: [68, 0, -48],
   dugout: [0, 0, 37.5],
   locker_room: [-52, 0, 88],
@@ -179,7 +187,7 @@ export interface StadiumStoreState {
     patch: Partial<
       Pick<
         PlacedObject,
-        'position' | 'rotation' | 'scale' | 'name' | 'color' | 'mount' | 'mountSide' | 'haloDiameter' | 'haloBandHeight'
+        'position' | 'rotation' | 'scale' | 'name' | 'color' | 'mount' | 'mountSide' | 'haloDiameter' | 'haloBandHeight' | 'haloShape'
       >
     >,
     recordHistory?: boolean
@@ -631,7 +639,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
       }),
     setSunkenDepth: (depth) =>
       commitChange((d) => {
-        d.sunkenDepth = Math.max(0, Math.min(16, Number(depth.toFixed(1))));
+        d.sunkenDepth = Math.max(0, Math.min(SUNKEN_MAX_DEPTH, Number(depth.toFixed(1))));
       }),
 
     setCornerFill: (fill) =>
@@ -691,7 +699,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
 
     updatePitch: (patch) =>
       commitChange((d) => {
-        d.pitch = clampPitchToTrack({ ...d.pitch, ...patch });
+        d.pitch = patchPitch(d.pitch, patch);
       }),
 
     updateStand: (target, patch) =>
@@ -901,6 +909,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
       if (patch.mountSide !== undefined) target.mountSide = patch.mountSide;
       if (patch.haloDiameter !== undefined) target.haloDiameter = patch.haloDiameter;
       if (patch.haloBandHeight !== undefined) target.haloBandHeight = patch.haloBandHeight;
+      if (patch.haloShape !== undefined) target.haloShape = patch.haloShape;
 
       nextDoc.updatedAt = Date.now();
       set({ doc: nextDoc, history: nextHistory });

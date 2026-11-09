@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildGalleon, buildLighthouse } from './landmarkObjects';
 import {
   CornerQuadrantId,
   sampleCornerQuadrantPoint,
@@ -254,6 +255,35 @@ export function generatePlacedObjectGroup(
         roughness: 0.18,
         side: THREE.DoubleSide,
       });
+
+      if (obj.haloShape === 'box') {
+        // Four-sided board over midfield: two long screens facing the sidelines, two short ends.
+        const box = new THREE.Mesh(new THREE.BoxGeometry(rx * 2 - 0.3, ringH, rz * 2 - 0.3), darkSteel);
+        box.castShadow = true;
+        group.add(box);
+        const boxTex = scoreTex.clone();
+        boxTex.repeat.set(1, 1);
+        const boxLed = ledMat.clone();
+        boxLed.map = boxTex;
+        boxLed.emissiveMap = boxTex;
+        boxLed.side = THREE.FrontSide;
+        for (const [w, x, z, ry] of [
+          [rx * 2, 0, rz, 0],
+          [rx * 2, 0, -rz, Math.PI],
+          [rz * 2, rx, 0, Math.PI / 2],
+          [rz * 2, -rx, 0, -Math.PI / 2],
+        ] as const) {
+          const face = new THREE.Mesh(new THREE.PlaneGeometry(w, ringH), boxLed);
+          face.position.set(x, 0, z);
+          face.rotation.y = ry;
+          group.add(face);
+        }
+        // Catwalk deck on top, where the cables hang it.
+        const deck = new THREE.Mesh(new THREE.BoxGeometry(rx * 2 + 0.6, 0.5, rz * 2 + 0.6), darkSteel);
+        deck.position.y = ringH / 2 + 0.25;
+        group.add(deck);
+        break;
+      }
 
       const outerScreen = buildEllipticalBand(rx, rz, ringH, ledMat);
       const innerScreen = buildEllipticalBand(rx - 1.15, rz - 1.15, ringH * 0.92, ledMat);
@@ -612,6 +642,14 @@ export function generatePlacedObjectGroup(
       }
       break;
     }
+
+    case 'lighthouse':
+      group.add(buildLighthouse(lighting, obj.color));
+      break;
+
+    case 'galleon':
+      group.add(buildGalleon(obj.color));
+      break;
 
     case 'custom_roof': {
       const roofPbr = createRoofPbrMaterial(mats.roof, 0.92, lighting, false, maxAnisotropy, 4, 2);

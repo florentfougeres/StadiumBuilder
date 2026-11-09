@@ -31,6 +31,8 @@ export type PlacedObjectType =
   | 'inclined_mast'
   | 'monumental_arch'
   | 'monumental_gate'
+  | 'lighthouse'
+  | 'galleon'
   | 'floodlight'
   | 'dugout'
   | 'locker_room'
@@ -60,7 +62,22 @@ export type AdBoardTheme =
   | 'equipe_de_france'
   | 'mls_usa';
 
+/** Game played on the field: association football, or gridiron (NFL) football. */
+export type PitchSport = 'football' | 'american_football';
+
+/** NFL field: 120 × 53⅓ yards, end zones included. */
+export const YARD_M = 0.9144;
+export const GRIDIRON_LENGTH_M = 120 * YARD_M;
+export const GRIDIRON_WIDTH_M = (160 / 3) * YARD_M;
+export const GRIDIRON_END_ZONE_M = 10 * YARD_M;
+
 export interface PitchConfig {
+  /** Absent means association football. */
+  sport?: PitchSport;
+  /** Gridiron: paint of the end zones and the midfield logo. */
+  endZoneColor?: string;
+  /** Gridiron: word painted across both end zones (empty = none). */
+  endZoneText?: string;
   length: number;
   width: number;
   marginSide: number;
@@ -313,7 +330,12 @@ export interface RetractableConfig {
   mastPosition: 'outside' | 'central';
   /** Inclined pylons standing around the bowl and holding the fixed canopy by stays (`0` = none). */
   pylonCount: number;
+  /** Sliding motions: slope (°) of the panels rising to a central ridge, a two-pitch roof (`0` = flat). */
+  pitchDeg: number;
 }
+
+/** Steepest two-pitch slope of sliding retractable panels (°). */
+export const RETRACTABLE_MAX_PITCH_DEG = 20;
 
 /** Most pylons a retractable roof can stand on. */
 export const RETRACTABLE_MAX_PYLONS = 12;
@@ -355,6 +377,7 @@ export function resolveRetractable(roof: RoofConfig): RetractableConfig {
     suspensionMast: r.suspensionMast ?? false,
     mastPosition: r.mastPosition ?? 'outside',
     pylonCount: Math.max(0, Math.min(RETRACTABLE_MAX_PYLONS, Math.round(r.pylonCount ?? 0))),
+    pitchDeg: motion.startsWith('slide') ? Math.max(0, Math.min(RETRACTABLE_MAX_PITCH_DEG, r.pitchDeg ?? 0)) : 0,
   };
 }
 
@@ -425,6 +448,14 @@ export function resolveSuspendedMasts(roof: RoofConfig): { mastCount: number; ma
   };
 }
 
+/** Giant glazed wall closing one end of a covered stadium (Minneapolis doors, Indianapolis window). */
+export interface GlassWallConfig {
+  side: StandSide;
+  motion: 'fixed' | 'pivot' | 'slide';
+  /** `0` = closed, `1` = fully open. */
+  openRatio: number;
+}
+
 export interface RoofConfig {
   style: RoofStyle;
   heightOffset: number;
@@ -462,6 +493,10 @@ export interface RoofConfig {
   enclosed?: boolean;
   /** Clear glass windbreak instead of facade cladding in that band, keeping the bowl visible. */
   enclosureGlazed?: boolean;
+  /** One side of that band built as a giant glass wall: fixed, pivoting doors, or panels sliding apart. */
+  glassWall?: GlassWallConfig;
+  /** The roof carried on over the forecourt on one side, `depth` metres out, open-sided on columns. */
+  forecourtCanopy?: { side: StandSide; depth: number };
   /** Skylight / daylight cutout pattern across the canopy. */
   skylightMode?: SkylightMode;
   /** Share of canopy area opened to direct sunlight (`0..0.75`). */
@@ -546,11 +581,26 @@ export function getMaxPitchLengthForTrack(width: number): number {
   return Math.floor(TRACK_STRAIGHT_LENGTH_M + 2 * maxDx);
 }
 
+/** Applies an editor change to the pitch; leaving the gridiron restores a 105 × 68 m pitch. */
+export function patchPitch(pitch: PitchConfig, patch: Partial<PitchConfig>): PitchConfig {
+  const next = { ...pitch, ...patch };
+  if (pitch.sport === 'american_football' && patch.sport === 'football') {
+    next.length = 105;
+    next.width = 68;
+  }
+  return clampPitchToTrack(next);
+}
+
 /**
  * Keeps the football pitch strictly inside the 400 m track kerb when `hasTrack` is enabled:
  * width is capped at 70 m, and length is reduced if needed so corners clear the 36.5 m kerb.
  */
 export function clampPitchToTrack(pitch: PitchConfig): PitchConfig {
+  if (pitch.sport === 'american_football') {
+    // The gridiron has one regulation size, well inside any track.
+    if (pitch.length === GRIDIRON_LENGTH_M && pitch.width === GRIDIRON_WIDTH_M) return pitch;
+    return { ...pitch, length: GRIDIRON_LENGTH_M, width: GRIDIRON_WIDTH_M };
+  }
   if (!pitch.hasTrack) return pitch;
   const width = Math.min(pitch.width, TRACK_MAX_PITCH_WIDTH_M);
   const maxLen = getMaxPitchLengthForTrack(width);
@@ -612,7 +662,8 @@ export type RoofMaterialId =
   | 'red_steel_deck'
   | 'blue_steel_deck'
   | 'solar_pv_panels'
-  | 'perforated_aluminium';
+  | 'perforated_aluminium'
+  | 'green_roof';
 
 export type StructureMaterialId =
   | 'white_steel'
@@ -668,7 +719,7 @@ export interface StadiumMaterialsConfig {
   crowd?: boolean;
   /** Share of places occupied when `crowd` is on (`0..1`). */
   crowdAttendance?: number;
-  /** Night glow colour of a backlit ETFE facade; absent glows white. */
+  /** Night glow colour of a backlit ETFE facade, or of the lights behind louvre blades; absent glows white (ETFE) or stays unlit (louvres). */
   facadeGlowHex?: string;
   /** Parametric 3D geometric relief pattern overlaid on the exterior facade. */
   facadePattern?: FacadePatternId;
@@ -688,8 +739,8 @@ export interface StadiumMaterialsConfig {
   facadeBulge?: number;
   /** `colonnade_forest`: column density multiplier (`0.5..4`, default 1). */
   colonnadeDensity?: number;
-  /** `colonnade_forest`: slender straight columns, or date palms fanning out under the cornice. */
-  colonnadeShape?: 'straight' | 'palm';
+  /** `colonnade_forest`: slender straight columns, date palms fanning out under the cornice, or a Doric portico. */
+  colonnadeShape?: 'straight' | 'palm' | 'doric';
 }
 
 export const DEFAULT_STADIUM_MATERIALS: StadiumMaterialsConfig = {
@@ -730,15 +781,19 @@ export interface PlacedObject {
   haloDiameter?: number;
   /** `halo_screen`: height of the LED band (m). */
   haloBandHeight?: number;
+  /** `halo_screen`: an elliptical ring, or a four-sided box hung over midfield (NFL domes). */
+  haloShape?: 'ring' | 'box';
 }
 
 export const HALO_LIMITS = {
   diameter: { min: 16, max: 80, def: 45 },
-  bandHeight: { min: 2, max: 14, def: 4.6 },
+  bandHeight: { min: 2, max: 24, def: 4.6 },
 } as const;
 
 /** Short axis of the halo ellipse as a share of its diameter (Atlanta-style oval). */
 export const HALO_MINOR_RATIO = 0.7;
+/** End faces of a box board as a share of its length (two long screens facing the sidelines). */
+export const HALO_BOX_DEPTH_RATIO = 0.32;
 
 export function resolveHaloSize(obj: PlacedObject): { rx: number; rz: number; bandHeight: number } {
   const d = Math.max(HALO_LIMITS.diameter.min, Math.min(HALO_LIMITS.diameter.max, obj.haloDiameter ?? HALO_LIMITS.diameter.def));
@@ -746,7 +801,8 @@ export function resolveHaloSize(obj: PlacedObject): { rx: number; rz: number; ba
     HALO_LIMITS.bandHeight.min,
     Math.min(HALO_LIMITS.bandHeight.max, obj.haloBandHeight ?? HALO_LIMITS.bandHeight.def)
   );
-  return { rx: d / 2, rz: (d / 2) * HALO_MINOR_RATIO, bandHeight: h };
+  const ratio = obj.haloShape === 'box' ? HALO_BOX_DEPTH_RATIO : HALO_MINOR_RATIO;
+  return { rx: d / 2, rz: (d / 2) * ratio, bandHeight: h };
 }
 
 /** Building mass wrapping the bowl behind the stands (see generateConcourse). */
@@ -996,12 +1052,15 @@ export function vomitoryLevelLayout(
   }));
 }
 
+/** Deepest excavation (m): a field 30 m below the street, as in Inglewood. */
+export const SUNKEN_MAX_DEPTH = 30;
+
 /**
  * Returns the effective excavation/sunken depth in meters (`0` for above-ground stadiums).
  */
 export function getEffectiveSunkenDepth(doc: StadiumDocument): number {
   if (typeof doc.sunkenDepth === 'number') {
-    return Math.max(0, Math.min(16, doc.sunkenDepth));
+    return Math.max(0, Math.min(SUNKEN_MAX_DEPTH, doc.sunkenDepth));
   }
   return doc.shape === 'sunken_bowl' ? 9.0 : 0;
 }

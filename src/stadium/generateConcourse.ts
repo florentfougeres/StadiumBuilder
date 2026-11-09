@@ -123,6 +123,7 @@ export function generateConcourseGroup(
           facadeMat,
           ledColors: [doc.colors.seatsPrimary, doc.colors.seatsSecondary],
           night: doc.lighting !== 'day',
+          glowHex: mats.facadeGlowHex,
         })
       : null;
   if (articulation) group.add(articulation);

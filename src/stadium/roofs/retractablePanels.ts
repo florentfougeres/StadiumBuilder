@@ -217,6 +217,11 @@ function buildSlidingRoof(group: THREE.Group, contour: Pt[], kit: PanelKit, ctx:
   // Parked panels stay over the canopy band at their end: a panel wider than the band leaves
   // part of the opening covered rather than overhanging the facade. `slide_off` rolls clear.
   const band = Math.max(4, ctx.outerOffset - ctx.innerOffset - LEAF_OVERLAP);
+  const slope = THREE.MathUtils.degToRad(cfg.pitchDeg);
+  const uMid = (uMin + uMax) / 2;
+  const halfSpan = (uMax - uMin) / 2;
+  /** Height of the pitched roof plane above the leaves, highest on the ridge over the centre. */
+  const ridgeRise = (u: number) => Math.tan(slope) * Math.max(0, halfSpan - Math.abs(u - uMid));
   const offSite = cfg.motion === 'slide_off';
   let farthest = 0;
   for (const s of strips) {
@@ -232,8 +237,21 @@ function buildSlidingRoof(group: THREE.Group, contour: Pt[], kit: PanelKit, ctx:
     const overBand = s.dir > 0 ? uMax + band - s.hi : -(s.lo - (uMin - band));
     const travel = offSite || Math.abs(overBand) > Math.abs(clear) ? clear : overBand;
     farthest = Math.max(farthest, Math.abs(travel));
-    const offset = along(travel * cfg.openRatio).setY(stackLift(rank, cfg.openRatio));
-    addPanel(group, poly, kit, new THREE.Matrix4().makeTranslation(offset.x, offset.y, offset.z));
+    const shift = travel * cfg.openRatio;
+    const offset = along(shift).setY(stackLift(rank, cfg.openRatio));
+    // Two-pitch roof: each panel tilts about its outer edge and rides up the slope to the ridge.
+    const outer = s.dir > 0 ? s.hi : s.lo;
+    const pivot = along(outer).setY(kit.leafY);
+    const tilt =
+      slope > 0
+        ? rotationAboutPoint(
+            axis === 'x' ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0),
+            (axis === 'x' ? -s.dir : s.dir) * slope,
+            pivot
+          )
+        : new THREE.Matrix4();
+    offset.y += ridgeRise(outer + shift);
+    addPanel(group, poly, kit, new THREE.Matrix4().makeTranslation(offset.x, offset.y, offset.z).multiply(tilt));
   }
 
   // Two runway girders, parallel to the travel axis, long enough for the parked panels.
@@ -250,7 +268,18 @@ function buildSlidingRoof(group: THREE.Group, contour: Pt[], kit: PanelKit, ctx:
     const v = sign * halfDepth * 0.62;
     const at = (u: number, y: number) =>
       axis === 'x' ? new THREE.Vector3(u, y, v) : new THREE.Vector3(v, y, u);
-    parts.push(beamGeometry(at(gLo, girderY), at(gHi, girderY), 1.4, girderH));
+    if (slope > 0) {
+      // Runways follow the two pitches up to the ridge.
+      const knots = [gLo, uMin, uMid, uMax, gHi];
+      for (let k = 0; k < knots.length - 1; k++) {
+        if (knots[k + 1] - knots[k] < 0.1) continue;
+        parts.push(
+          beamGeometry(at(knots[k], girderY + ridgeRise(knots[k])), at(knots[k + 1], girderY + ridgeRise(knots[k + 1])), 1.4, girderH)
+        );
+      }
+    } else {
+      parts.push(beamGeometry(at(gLo, girderY), at(gHi, girderY), 1.4, girderH));
+    }
     // Trestles carry the girders down to the ground wherever they run past the canopy.
     for (const end of [gLo, gHi]) {
       const sgn = Math.sign(end);

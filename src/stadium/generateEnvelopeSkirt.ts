@@ -6,7 +6,8 @@ import { createFacadePbrMaterial, createStructurePbrMaterial, resolveFacadePalet
 import { buildEnvelopeDressing } from './envelopes';
 import { FACADE_WALL_OFFSET, type FacadeRailSample } from './envelopes/rail';
 import { buildParametricFacadeOnRail } from './parametricFacade';
-import { StadiumDocument, StandSide } from './schema';
+import { createRailSampler } from './envelopes/rail';
+import { GlassWallConfig, StadiumDocument, StandSide } from './schema';
 
 const SIDES: StandSide[] = ['north', 'south', 'east', 'west'];
 
@@ -79,7 +80,9 @@ export function generateEnvelopeSkirt(
   const segments = Math.max(48, Math.round(192 * Math.max(0.25, tEnd - tStart)));
   const count = closed ? segments : segments + 1;
 
-  // Contiguous runs of samples that have a roof above them.
+  // Contiguous runs of samples that have a roof above them; the glass wall side is kept apart.
+  const glassWall = doc.roof.glassWall;
+  const gable: { s: number; pt: FacadeRailSample }[] = [];
   const runs: FacadeRailSample[][] = [];
   let run: FacadeRailSample[] = [];
   let unbroken = closed;
@@ -106,6 +109,11 @@ export function generateEnvelopeSkirt(
       }
     }
 
+    if (topY !== null && glassWall && sideAt(p.x, p.z) === glassWall.side) {
+      gable.push({ s, pt: { x: p.x, z: p.z, nx: p.nx, nz: p.nz, yBottom: baseY - 0.3, yTop: topY } });
+      topY = null;
+    }
+
     if (topY === null) {
       if (run.length > 0) runs.push(run);
       run = [];
@@ -116,6 +124,12 @@ export function generateEnvelopeSkirt(
   }
   if (run.length > 0) runs.push(run);
   const loop = unbroken && runs.length === 1;
+  if (glassWall && gable.length > 1) {
+    // On a closed ring the side may straddle the seam: start it after the gap.
+    const gap = gable.findIndex((g, i) => i > 0 && g.s !== gable[i - 1].s + 1);
+    const ordered = closed && gap > 0 ? [...gable.slice(gap), ...gable.slice(0, gap)] : gable;
+    group.add(buildGlassWall(ordered.map((g) => g.pt), glassWall));
+  }
 
   // The band continues the facade up to the roof, in the same cladding and envelope, or is glazed
   // as a clear windbreak that keeps the bowl and the sky line visible.
@@ -180,6 +194,7 @@ export function generateEnvelopeSkirt(
             facadeMat: screenMat,
             ledColors: [doc.colors.seatsPrimary, doc.colors.seatsSecondary],
             night: doc.lighting !== 'day',
+            glowHex: mats.facadeGlowHex,
           })
         : buildParametricFacadeOnRail({
             samples: rail,
@@ -311,4 +326,72 @@ function buildGlazingMullions(
   mesh.name = 'WindbreakMullions';
   mesh.castShadow = true;
   return mesh;
+}
+
+/**
+ * Giant glazed wall on one side of the band between stands and roof: a row of tall framed glass
+ * doors that stay shut, pivot on their vertical axis, or slide apart and stack at both ends.
+ */
+function buildGlassWall(rail: FacadeRailSample[], cfg: GlassWallConfig): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'GlassEndWall';
+  const sampler = createRailSampler(rail, false);
+  if (!sampler) return group;
+  const { totalLen, sampleAtArc } = sampler;
+  const n = Math.max(3, Math.min(8, Math.round(totalLen / 24)));
+  const w = totalLen / n;
+  const open = Math.max(0, Math.min(1, cfg.openRatio));
+  const glass = new THREE.MeshPhysicalMaterial({
+    color: 0xcfe3f5,
+    transparent: true,
+    opacity: 0.3,
+    roughness: 0.04,
+    metalness: 0.15,
+    clearcoat: 1,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const frame = new THREE.MeshStandardMaterial({ color: 0x2b3440, roughness: 0.4, metalness: 0.7 });
+  for (let i = 0; i < n; i++) {
+    const c = sampleAtArc((i + 0.5) * w);
+    const a = sampleAtArc(i * w + 0.01);
+    const b = sampleAtArc(Math.min(totalLen - 0.01, (i + 1) * w));
+    const yB = Math.max(a.yBottom, b.yBottom, c.yBottom);
+    const h = Math.min(a.yTop, b.yTop, c.yTop) - yB;
+    if (h < 2) continue;
+    const door = new THREE.Group();
+    door.name = 'GlassWallDoor';
+    const pane = new THREE.Mesh(new THREE.BoxGeometry(w - 0.3, h - 0.3, 0.12), glass);
+    door.add(pane);
+    // Frame: posts, rails and two transoms.
+    for (const x of [-w / 2 + 0.2, w / 2 - 0.2]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, h, 0.5), frame);
+      post.position.x = x;
+      door.add(post);
+    }
+    for (const y of [-h / 2 + 0.2, -h / 6, h / 6, h / 2 - 0.2]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, 0.4), frame);
+      rail.position.y = y;
+      door.add(rail);
+    }
+    door.position.set(c.x, yB + h / 2, c.z);
+    door.rotation.y = Math.atan2(c.nx, c.nz);
+    if (cfg.motion === 'pivot') {
+      door.rotation.y += open * (Math.PI / 2) * 0.95;
+    } else if (cfg.motion === 'slide') {
+      // Each half parts toward its end, the panels nesting outward of one another.
+      const half = (n - 1) / 2;
+      const steps = i < half ? i : i > half ? n - 1 - i : 0;
+      const dir = i < half ? -1 : 1;
+      const len = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+      const tx = (b.x - a.x) / len;
+      const tz = (b.z - a.z) / len;
+      const shift = open * steps * w * dir;
+      const out = open * steps * 0.7;
+      door.position.x += tx * shift + c.nx * out;
+      door.position.z += tz * shift + c.nz * out;
+    }
+    group.add(door);
+  }
+  return group;
 }

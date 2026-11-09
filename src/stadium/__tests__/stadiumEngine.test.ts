@@ -86,7 +86,9 @@ function ensureCanvasMock() {
           save: () => {},
           restore: () => {},
           translate: () => {},
+          rotate: () => {},
           scale: () => {},
+          measureText: () => ({ width: 0 }),
           setLineDash: () => {},
           createLinearGradient: () => ({
             addColorStop: () => {},
@@ -405,7 +407,7 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
     'announces the capacity the 3D stands actually seat',
     () => {
       ensureCanvasMock();
-      expect(STADIUM_PRESETS.length).toBe(28);
+      expect(STADIUM_PRESETS.length).toBe(29);
       const off: string[] = [];
       for (const preset of STADIUM_PRESETS) {
         const doc = createPresetDocument(preset.id);
