@@ -2,6 +2,7 @@ import { calculateStandMetrics, computeKopWallStandPatch, fitStandRowsToCapacity
 import { FACADE_WALL_OFFSET } from './envelopes/rail';
 import {
   clampPitchToTrack,
+  DEFAULT_STADIUM_MATERIALS,
   isContinuousBowlShape,
   riserFromSlopeDeg,
   StadiumDocument,
@@ -2029,6 +2030,17 @@ export function createPresetDocument(presetId: string): StadiumDocument {
   return doc;
 }
 
+/**
+ * The traditional four-stand ground stripped of its brick and club colours: bare concrete and
+ * grey seats, the neutral base that blank projects and the option thumbnails build on.
+ */
+export function createNeutralBaseDocument(): StadiumDocument {
+  const doc = createPresetDocument('traditional_four_stands_42k');
+  doc.materials = { ...DEFAULT_STADIUM_MATERIALS, ...doc.materials, facade: 'architectural_concrete' };
+  doc.colors = { ...doc.colors, facade: '#94a3b8', seatsPrimary: '#475569', seatsSecondary: '#94a3b8' };
+  return doc;
+}
+
 /** Preset id carried by stadiums started from nothing (not one of STADIUM_PRESETS). */
 export const BLANK_PRESET_ID = 'blank';
 
@@ -2037,7 +2049,7 @@ export const BLANK_PRESET_ID = 'blank';
  * pitch, with no roof, floodlights, concourse, surroundings or equipment.
  */
 export function createBlankDocument(): StadiumDocument {
-  const doc = createPresetDocument('traditional_four_stands_42k');
+  const doc = createNeutralBaseDocument();
   const stand = (side: StandSide, name: string) =>
     makeStand(side, name, { rows: 10, tiers: 1, slopeAngleDeg: 24, distanceToPitch: 6, aisleCount: 4 });
   doc.name = 'Nouveau stade';

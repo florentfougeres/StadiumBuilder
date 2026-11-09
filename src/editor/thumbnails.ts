@@ -4,7 +4,7 @@ import { roofDefinition } from '../stadium/roofCatalog';
 import { shapeDefinition } from '../stadium/shapeCatalog';
 import { ENVELOPE_STYLE_CATALOG, resolveStadiumMaterials } from '../stadium/materials';
 import { buildStadiumSceneGraph, disposeObject3D } from '../stadium/buildStadiumScene';
-import { BLANK_PRESET_ID, createBlankDocument, createPresetDocument, STADIUM_PRESETS } from '../stadium/presets';
+import { BLANK_PRESET_ID, createBlankDocument, createNeutralBaseDocument, createPresetDocument, STADIUM_PRESETS } from '../stadium/presets';
 import { RoofStyle, StadiumDocument, StadiumShape } from '../stadium/schema';
 import { applyShape } from '../state/useStadiumStore';
 
@@ -90,7 +90,7 @@ export async function renderThumbnails(
 
 /** Neutral stadium the option thumbnails vary one choice of, with the surroundings cleared. */
 function optionBase(shape: StadiumShape = 'modern_bowl'): StadiumDocument {
-  const doc = createPresetDocument('traditional_four_stands_42k');
+  const doc = createNeutralBaseDocument();
   applyShape(doc, shape);
   doc.objects = [];
   doc.site = { ...doc.site, setting: 'none', entrances: false, perimeterFence: false };
