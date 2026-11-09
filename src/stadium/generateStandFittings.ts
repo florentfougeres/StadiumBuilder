@@ -13,19 +13,50 @@ export const DUGOUT_OFFSET = 10.5;
 const DUGOUT_W = 7.2;
 const DUGOUT_D = 2.6;
 
-/** Press seats: rows and length of the press box. */
+/** Press seats: default rows of the press box, and the bounds of its settings. */
 export const PRESS_ROWS = 6;
-export function pressBoxLength(standLength: number): number {
-  return Math.max(10, Math.min(32, standLength * 0.32));
+export const PRESS_ROWS_RANGE: [number, number] = [2, 8];
+export const PRESS_LENGTH_RANGE: [number, number] = [8, 60];
+
+/** Press box settings of a stand (see `StandConfig.pressBox*`). */
+export interface PressBoxSettings {
+  pressBoxTier?: number;
+  pressBoxRows?: number;
+  pressBoxLength?: number;
+}
+
+/** Length of the press box (m) when unset. */
+export const PRESS_LENGTH_DEFAULT = 30;
+
+/** Length of the press box (m): the chosen one, never past the stand. */
+export function pressBoxLength(stand: PressBoxSettings, standLength: number): number {
+  const want = stand.pressBoxLength ?? PRESS_LENGTH_DEFAULT;
+  return Math.max(4, Math.min(want, standLength * 0.9));
 }
 /** Spacing of the press places along a row (m). */
 export const PRESS_PITCH = 0.9;
 
-/** Index range (in the tier's rows) of the press rows: the back of the lowest tier. */
-export function pressRowRange(tierRows: number, tiers: number): [number, number] {
-  const rows = Math.min(PRESS_ROWS, Math.max(2, Math.floor(tierRows / 3)));
-  // On a single tier, the press sits two-thirds up rather than against the crest.
-  const end = tiers >= 2 ? tierRows : Math.max(rows, Math.round(tierRows * 0.72));
+/** Tier holding the press box, clamped to the stand's `tierCount`. */
+export function pressBoxTier(stand: PressBoxSettings, tierCount: number): number {
+  return Math.max(0, Math.min(tierCount - 1, Math.round(stand.pressBoxTier ?? 0)));
+}
+
+/**
+ * Index range (in the tier's rows) of the press rows. Under a tier above, the press takes the
+ * back rows, sheltered by its overhang; in the top tier of a multi-tier stand it takes the front
+ * rows behind the balcony; on a single tier it sits two-thirds up rather than against the crest.
+ */
+export function pressRowRange(
+  tierRows: number,
+  tierIdx: number,
+  tiers: number,
+  stand: PressBoxSettings = {}
+): [number, number] {
+  const auto = Math.min(PRESS_ROWS, Math.max(2, Math.floor(tierRows / 3)));
+  const rows = Math.max(0, Math.min(tierRows, stand.pressBoxRows ?? auto));
+  if (tierIdx < tiers - 1) return [tierRows - rows, tierRows];
+  if (tiers >= 2) return [0, rows];
+  const end = Math.min(tierRows, Math.max(rows, Math.round(tierRows * 0.72)));
   return [end - rows, end];
 }
 

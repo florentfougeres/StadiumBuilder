@@ -4,6 +4,7 @@ import { calculateStadiumMetrics } from '../capacity';
 import { generateStandsGroup } from '../generateStand';
 import { computeStandSection, computeStandSightlines } from '../sightlines';
 import { createPresetDocument } from '../presets';
+import { pressRowRange } from '../generateStandFittings';
 import { StadiumDocument, StadiumShape, StandSide } from '../schema';
 
 /** Textures are drawn on a canvas: any 2D call is a no-op here. */
@@ -148,6 +149,24 @@ describe('dugouts, press box and fence', () => {
     expect(seatCount(group)).toBeLessThan(seatCount(plain));
   });
 
+  it('puts the press rows at the back of a sheltered tier, the front of the top one', () => {
+    expect(pressRowRange(18, 0, 3, { pressBoxRows: 4 })).toEqual([14, 18]);
+    expect(pressRowRange(18, 2, 3, { pressBoxRows: 4 })).toEqual([0, 4]);
+    expect(pressRowRange(30, 0, 1, { pressBoxRows: 4 })).toEqual([18, 22]);
+    expect(pressRowRange(3, 0, 2, { pressBoxRows: 8 })).toEqual([0, 3]);
+  });
+
+  it.each<StadiumShape>(['four_stands', 'modern_bowl'])('sizes the press box and moves it up a tier on %s', (shape) => {
+    const doc = docOf(shape);
+    doc.stands.south = { ...doc.stands.south, tiers: 2, pressBox: true, pressBoxRows: 2, pressBoxLength: 10 };
+    const small = seatCount(generateStandsGroup(doc));
+    doc.stands.south = { ...doc.stands.south, pressBoxRows: 6, pressBoxLength: 40 };
+    const large = seatCount(generateStandsGroup(doc));
+    expect(large).toBeLessThan(small);
+    doc.stands.south = { ...doc.stands.south, pressBoxTier: 1 };
+    expect(count(generateStandsGroup(doc), 'PressBox')).toBe(1);
+  });
+
   it('leaves the capacity model alone', () => {
     const doc = docOf('four_stands');
     const before = calculateStadiumMetrics(doc).totalCapacity;
@@ -184,5 +203,17 @@ describe('vomitory rows per tier', () => {
     const before = calculateStadiumMetrics(doc).stands.north.evacuationMinutes;
     doc.stands.north.vomitoryLevels = 2;
     expect(calculateStadiumMetrics(doc).stands.north.evacuationMinutes).toBeLessThan(before);
+  });
+});
+
+describe('hospitality boxes', () => {
+  it.each<StadiumShape>(['four_stands', 'modern_bowl'])('glazes the tier break with boxes on %s', (shape) => {
+    const doc = docOf(shape);
+    for (const side of SIDES) doc.stands[side] = { ...doc.stands[side], tiers: 2, vipLoges: false };
+    expect(count(generateStandsGroup(doc), 'SkyboxGlazing')).toBe(0);
+    doc.stands.south = { ...doc.stands.south, vipLoges: true, vipStoreys: 2 };
+    const group = generateStandsGroup(doc);
+    expect(count(group, 'SkyboxGlazing')).toBeGreaterThan(0);
+    expect(count(group, 'SkyboxMullions')).toBeGreaterThan(0);
   });
 });

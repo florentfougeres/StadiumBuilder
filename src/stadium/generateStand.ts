@@ -37,9 +37,11 @@ import {
   PRESS_PITCH,
   PressPlace,
   pressBoxLength,
+  pressBoxTier,
   pressRowRange,
   resolveFenceHeight,
 } from './generateStandFittings';
+import { buildSkyboxGlazing } from './skyboxGlazing';
 import {
   computeTelescopicProjection,
   getTrackRadialOffset,
@@ -87,7 +89,6 @@ import {
   resolveStandTiers,
   tierBreakDims,
   UPPER_TIER_STEEPENING,
-  VIP_STOREY_M,
 } from './sightlines';
 
 interface RowSample {
@@ -336,41 +337,6 @@ function buildStandProfilePoints(
     tierBands,
     railBands,
   };
-}
-
-function createVipSkyboxTexture(isNight: boolean): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 128;
-  const ctx = canvas.getContext('2d')!;
-
-  const grad = ctx.createLinearGradient(0, 0, 0, 128);
-  if (isNight) {
-    grad.addColorStop(0, '#78350f');
-    grad.addColorStop(0.35, '#fef3c7');
-    grad.addColorStop(1, '#f59e0b');
-  } else {
-    grad.addColorStop(0, '#0f172a');
-    grad.addColorStop(0.5, '#1e3a5f');
-    grad.addColorStop(1, '#38bdf8');
-  }
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 512, 128);
-
-  ctx.fillStyle = '#0f172a';
-  for (let x = 0; x <= 512; x += 64) {
-    ctx.fillRect(x - 2, 0, 4, 128);
-  }
-  ctx.fillRect(0, 0, 512, 8);
-  ctx.fillRect(0, 120, 512, 8);
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.repeat.set(6, 1);
-  tex.needsUpdate = true;
-  return tex;
 }
 
 function createConcourseTurnstileTexture(isNight: boolean): THREE.CanvasTexture {
@@ -663,7 +629,6 @@ function buildStraightStandMesh(
   concreteMat: THREE.MeshStandardMaterial,
   facadeMat: THREE.MeshPhysicalMaterial,
   structureMat: THREE.MeshPhysicalMaterial,
-  vipTex: THREE.CanvasTexture,
   turnstileTex: THREE.CanvasTexture
 ): THREE.Group {
   const group = new THREE.Group();
@@ -811,14 +776,16 @@ function buildStraightStandMesh(
   bowlMesh.receiveShadow = true;
   group.add(bowlMesh);
 
-  // Press box: the back rows of the lowest tier, in the middle of the stand.
+  // Press box: rows of the chosen tier, in the middle of the stand.
   const pressSegs = new Set<number>();
   const pressPlaces: PressPlace[] = [];
-  const pressHalf = pressBoxLength(spanLength) / 2;
+  const pressHalf = pressBoxLength(stand, spanLength) / 2;
   if (stand.pressBox && stand.seatingType !== 'safe_standing') {
-    const tier0 = rowPositions.filter((r) => r.tierIdx === 0);
-    const [r0, r1] = pressRowRange(tier0.length, stand.tiers);
-    for (const row of tier0.slice(r0, r1)) {
+    const tierCount = rowPositions.reduce((n, r) => Math.max(n, r.tierIdx + 1), 1);
+    const pressTier = pressBoxTier(stand, tierCount);
+    const tierRowsList = rowPositions.filter((r) => r.tierIdx === pressTier);
+    const [r0, r1] = pressRowRange(tierRowsList.length, pressTier, tierCount, stand);
+    for (const row of tierRowsList.slice(r0, r1)) {
       pressSegs.add(row.treadSegIdx);
       const front = profilePts[row.treadSegIdx];
       for (let x = -pressHalf + PRESS_PITCH / 2; x < pressHalf; x += PRESS_PITCH) {
@@ -1183,15 +1150,6 @@ function buildStraightStandMesh(
       metalness: 0.16,
     });
     const ledFasciaMat = createLedFasciaMaterial(doc.lighting === 'day');
-    const vipGlassMat = new THREE.MeshPhysicalMaterial({
-      map: vipTex,
-      emissive: new THREE.Color(doc.lighting === 'day' ? 0x000000 : 0xf59e0b),
-      emissiveMap: vipTex,
-      emissiveIntensity: doc.lighting === 'day' ? 0 : 0.68,
-      roughness: 0.1,
-      metalness: 0.3,
-      clearcoat: 0.9,
-    });
 
     for (const bal of balconies) {
       const whiteFascia = new THREE.Mesh(
@@ -1215,27 +1173,19 @@ function buildStraightStandMesh(
       );
 
       if (bal.hasVipGlass) {
-        // Glazing over the whole loggia height; a ring of suites shows one storey per floor slab.
+        // Boxes over the whole loggia height, against its back wall.
         const loggiaH = Math.max(1.8, 2 * (bal.soffitY - bal.loggiaY) - 0.15);
-        const storeys = Math.max(1, Math.round((loggiaH + 0.15 - 1.95) / VIP_STOREY_M) + 1);
-        let glassMat: THREE.Material = vipGlassMat;
-        if (storeys > 1) {
-          const tex = vipTex.clone();
-          tex.wrapT = THREE.RepeatWrapping;
-          tex.repeat.set(1, storeys);
-          tex.needsUpdate = true;
-          glassMat = vipGlassMat.clone();
-          (glassMat as THREE.MeshPhysicalMaterial).map = tex;
-          (glassMat as THREE.MeshPhysicalMaterial).emissiveMap = tex;
-        }
-        const skyboxGlass = new THREE.Mesh(new THREE.BoxGeometry(spanLength - 0.12, loggiaH, 0.32), glassMat);
-        skyboxGlass.position.set(0, bal.loggiaY, bal.loggiaD);
-        group.add(skyboxGlass);
-        for (let k = 1; k < storeys; k++) {
-          const slab = new THREE.Mesh(new THREE.BoxGeometry(spanLength - 0.1, 0.35, 0.9), fasciaSlabMat);
-          slab.position.set(0, bal.loggiaY - loggiaH / 2 + (k * loggiaH) / storeys, bal.loggiaD - 0.2);
-          group.add(slab);
-        }
+        const half = (spanLength - 0.12) / 2;
+        const glazing = buildSkyboxGlazing(
+          {
+            line: [new THREE.Vector3(-half, 0, bal.loggiaD), new THREE.Vector3(half, 0, bal.loggiaD)],
+            bottomY: [bal.loggiaY - loggiaH / 2, bal.loggiaY - loggiaH / 2],
+            topY: [bal.loggiaY + loggiaH / 2, bal.loggiaY + loggiaH / 2],
+            inward: [new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 1)],
+          },
+          doc.lighting !== 'day'
+        );
+        if (glazing) group.add(glazing);
       }
 
       // Structural tapered cantilever soffit beams underneath deep cantilevered upper tiers
@@ -2199,7 +2149,6 @@ function buildCornerVirageQuadrant(
   concreteMat: THREE.MeshStandardMaterial,
   facadeMat: THREE.MeshPhysicalMaterial,
   structureMat: THREE.MeshPhysicalMaterial,
-  vipTex: THREE.CanvasTexture,
   turnstileTex: THREE.CanvasTexture
 ): THREE.Group {
   const group = new THREE.Group();
@@ -2822,16 +2771,6 @@ function buildCornerVirageQuadrant(
       metalness: 0.18,
     });
     const ledFasciaMat = createLedFasciaMaterial(doc.lighting === 'day');
-    const vipGlassMat = new THREE.MeshPhysicalMaterial({
-      map: vipTex,
-      emissive: new THREE.Color(doc.lighting === 'day' ? 0x000000 : 0xf59e0b),
-      emissiveMap: vipTex,
-      emissiveIntensity: doc.lighting === 'day' ? 0 : 0.68,
-      roughness: 0.1,
-      metalness: 0.3,
-      clearcoat: 0.9,
-      side: THREE.DoubleSide,
-    });
 
     const curveType = corner.facetedThreeBay ? 'centripetal' : 'catmullrom';
     const curveTension = corner.facetedThreeBay ? 0.04 : 0.5;
@@ -2839,8 +2778,10 @@ function buildCornerVirageQuadrant(
     for (let bIdx = 0; bIdx < breakRows.length; bIdx++) {
       const fasciaPts: THREE.Vector3[] = [];
       const ledPts: THREE.Vector3[] = [];
-      const vipBotPts: THREE.Vector3[] = [];
-      const vipTopPts: THREE.Vector3[] = [];
+      const vipLine: THREE.Vector3[] = [];
+      const vipInward: THREE.Vector3[] = [];
+      const vipBot: number[] = [];
+      const vipTop: number[] = [];
 
       for (let s = 0; s <= segs; s++) {
         const bal = balconiesPerSlice[s][bIdx];
@@ -2853,8 +2794,11 @@ function buildCornerVirageQuadrant(
 
         if (bal.hasVipGlass && bal.loggiaTopY - bal.loggiaBottomY > 0.6) {
           const gp = sampleCornerQuadrantPoint(corner, u, bal.loggiaD);
-          vipBotPts.push(new THREE.Vector3(gp.x, bal.loggiaBottomY, gp.z));
-          vipTopPts.push(new THREE.Vector3(gp.x, bal.loggiaTopY, gp.z));
+          const gb = sampleCornerQuadrantPoint(corner, u, bal.loggiaD + 1);
+          vipLine.push(new THREE.Vector3(gp.x, 0, gp.z));
+          vipInward.push(new THREE.Vector3(gb.x - gp.x, 0, gb.z - gp.z).normalize());
+          vipBot.push(bal.loggiaBottomY);
+          vipTop.push(bal.loggiaTopY);
         }
       }
 
@@ -2871,41 +2815,12 @@ function buildCornerVirageQuadrant(
         group.add(buildLedFasciaBand(lCurve.getPoints(ledPts.length * 2), 0.88, ledFasciaMat));
       }
 
-      if (vipBotPts.length >= 3) {
-        const vLen = vipBotPts.length;
-        const vPos = new Float32Array(vLen * 2 * 3);
-        const vUvs = new Float32Array(vLen * 2 * 2);
-        const vIdx: number[] = [];
-        for (let i = 0; i < vLen; i++) {
-          const bot = vipBotPts[i];
-          const top = vipTopPts[i];
-          const b = i * 6;
-          vPos[b] = bot.x;
-          vPos[b + 1] = bot.y;
-          vPos[b + 2] = bot.z;
-          vPos[b + 3] = top.x;
-          vPos[b + 4] = top.y;
-          vPos[b + 5] = top.z;
-
-          const uCoord = (i / Math.max(1, vLen - 1)) * 2.5;
-          vUvs[i * 4] = uCoord;
-          vUvs[i * 4 + 1] = 0;
-          vUvs[i * 4 + 2] = uCoord;
-          vUvs[i * 4 + 3] = 1;
-        }
-        for (let i = 0; i < vLen - 1; i++) {
-          const a = i * 2;
-          const b = (i + 1) * 2;
-          const c = b + 1;
-          const d = a + 1;
-          vIdx.push(a, d, b, b, d, c);
-        }
-        const vGeo = new THREE.BufferGeometry();
-        vGeo.setAttribute('position', new THREE.BufferAttribute(vPos, 3));
-        vGeo.setAttribute('uv', new THREE.BufferAttribute(vUvs, 2));
-        vGeo.setIndex(vIdx);
-        vGeo.computeVertexNormals();
-        group.add(new THREE.Mesh(vGeo, vipGlassMat));
+      if (vipLine.length >= 2) {
+        const glazing = buildSkyboxGlazing(
+          { line: vipLine, bottomY: vipBot, topY: vipTop, inward: vipInward },
+          doc.lighting !== 'day'
+        );
+        if (glazing) group.add(glazing);
       }
     }
   }
@@ -3162,7 +3077,6 @@ function buildModernBowlSweep(
   doc: StadiumDocument,
   crossSectionClip: boolean,
   concreteMat: THREE.MeshStandardMaterial,
-  vipTex: THREE.CanvasTexture,
   turnstileTex: THREE.CanvasTexture,
   maxAnisotropy: number
 ): THREE.Group {
@@ -3348,6 +3262,8 @@ function buildModernBowlSweep(
   }
 
   const profilePtsPerSlice: [number, number][][] = [];
+  /** Share of hospitality boxes in each slice's tier breaks. */
+  const vipPerSlice: number[] = [];
   const topCrestPerSlice: [number, number][] = [];
   const sliceCornerId: (CornerId | null)[] = [];
 
@@ -3374,6 +3290,7 @@ function buildModernBowlSweep(
       const section = bowlSectionAt(sectionModel, bowlMixAtT(sectionModel, bowlRing, t, baseSample.nz));
       topCrestPerSlice.push([section.outerD, section.topHeight]);
       profilePtsPerSlice.push(section.pts);
+      vipPerSlice.push(section.vip);
       continue;
     }
 
@@ -3497,6 +3414,7 @@ function buildModernBowlSweep(
     }
 
     profilePtsPerSlice.push(pts);
+    vipPerSlice.push(tierBlend.hasVip ? 1 : 0);
   }
 
   // Custom corner cutouts (`open`, `building`, `screen`) when user configures `doc.corners` on a continuous bowl
@@ -3731,14 +3649,16 @@ function buildModernBowlSweep(
     }
     if (st.pressBox && sectionModel && st.seatingType !== 'safe_standing' && bowlRing.perimeter > 0) {
       const sideLen = side === 'east' || side === 'west' ? safePitch.width : safePitch.length;
-      const half = pressBoxLength(sideLen * 0.9) / 2;
-      const tierRows = sectionModel.specs[side].tiers[0]?.rows ?? 0;
-      const [r0, r1] = pressRowRange(tierRows, sectionModel.specs[side].tiers.length);
+      const half = pressBoxLength(st, sideLen * 0.9) / 2;
+      const tierCount = sectionModel.specs[side].tiers.length;
+      const pressTier = pressBoxTier(st, tierCount);
+      const tierRows = sectionModel.specs[side].tiers[pressTier]?.rows ?? 0;
+      const [r0, r1] = pressRowRange(tierRows, pressTier, tierCount, st);
       const segs = new Set<number>();
       const dt = half / bowlRing.perimeter;
       const count = Math.max(2, Math.round((2 * half) / PRESS_PITCH));
       for (let r = r0; r < r1; r++) {
-        const p = sectionModel.treadSeg[0][r];
+        const p = sectionModel.treadSeg[pressTier]?.[r];
         if (p === undefined) continue;
         segs.add(p);
         const section = bowlSectionAt(
@@ -3953,7 +3873,6 @@ function buildModernBowlSweep(
             concreteMat,
             facadeMat: cFacadeMat,
             structureMat: cStructMat,
-            vipTex,
             turnstileTex,
           })
         );
@@ -4180,16 +4099,6 @@ function buildModernBowlSweep(
     metalness: 0.2,
   });
   const ledFasciaMat = createLedFasciaMaterial(doc.lighting === 'day');
-  const vipGlassMat = new THREE.MeshPhysicalMaterial({
-    map: vipTex,
-    emissive: new THREE.Color(doc.lighting === 'day' ? 0x000000 : 0xf59e0b),
-    emissiveMap: vipTex,
-    emissiveIntensity: doc.lighting === 'day' ? 0 : 0.72,
-    roughness: 0.1,
-    metalness: 0.35,
-    clearcoat: 0.92,
-    side: THREE.DoubleSide,
-  });
 
   // First point of each balcony break (loggia foot); its fascia top is three points on.
   const slotStartIndices = sectionModel
@@ -4198,14 +4107,21 @@ function buildModernBowlSweep(
 
   for (const baseIdx of slotStartIndices) {
     let runFascia: THREE.Vector3[] = [];
-    let runGlassTop: THREE.Vector3[] = [];
-    let runGlassBot: THREE.Vector3[] = [];
+    let runGlass: THREE.Vector3[] = [];
+    let runGlassIn: THREE.Vector3[] = [];
+    let runGlassBot: number[] = [];
+    let runGlassTop: number[] = [];
+    const resetGlass = () => {
+      runGlass = [];
+      runGlassIn = [];
+      runGlassBot = [];
+      runGlassTop = [];
+    };
 
     const flushBalconyRun = (looped: boolean) => {
       if (runFascia.length < 3) {
         runFascia = [];
-        runGlassTop = [];
-        runGlassBot = [];
+        resetGlass();
         return;
       }
       const fCurve = new THREE.CatmullRomCurve3(
@@ -4230,48 +4146,21 @@ function buildModernBowlSweep(
         });
       group.add(buildLedFasciaBand(ledCentres, 0.88, ledFasciaMat));
 
-      const gLen = runGlassTop.length;
-      if (gLen >= 3) {
-        const gPos = new Float32Array(gLen * 2 * 3);
-        const gUvs = new Float32Array(gLen * 2 * 2);
-        const gIdx: number[] = [];
-        for (let i = 0; i < gLen; i++) {
-          const bot = runGlassBot[i];
-          const top = runGlassTop[i];
-          const b = i * 6;
-          gPos[b] = bot.x;
-          gPos[b + 1] = bot.y;
-          gPos[b + 2] = bot.z;
-          gPos[b + 3] = top.x;
-          gPos[b + 4] = top.y;
-          gPos[b + 5] = top.z;
-
-          gUvs[i * 4] = (i / Math.max(1, gLen - 1)) * 8;
-          gUvs[i * 4 + 1] = 0;
-          gUvs[i * 4 + 2] = (i / Math.max(1, gLen - 1)) * 8;
-          gUvs[i * 4 + 3] = 1;
-        }
-        const lim = looped ? gLen : gLen - 1;
-        for (let i = 0; i < lim; i++) {
-          const nxt = looped ? (i + 1) % gLen : i + 1;
-          const a = i * 2;
-          const b = nxt * 2;
-          const c = nxt * 2 + 1;
-          const d = i * 2 + 1;
-          gIdx.push(a, b, d);
-          gIdx.push(b, c, d);
-        }
-        const gGeo = new THREE.BufferGeometry();
-        gGeo.setAttribute('position', new THREE.BufferAttribute(gPos, 3));
-        gGeo.setAttribute('uv', new THREE.BufferAttribute(gUvs, 2));
-        gGeo.setIndex(gIdx);
-        gGeo.computeVertexNormals();
-        group.add(new THREE.Mesh(gGeo, vipGlassMat));
-      }
+      // A full ring of boxes loops only when every slice of it is glazed.
+      const glazing = buildSkyboxGlazing(
+        {
+          line: runGlass,
+          bottomY: runGlassBot,
+          topY: runGlassTop,
+          inward: runGlassIn,
+          closed: looped && runGlass.length === runFascia.length,
+        },
+        doc.lighting !== 'day'
+      );
+      if (glazing) group.add(glazing);
 
       runFascia = [];
-      runGlassTop = [];
-      runGlassBot = [];
+      resetGlass();
     };
 
     let fullRingActive = closed;
@@ -4286,10 +4175,13 @@ function buildModernBowlSweep(
         const t = tAtSlice(s);
         const fPt = sampleRoundedBowlRing(bowlRing, t, overTop[0] - 0.12);
         runFascia.push(new THREE.Vector3(fPt.x, overTop[1] - 0.35, fPt.z));
-        if (hDiff > 1.8) {
+        if (vipPerSlice[s] >= 0.5 && pts[baseIdx + 1][1] - recBot[1] > 1.6) {
           const gPt = sampleRoundedBowlRing(bowlRing, t, recBot[0] - 0.15);
-          runGlassBot.push(new THREE.Vector3(gPt.x, recBot[1] + 0.08, gPt.z));
-          runGlassTop.push(new THREE.Vector3(gPt.x, recBot[1] + 1.62, gPt.z));
+          const gIn = sampleRoundedBowlRing(bowlRing, t, recBot[0] + 0.85);
+          runGlass.push(new THREE.Vector3(gPt.x, 0, gPt.z));
+          runGlassIn.push(new THREE.Vector3(gIn.x - gPt.x, 0, gIn.z - gPt.z).normalize());
+          runGlassBot.push(recBot[1] + 0.08);
+          runGlassTop.push(pts[baseIdx + 1][1] - 0.08);
         }
       } else {
         fullRingActive = false;
@@ -4407,7 +4299,6 @@ export function generateStandsGroup(
 
   const mats = resolveStadiumMaterials(doc);
   const concreteMat = createConcreteBowlMaterial(maxAnisotropy);
-  const vipTex = createVipSkyboxTexture(doc.lighting !== 'day');
   const turnstileTex = createConcourseTurnstileTexture(doc.lighting !== 'day');
 
   if (isContinuousBowlShape(doc.shape)) {
@@ -4416,7 +4307,6 @@ export function generateStandsGroup(
         doc,
         crossSectionClip,
         concreteMat,
-        vipTex,
         turnstileTex,
         maxAnisotropy
       )
@@ -4472,7 +4362,6 @@ export function generateStandsGroup(
       stand.structureMaterialOverride && stand.structureMaterialOverride !== 'inherit'
         ? createStructurePbrMaterial(stand.structureMaterialOverride, maxAnisotropy)
         : structureMat,
-      vipTex,
       turnstileTex
     );
 
@@ -4518,7 +4407,6 @@ export function generateStandsGroup(
           concreteMat,
           facadeMat,
           structureMat,
-          vipTex,
           turnstileTex
         )
       );
@@ -4533,7 +4421,6 @@ export function generateStandsGroup(
             concreteMat,
             facadeMat,
             structureMat,
-            vipTex,
             turnstileTex,
           })
         );

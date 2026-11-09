@@ -13,7 +13,7 @@ import { cornerEnds, type CornerStructureContext } from './kit';
  * join keeps.
  */
 export function buildCornerBuilding(ctx: CornerStructureContext): THREE.Group {
-  const { doc, corner, concreteMat, facadeMat, structureMat, vipTex, turnstileTex } = ctx;
+  const { doc, corner, concreteMat, facadeMat, structureMat, turnstileTex } = ctx;
   const group = new THREE.Group();
   group.name = `CornerBuilding_${corner.id.toUpperCase()}`;
 
@@ -132,6 +132,7 @@ export function buildCornerBuilding(ctx: CornerStructureContext): THREE.Group {
     return mesh;
   };
 
+  const vipTex = createCurtainWallTexture(isNight);
   const curtainGlassMat = new THREE.MeshPhysicalMaterial({
     map: vipTex,
     emissive: new THREE.Color(isNight ? 0xf59e0b : 0x0ea5e9),
@@ -290,4 +291,40 @@ export function buildCornerBuilding(ctx: CornerStructureContext): THREE.Group {
   );
 
   return group;
+}
+
+/** Backlit curtain-wall texture of the corner building's glazed front. */
+function createCurtainWallTexture(isNight: boolean): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+
+  const grad = ctx.createLinearGradient(0, 0, 0, 128);
+  if (isNight) {
+    grad.addColorStop(0, '#78350f');
+    grad.addColorStop(0.35, '#fef3c7');
+    grad.addColorStop(1, '#f59e0b');
+  } else {
+    grad.addColorStop(0, '#0f172a');
+    grad.addColorStop(0.5, '#1e3a5f');
+    grad.addColorStop(1, '#38bdf8');
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 512, 128);
+
+  ctx.fillStyle = '#0f172a';
+  for (let x = 0; x <= 512; x += 64) {
+    ctx.fillRect(x - 2, 0, 4, 128);
+  }
+  ctx.fillRect(0, 0, 512, 8);
+  ctx.fillRect(0, 120, 512, 8);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.repeat.set(6, 1);
+  tex.needsUpdate = true;
+  return tex;
 }

@@ -67,6 +67,7 @@ import {
   StadiumShape,
   SeatPattern,
   SeatTierStyle,
+  StandConfig,
   StandSide,
   TRACK_MAX_PITCH_WIDTH_M,
 } from '../stadium/schema';
@@ -84,6 +85,14 @@ import { StandTarget, useStadiumStore } from '../state/useStadiumStore';
 import { ObjectList } from './ObjectList';
 import { Plus, X } from 'lucide-react';
 import { thumbnailUrl } from './thumbnails';
+import {
+  PRESS_LENGTH_DEFAULT,
+  PRESS_LENGTH_RANGE,
+  PRESS_PITCH,
+  PRESS_ROWS,
+  PRESS_ROWS_RANGE,
+  pressBoxTier,
+} from '../stadium/generateStandFittings';
 import {
   AdvancedSection,
   Button,
@@ -572,6 +581,61 @@ const SEAT_SELECTION_SCOPE: Record<SeatSelection['kind'], SeatStyleScope> = {
 };
 
 const SEAT_GRID_SIDES: StandSide[] = ['north', 'south', 'east', 'west'];
+
+/** Press box settings of the main stand: its tier, rows and length. */
+function PressBoxFields({
+  stand,
+  tierCount,
+  disabled,
+  target,
+}: {
+  stand: StandConfig;
+  tierCount: number;
+  disabled: boolean;
+  target: StandTarget;
+}) {
+  const updateStand = useStadiumStore((s) => s.updateStand);
+  const tier = pressBoxTier(stand, tierCount);
+  const rows = stand.pressBoxRows ?? PRESS_ROWS;
+  const length = stand.pressBoxLength ?? PRESS_LENGTH_DEFAULT;
+  return (
+    <>
+      {tierCount >= 2 && (
+        <FieldRow label="Étage de la presse">
+          <Segmented
+            label="Étage de la presse"
+            size="sm"
+            disabled={disabled}
+            value={tier}
+            onChange={(pressBoxTier) => updateStand(target, { pressBoxTier })}
+            options={Array.from({ length: tierCount }, (_, i) => ({ id: i, label: String(i + 1) }))}
+          />
+        </FieldRow>
+      )}
+      <SliderField
+        label="Rangs de pupitres"
+        min={PRESS_ROWS_RANGE[0]}
+        max={PRESS_ROWS_RANGE[1]}
+        step={1}
+        disabled={disabled}
+        value={rows}
+        display={`${rows}`}
+        onChange={(pressBoxRows) => updateStand(target, { pressBoxRows })}
+      />
+      <SliderField
+        label="Longueur"
+        hint={`≈ ${Math.round(length / PRESS_PITCH) * rows} postes de journalistes`}
+        min={PRESS_LENGTH_RANGE[0]}
+        max={PRESS_LENGTH_RANGE[1]}
+        step={1}
+        disabled={disabled}
+        value={length}
+        display={`${length} m`}
+        onChange={(pressBoxLength) => updateStand(target, { pressBoxLength })}
+      />
+    </>
+  );
+}
 
 const selectionOf = (target: StandTarget): SeatSelection =>
   target === 'all' ? { kind: 'all' } : { kind: 'stand', side: target };
@@ -1506,11 +1570,18 @@ const StandsPanel: React.FC = () => {
         />
         <ToggleField
           label="Tribune de presse"
-          hint="Rangs centraux équipés de pupitres et d’écrans pour les journalistes"
-          disabled={off}
+          hint={
+            editAll
+              ? 'Une seule par stade, en tribune principale : choisissez d’abord une tribune'
+              : 'Pupitres et écrans pour les journalistes, au centre de la tribune principale (une seule par stade)'
+          }
+          disabled={off || editAll}
           checked={stand.pressBox === true}
           onChange={(pressBox) => updateStand(target, { pressBox })}
         />
+        {!editAll && stand.pressBox === true && (
+          <PressBoxFields stand={stand} tierCount={resolvedTiers.length} disabled={off} target={target} />
+        )}
         {stand.tiers >= 2 && (
           <ToggleField
             label="Loges VIP entre les étages"

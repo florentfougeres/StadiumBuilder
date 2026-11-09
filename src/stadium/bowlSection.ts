@@ -59,6 +59,8 @@ interface StandSpec {
   recess: number;
   loggiaH: number;
   fasciaH: number;
+  /** Tier breaks hold glazed hospitality boxes. */
+  hasVip: boolean;
   topHeight: number;
   outerD: number;
 }
@@ -108,6 +110,7 @@ function standSpec(stand: StandConfig): StandSpec {
     rowDepth: stand.rowDepth,
     elevation: stand.elevationStart,
     ...tierBreakDims(hasVip, stand.vipStoreys),
+    hasVip,
     topHeight: section.topHeight,
     outerD: section.totalDepth,
   };
@@ -288,6 +291,8 @@ export interface BowlSectionSample {
   /** Rear of the crest walkway and its level. */
   outerD: number;
   topHeight: number;
+  /** Share of hospitality boxes in the tier breaks (`0..1`, blended across a corner). */
+  vip: number;
 }
 
 const lerp = (a: number, b: number, s: number) => a + (b - a) * s;
@@ -435,7 +440,7 @@ export function bowlSectionAt(model: BowlSectionModel, mix: BowlMix): BowlSectio
   } else {
     pts.push([outerD, 0]);
   }
-  return { pts, outerD, topHeight };
+  return { pts, outerD, topHeight, vip: lerp(A.hasVip ? 1 : 0, B.hasVip ? 1 : 0, s) };
 }
 
 /** Crest height and rear depth of the bowl at a ring normal. */

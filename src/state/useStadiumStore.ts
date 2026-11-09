@@ -715,6 +715,12 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     updateStand: (target, patch) =>
       commitChange((d) => {
         for (const side of standsOf(target)) applyStandPatch(d, side, patch);
+        // One press box per ground, in the main stand: turning it on in a stand moves it there.
+        if (patch.pressBox === true && target !== 'all') {
+          for (const side of ALL_STANDS) {
+            if (side !== target && d.stands[side].pressBox) d.stands[side] = { ...d.stands[side], pressBox: false };
+          }
+        }
       }),
 
     updateStandTier: (target, tierIndex, patch) =>

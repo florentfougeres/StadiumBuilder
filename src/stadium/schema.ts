@@ -222,8 +222,14 @@ export interface StandConfig {
   crossAisleWidth?: number;
   /** Team dugouts set into the front wall, either side of the halfway line. */
   dugouts?: boolean;
-  /** Press seats with desks and screens in the centre of the stand. */
+  /** Press seats with desks and screens in the centre of the stand (one stand only: the main one). */
   pressBox?: boolean;
+  /** Tier holding the press seats, from 0 (the lowest); clamped to the stand's tiers. */
+  pressBoxTier?: number;
+  /** Rows of press desks (`2..8`). */
+  pressBoxRows?: number;
+  /** Length of the press box along the stand (m, `8..60`), clamped to the stand. */
+  pressBoxLength?: number;
 }
 
 /** Height of the wall at the back of a cross aisle, raising the rows behind it (m). */

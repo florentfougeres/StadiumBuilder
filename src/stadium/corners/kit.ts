@@ -11,7 +11,6 @@ export interface CornerStructureContext {
   concreteMat: THREE.MeshStandardMaterial;
   facadeMat: THREE.Material;
   structureMat: THREE.Material;
-  vipTex: THREE.CanvasTexture;
   turnstileTex: THREE.CanvasTexture;
 }
 
