@@ -105,7 +105,7 @@ export const OnboardingDialog: React.FC<{
       <div className="flex flex-col max-h-[calc(100dvh-2rem)]">
         <header className="flex items-start gap-4 px-6 pt-5 pb-4 border-b border-line">
           <div className="flex-1">
-            <h2 id="onboarding-title" className="text-base font-semibold text-ink">
+            <h2 id="onboarding-title" className="text-sm font-semibold text-ink">
               Comment veux-tu commencer ?
             </h2>
             <p className="mt-1 text-xs text-ink-muted max-w-[60ch]">

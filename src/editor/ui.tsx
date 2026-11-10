@@ -356,8 +356,59 @@ export function OptionList<T extends string>({
   );
 }
 
+/**
+ * Open/close state and keyboard behaviour of a top-bar popup menu: outside click and Escape close
+ * it (Escape returns focus to the trigger), opening focuses the first item, and the arrow keys,
+ * Home and End move between the enabled `menuitem`s.
+ */
+export function usePopupMenu() {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  const items = () =>
+    Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? []);
+
+  useEffect(() => {
+    if (!open) return;
+    items()[0]?.focus();
+    const onPointer = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    window.addEventListener('pointerdown', onPointer);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', onPointer);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const onMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const list = items();
+    if (!list.length) return;
+    const i = list.indexOf(document.activeElement as HTMLElement);
+    const next =
+      e.key === 'ArrowDown' ? list[(i + 1) % list.length]
+      : e.key === 'ArrowUp' ? list[(i - 1 + list.length) % list.length]
+      : e.key === 'Home' ? list[0]
+      : e.key === 'End' ? list[list.length - 1]
+      : null;
+    if (!next) return;
+    e.preventDefault();
+    next.focus();
+  };
+
+  return { open, setOpen, rootRef, triggerRef, menuProps: { ref: menuRef, role: 'menu', onKeyDown: onMenuKeyDown } };
+}
+
 export const Button: React.FC<
-  React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'ghost' }
+  React.ComponentProps<'button'> & { variant?: 'primary' | 'secondary' | 'ghost' }
 > = ({ variant = 'secondary', className = '', ...props }) => (
   <button
     type="button"
@@ -372,12 +423,18 @@ export const Button: React.FC<
   />
 );
 
+/**
+ * Square icon control. `active` marks a toggled state: it is drawn in blue and exposed as
+ * `aria-pressed`, unless the caller swaps the label between the two states instead
+ * (then pass `aria-pressed={undefined}`).
+ */
 export const IconButton: React.FC<
   React.ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean }
 > = ({ label, active, className = '', children, ...props }) => (
   <button
     type="button"
     aria-label={label}
+    aria-pressed={active}
     title={label}
     {...props}
     className={`inline-flex items-center justify-center w-7 h-7 rounded transition-colors duration-100 disabled:opacity-35 disabled:pointer-events-none ${

@@ -44,6 +44,14 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      rollupOptions: {
+        output: {
+          // three.js changes far less often than the app: its own chunk stays cached across deploys.
+          manualChunks: (id: string) => (id.includes('/node_modules/three/') ? 'three' : undefined),
+        },
+      },
+    },
     test: {
       // Most suites build full stadium scenes: ~2 s each on a desktop, 5-6x that on the
       // 2-core GitHub runner where files run in parallel, so vitest's 5 s default flakes there.

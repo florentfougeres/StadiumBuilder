@@ -16,7 +16,7 @@ colors:
   ink-faint: "#9a9a9a"
   accent: "#0d99ff"
   accent-strong: "#0a6fcc"
-  accent-strong-hover: "#0b7ee6"
+  accent-strong-hover: "#085aa6"
   accent-soft: "#0d99ff26"
   accent-ink: "#5cb8ff"
   warn: "#f2b44c"
@@ -183,7 +183,7 @@ A neutral charcoal ramp with a single electric blue split into four jobs, plus t
 
 ### Primary
 - **Selection Blue** (accent): marks on dark ground: slider fill, focus rings (2px outline, 1px offset), focused field borders, text caret. Bright enough to read as a mark; never used as a fill behind white text.
-- **Deep Action Blue** (accent-strong): every filled control that carries white text: the Exporter button, the switch "on" track, hovered export-menu rows, text selection. Chosen for contrast with white; hover lifts to **Lifted Action Blue** (accent-strong-hover).
+- **Deep Action Blue** (accent-strong): every filled control that carries white text: the Exporter button, the switch "on" track, hovered export-menu rows, text selection. Chosen for contrast with white; hover deepens to **Pressed Action Blue** (accent-strong-hover, the same value in both themes) so white text keeps 7:1; a lighter hover fell below 4.5:1.
 - **Selection Wash** (accent-soft, 15% blue): background of the selected tree row and selected option-list row.
 - **Signal Blue Ink** (accent-ink): blue as text or icon on dark: metric deltas, the check on a chosen option, the icon of the active tree row.
 
@@ -272,7 +272,7 @@ Small, consistent corners: 4px on controls, rows and fields; 6px on containers t
 ### Buttons
 Compact and quiet; only one filled button per view.
 - **Shape:** gently squared (4px), 28px tall, 10px side padding, 12px medium text.
-- **Primary:** Deep Action Blue with white text; hover to Lifted Action Blue. Reserved for the main action (Exporter).
+- **Primary:** Deep Action Blue with white text; hover to Pressed Action Blue. Reserved for the main action (Exporter).
 - **Secondary:** Raised Graphite with Ink text and a 1px Edge outline; hover to Edge Hover and Hover Graphite.
 - **Ghost:** Muted Ink, no fill; hover adds Hover Graphite and Ink text.
 - **Icon button:** 28px square, Muted Ink; active (toggled) state uses Selection Wash with Signal Blue Ink. Destructive icon buttons turn Danger Coral on hover.
@@ -289,7 +289,7 @@ A recessed canvas track with a 1px Hairline outline (6px radius, 2px inset) hold
 - **Inline-editable text:** the project name reads as plain text and shows the field shell only on hover/focus.
 
 ### Slider field
-Label left, formatted value right (click to type an exact value, Enter commits, Escape cancels). Below: a 2px track filled with Selection Blue up to the value over Strong Hairline, and a 12px white round thumb that scales to 1.2 on hover/focus with a soft blue focus halo.
+Label left, formatted value right (click to type an exact value, Enter commits, Escape cancels). Below: a 2px track filled with Selection Blue up to the value over Strong Hairline, and a 12px white round thumb that scales to 1.2 on hover/focus; keyboard focus rings the thumb with a 2px panel-coloured gap and a solid 2px Selection Blue ring.
 
 ### Switch
 28 by 16px pill; Deep Action Blue when on, Strong Hairline when off; white 12px knob slides with a 150ms transition.

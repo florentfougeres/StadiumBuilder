@@ -485,6 +485,8 @@ export const Viewport: React.FC = () => {
 
     // Camera transition state
     let transitionActive = false;
+    // Under reduced motion a camera change cuts straight to the new view instead of flying there.
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     let targetFov = 44;
     let lastTime = performance.now();
 
@@ -573,7 +575,7 @@ export const Viewport: React.FC = () => {
         let needsMoreFrames = false;
 
         if (transitionActive) {
-          const alpha = 1 - Math.exp(-7.5 * dt);
+          const alpha = reducedMotion.matches ? 1 : 1 - Math.exp(-7.5 * dt);
           camera.position.lerp(_targetPos, alpha);
           orbit.target.lerp(_targetLook, alpha);
           camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, alpha);
@@ -1440,12 +1442,12 @@ export const Viewport: React.FC = () => {
             role="img"
             aria-label="Boussole : N indique le nord (côté tribune nord)"
             title="Boussole : N indique le nord (côté tribune nord)"
-            className="relative w-7 h-7 rounded-full border border-line"
+            className="relative w-8 h-8 rounded-full border border-line"
           >
             <div ref={compassRef} className="absolute inset-0">
-              <span className="absolute left-1/2 top-0 -translate-x-1/2 text-[9px] leading-none font-semibold text-accent-ink">N</span>
-              <span className="absolute left-1/2 top-[9px] -translate-x-1/2 w-0 h-0 border-x-[3px] border-x-transparent border-b-[7px] border-b-accent" />
-              <span className="absolute left-1/2 bottom-[5px] -translate-x-1/2 w-0 h-0 border-x-[3px] border-x-transparent border-t-[7px] border-t-line-strong" />
+              <span className="absolute left-1/2 top-0 -translate-x-1/2 text-2xs leading-none font-semibold text-accent-ink">N</span>
+              <span className="absolute left-1/2 top-[11px] -translate-x-1/2 w-0 h-0 border-x-[3px] border-x-transparent border-b-[5px] border-b-accent" />
+              <span className="absolute left-1/2 bottom-[11px] -translate-x-1/2 w-0 h-0 border-x-[3px] border-x-transparent border-t-[5px] border-t-line-strong" />
             </div>
           </div>
           <div className="px-1.5 text-right" title="Altitude de la caméra au-dessus de la pelouse">
@@ -1540,7 +1542,7 @@ export const Viewport: React.FC = () => {
       {webglLost && (
         <div className="absolute inset-0 flex items-center justify-center bg-canvas/95 text-ink p-6 text-center z-30">
           <div className="max-w-md space-y-2">
-            <p className="text-base font-semibold">Contexte WebGL suspendu</p>
+            <p className="text-sm font-semibold">Contexte WebGL suspendu</p>
             <p className="text-xs text-ink-muted">
               Restauration automatique du moteur 3D StadiumForge en cours…
             </p>

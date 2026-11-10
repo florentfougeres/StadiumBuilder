@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Box,
   Camera,
@@ -7,6 +7,7 @@ import {
   Eye,
   FileDown,
   Grid2x2,
+  Download,
   ImageDown,
   Layers,
   Moon,
@@ -27,7 +28,7 @@ import { CameraPresetMode, LightingMode, TransformMode } from '../stadium/schema
 import { useStadiumStore } from '../state/useStadiumStore';
 import { ProjectsMenu } from './ProjectsPanel';
 import { useTheme } from './theme';
-import { Button, IconButton, Segmented } from './ui';
+import { Button, IconButton, Segmented, usePopupMenu } from './ui';
 
 const CAMERA_MODES: { id: CameraPresetMode; label: string; icon: React.ReactNode; hint?: string }[] = [
   {
@@ -62,26 +63,9 @@ function formatSavedAt(ts: number | null): string {
 
 const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus }) => {
   const doc = useStadiumStore((s) => s.doc);
-  const [open, setOpen] = useState(false);
+  const { open, setOpen, rootRef, triggerRef, menuProps } = usePopupMenu();
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointer = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('pointerdown', onPointer);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('pointerdown', onPointer);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
 
   const run = async (action: () => void | Promise<void>, success: string, failure: string) => {
     setOpen(false);
@@ -152,21 +136,28 @@ const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus })
     <div ref={rootRef} className="relative">
       <Button
         variant="primary"
+        ref={triggerRef}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={busy}
         onClick={() => setOpen((o) => !o)}
       >
-        {progress !== null
-          ? `Rendu ${Math.round(progress * 100)} %`
-          : busy
-          ? 'Export…'
-          : 'Exporter'}
-        <ChevronDown aria-hidden className="w-3.5 h-3.5 -mr-0.5" />
+        {progress !== null ? (
+          `Rendu ${Math.round(progress * 100)} %`
+        ) : busy ? (
+          'Export…'
+        ) : (
+          <>
+            {/* On a phone the bar has no room for the word: the icon carries it, the name stays for screen readers. */}
+            <Download aria-hidden className="w-4 h-4 sm:hidden" />
+            <span className="max-sm:sr-only">Exporter</span>
+          </>
+        )}
+        <ChevronDown aria-hidden className="w-3.5 h-3.5 -mr-0.5 max-sm:hidden" />
       </Button>
       {open && (
         <div
-          role="menu"
+          {...menuProps}
           className="absolute right-0 top-full mt-1.5 w-80 p-1 rounded-md bg-panel border border-line shadow-[0_8px_24px_rgb(0_0_0/0.45)] z-50"
         >
           {items.map((item) => (
@@ -237,8 +228,8 @@ export const Toolbar: React.FC = () => {
   }, [status]);
 
   return (
-    <header className="flex justify-between lg:grid lg:grid-cols-[1fr_auto_1fr] items-center gap-2 lg:gap-3 h-11 px-2 bg-panel border-b border-line shrink-0 z-30">
-      <div className="hidden sm:flex items-center gap-1 min-w-0">
+    <header className="flex justify-between lg:grid lg:grid-cols-[1fr_auto_1fr] items-center gap-1 sm:gap-2 lg:gap-3 h-11 px-2 bg-panel border-b border-line shrink-0 z-30">
+      <div className="flex items-center gap-1 max-sm:shrink-0 min-w-0">
         {/* The wordmark yields its room to the project name until the bar is wide enough for both. */}
         <span className="hidden 2xl:inline px-2 text-sm font-semibold text-ink whitespace-nowrap">StadiumForge</span>
         <span aria-hidden className="hidden 2xl:block w-px h-4 bg-line-strong" />
@@ -246,7 +237,8 @@ export const Toolbar: React.FC = () => {
           aria-label="Nom du projet"
           value={docName}
           onChange={(e) => setProjectName(e.target.value)}
-          className="min-w-0 w-48 2xl:w-56 h-7 px-2 text-xs text-ink bg-transparent rounded border border-transparent hover:border-edge-hover focus:border-accent focus:bg-field outline-none text-ellipsis"
+          title={docName}
+          className="max-sm:hidden min-w-24 max-w-full [field-sizing:content] h-7 px-2 text-xs text-ink bg-transparent rounded border border-transparent hover:border-edge-hover focus:border-accent focus:bg-field outline-none"
         />
         <ProjectsMenu onStatus={setStatus} />
         <span className="hidden 2xl:inline text-2xs text-ink-faint whitespace-nowrap" aria-live="polite">
@@ -295,6 +287,7 @@ export const Toolbar: React.FC = () => {
         <IconButton
           label={panelsHidden ? 'Afficher les panneaux (H)' : 'Masquer les panneaux (H)'}
           active={panelsHidden}
+          aria-pressed={undefined}
           onClick={togglePanels}
         >
           <PanelsTopLeft className="w-4 h-4" />
@@ -302,7 +295,6 @@ export const Toolbar: React.FC = () => {
         <IconButton
           label={theme === 'light' ? 'Passer au thème sombre' : 'Passer au thème clair'}
           onClick={toggleTheme}
-          className="max-sm:hidden"
         >
           <Contrast className="w-4 h-4" />
         </IconButton>

@@ -25,7 +25,8 @@
   /* Accent: bright for marks on dark, deep for filled controls carrying white text */
   --color-accent: #0d99ff;
   --color-accent-strong: #0a6fcc;
-  --color-accent-strong-hover: #0b7ee6;
+  /* Hover deepens rather than lifts: white text keeps 7:1 (a lighter blue fell to 4.1:1). */
+  --color-accent-strong-hover: #085aa6;
   --color-accent-soft: #0d99ff26;
   --color-accent-ink: #5cb8ff;
 
@@ -164,12 +165,20 @@
 .sf-range:hover::-webkit-slider-thumb {
   transform: scale(1.2);
 }
+.sf-range:hover::-moz-range-thumb {
+  transform: scale(1.2);
+}
+/* Keyboard focus rings the thumb itself: a panel-coloured gap, then a solid 2px blue ring. */
 .sf-range:focus-visible {
   outline: none;
 }
 .sf-range:focus-visible::-webkit-slider-thumb {
   transform: scale(1.2);
-  box-shadow: 0 0 0 3px var(--color-accent-soft), 0 1px 2px rgb(0 0 0 / 0.5);
+  box-shadow: 0 0 0 2px var(--color-panel), 0 0 0 4px var(--color-accent);
+}
+.sf-range:focus-visible::-moz-range-thumb {
+  transform: scale(1.2);
+  box-shadow: 0 0 0 2px var(--color-panel), 0 0 0 4px var(--color-accent);
 }
 .sf-range:disabled {
   cursor: not-allowed;

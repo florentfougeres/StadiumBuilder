@@ -1,9 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef } from 'react';
 import { ChevronDown, Copy, FileDown, FilePlus2, FolderOpen, LayoutGrid, Trash2, Upload } from 'lucide-react';
 import { exportStadiumJson, parseImportedStadiumJson } from '../export/exportGlb';
 import { STADIUM_PRESETS } from '../stadium/presets';
 import { useStadiumStore } from '../state/useStadiumStore';
-import { Button, IconButton } from './ui';
+import { Button, IconButton, usePopupMenu } from './ui';
 
 const dayFormat = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' });
 const timeFormat = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' });
@@ -45,25 +45,8 @@ export const ProjectsMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ on
   const importDocument = useStadiumStore((s) => s.importDocument);
   const duplicateProject = useStadiumStore((s) => s.duplicateProject);
   const deleteSavedProject = useStadiumStore((s) => s.deleteSavedProject);
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
+  const { open, setOpen, rootRef, triggerRef, menuProps } = usePopupMenu();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointer = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('pointerdown', onPointer);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('pointerdown', onPointer);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
 
   const act = (fn: () => void) => () => {
     setOpen(false);
@@ -88,6 +71,7 @@ export const ProjectsMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ on
     <div ref={rootRef} className="relative">
       <Button
         variant="ghost"
+        ref={triggerRef}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
@@ -99,7 +83,7 @@ export const ProjectsMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ on
       </Button>
       {open && (
         <div
-          role="menu"
+          {...menuProps}
           className="absolute left-0 top-full mt-1.5 w-80 p-1 rounded-md bg-panel border border-line shadow-[0_8px_24px_rgb(0_0_0/0.45)] z-50"
         >
           <MenuItem
@@ -123,7 +107,7 @@ export const ProjectsMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ on
             detail=".json"
             onSelect={act(() => fileInputRef.current?.click())}
           />
-          <div className="my-1 border-t border-line" />
+          <div role="separator" className="my-1 border-t border-line" />
           <MenuItem
             icon={<Copy className="w-3.5 h-3.5" />}
             label="Dupliquer ce projet"
@@ -141,7 +125,7 @@ export const ProjectsMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ on
               onStatus('Fichier projet téléchargé');
             })}
           />
-          <div className="my-1 border-t border-line" />
+          <div role="separator" className="my-1 border-t border-line" />
           <div className="px-2 pt-1.5 pb-1">
             <div className="text-2xs font-medium text-ink-faint">Mes projets ({savedProjects.length})</div>
             <div className="text-2xs text-ink-faint">Enregistrés automatiquement dans ce navigateur</div>
