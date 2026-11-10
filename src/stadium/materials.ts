@@ -3075,13 +3075,14 @@ function createTurfDetailBuffers(): CachedPbrBuffers {
 }
 
 /**
- * Adds world-space close-range grass detail to the pitch turf material: blade-level
- * colour and relief sampled at two rotated scales (fading out beyond ~80 m so the
- * broadcast mowing pattern stays clean from afar) and slow patchy tone variation at
- * every distance. The base canvas map only carries ~30 px/m, which reads as a flat
- * model surface when the camera gets close.
+ * The turf detail textures, made once per anisotropy and shared by every build. They reach the
+ * shader through `onBeforeCompile` uniforms, out of `disposeObject3D`'s sight: made per build,
+ * two of them were left on the GPU at every edit.
  */
-export function applyTurfCloseUpDetail(material: THREE.MeshStandardMaterial, maxAnisotropy: number): void {
+const turfDetailTextureCache = new Map<number, { detailMap: THREE.DataTexture; detailNormal: THREE.DataTexture }>();
+function getTurfDetailTextures(maxAnisotropy: number) {
+  const cached = turfDetailTextureCache.get(maxAnisotropy);
+  if (cached) return cached;
   const buffers = createTurfDetailBuffers();
   const makeTex = (data: Uint8Array) => {
     const tex = new THREE.DataTexture(data, buffers.sizeW, buffers.sizeH, THREE.RGBAFormat);
@@ -3094,8 +3095,20 @@ export function applyTurfCloseUpDetail(material: THREE.MeshStandardMaterial, max
     tex.needsUpdate = true;
     return tex;
   };
-  const detailMap = makeTex(buffers.albedo);
-  const detailNormal = makeTex(buffers.normal);
+  const textures = { detailMap: makeTex(buffers.albedo), detailNormal: makeTex(buffers.normal) };
+  turfDetailTextureCache.set(maxAnisotropy, textures);
+  return textures;
+}
+
+/**
+ * Adds world-space close-range grass detail to the pitch turf material: blade-level
+ * colour and relief sampled at two rotated scales (fading out beyond ~80 m so the
+ * broadcast mowing pattern stays clean from afar) and slow patchy tone variation at
+ * every distance. The base canvas map only carries ~30 px/m, which reads as a flat
+ * model surface when the camera gets close.
+ */
+export function applyTurfCloseUpDetail(material: THREE.MeshStandardMaterial, maxAnisotropy: number): void {
+  const { detailMap, detailNormal } = getTurfDetailTextures(maxAnisotropy);
 
   material.customProgramCacheKey = () => 'turf-close-detail-v1';
   material.onBeforeCompile = (shader) => {

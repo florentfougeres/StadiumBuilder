@@ -72,6 +72,35 @@ describe('viewport build budget', () => {
     });
   }
 
+  it('disposing a viewport build frees every GPU resource it holds', () => {
+    const { rootGroup } = buildStadiumSceneGraph(createPresetDocument('bowl_bowstring_60k'), {
+      mergeStatic: true,
+      distanceLod: true,
+      maxAnisotropy: 1,
+    });
+    const pending = new Map<THREE.EventDispatcher<{ dispose: object }>, string>();
+    const watch = (item: THREE.EventDispatcher<{ dispose: object }>, label: string) => {
+      if (pending.has(item)) return;
+      pending.set(item, label);
+      item.addEventListener('dispose', () => pending.delete(item));
+    };
+    rootGroup.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.geometry) watch(mesh.geometry, `geometry of ${mesh.name}`);
+      // Instance buffers are freed by the mesh's own dispose event.
+      if ((mesh as THREE.InstancedMesh).isInstancedMesh) watch(mesh as THREE.InstancedMesh, `instances of ${mesh.name}`);
+      for (const m of mesh.material ? (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) : []) {
+        watch(m, `material of ${mesh.name}`);
+        for (const value of Object.values(m)) {
+          if ((value as THREE.Texture | null)?.isTexture) watch(value as THREE.Texture, `texture of ${mesh.name}`);
+        }
+      }
+    });
+    expect(pending.size).toBeGreaterThan(0);
+    disposeObject3D(rootGroup);
+    expect([...new Set(pending.values())]).toEqual([]);
+  });
+
   it('LOD levels share the instances of their near mesh', () => {
     const { rootGroup } = buildStadiumSceneGraph(createPresetDocument('bowl_bowstring_60k'), {
       distanceLod: true,

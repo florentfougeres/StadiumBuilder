@@ -503,48 +503,31 @@ export function mergeStaticMeshes(root: THREE.Object3D): void {
 }
 
 /**
- * Recursively disposes geometries, materials, and all PBR texture channels inside a THREE.Object3D
- * to guarantee zero WebGL memory leaks across parametric edits.
+ * Frees everything a stadium holds on the GPU, so parametric edits never pile up WebGL memory:
+ * geometries, the per-instance matrices and colours of instanced meshes (seats and crowd alone
+ * weigh about 11 MB a build), materials, and every texture a material holds, whatever the slot.
  */
 export function disposeObject3D(root: THREE.Object3D): void {
   const disposedTextures = new Set<THREE.Texture>();
+  const disposeMaterial = (m: THREE.Material) => {
+    for (const value of Object.values(m)) {
+      const tex = value as THREE.Texture | null;
+      if (tex?.isTexture && !disposedTextures.has(tex)) {
+        disposedTextures.add(tex);
+        tex.dispose();
+      }
+    }
+    m.dispose();
+  };
   root.traverse((child) => {
     const mesh = child as THREE.Mesh;
-    if (mesh.geometry) {
-      mesh.geometry.dispose();
-    }
+    mesh.geometry?.dispose();
     if (mesh.material) {
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const m of mats) {
-        const phys = m as THREE.MeshPhysicalMaterial;
-        const texSlots = [
-          phys.map,
-          phys.normalMap,
-          phys.roughnessMap,
-          phys.metalnessMap,
-          phys.bumpMap,
-          phys.emissiveMap,
-          phys.aoMap,
-          phys.alphaMap,
-          phys.clearcoatNormalMap,
-          phys.clearcoatRoughnessMap,
-        ];
-        for (const tex of texSlots) {
-          if (tex && !disposedTextures.has(tex)) {
-            disposedTextures.add(tex);
-            tex.dispose();
-          }
-        }
-        m.dispose();
-      }
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) disposeMaterial(m);
     }
-    if (mesh.customDepthMaterial) {
-      const depthMat = mesh.customDepthMaterial as THREE.MeshDepthMaterial;
-      if (depthMat.alphaMap && !disposedTextures.has(depthMat.alphaMap)) {
-        disposedTextures.add(depthMat.alphaMap);
-        depthMat.alphaMap.dispose();
-      }
-      depthMat.dispose();
-    }
+    if (mesh.customDepthMaterial) disposeMaterial(mesh.customDepthMaterial);
+    if (mesh.customDistanceMaterial) disposeMaterial(mesh.customDistanceMaterial);
+    // Geometry disposal leaves the instance buffers on the GPU; only the mesh's own dispose frees them.
+    if ((mesh as THREE.InstancedMesh).isInstancedMesh) (mesh as THREE.InstancedMesh).dispose();
   });
 }
