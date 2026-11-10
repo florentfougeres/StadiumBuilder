@@ -44,6 +44,11 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    test: {
+      // Most suites build full stadium scenes: ~2 s each on a desktop, 5-6x that on the
+      // 2-core GitHub runner where files run in parallel, so vitest's 5 s default flakes there.
+      testTimeout: 60_000,
+    },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.

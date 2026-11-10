@@ -104,12 +104,6 @@ function ensureCanvasMock() {
   }
 }
 
-/**
- * Budget for tests that build every preset or synthesise every catalogue texture: about 2 s on a
- * desktop, three times that on a shared CI runner.
- */
-const FULL_SCENE_TIMEOUT_MS = 30_000;
-
 describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop Wall', () => {
   const forbiddenNameRe =
     /emirates|stade de france|at&t|marvingt|roazhon|bernab|allianz|olimpico|rome|beşiktaş|besiktas|villa park|tottenham|havre|wembley|dortmund|südtribüne|sudtribune|bordeaux|matmut|munich|maracan|francfort|amsterdam|cardiff|gelsenkirchen|mauroy/i;
@@ -198,7 +192,7 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
       }
     });
     expect(foundSteppedMultiMatBowl).toBe(true);
-  }, FULL_SCENE_TIMEOUT_MS);
+  });
 
   it('builds all 15 covered structural roof typologies plus retractable closed state across bowls and discrete stands', () => {
     ensureCanvasMock();
@@ -438,8 +432,7 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
         if (ratio < 0.9 || ratio > 1.1) off.push(`${preset.id}: ${announced} announced, ${drawn} drawn`);
       }
       expect(off).toEqual([]);
-    },
-    FULL_SCENE_TIMEOUT_MS
+    }
   );
 
   it('supports 1 to 5 tiers, FIFA C-values, and distinct four_stands vs compact_urban geometry', () => {
@@ -542,7 +535,7 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
       expect(rootGroup.children.length).toBeGreaterThanOrEqual(3);
       disposeObject3D(rootGroup);
     }
-  }, FULL_SCENE_TIMEOUT_MS);
+  });
 
   it('builds upward-facing stepped 3D corner seating bowls and matching corner roofs for compact_urban and english_rectangular', () => {
     ensureCanvasMock();
@@ -692,7 +685,7 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
 
       disposeObject3D(rootGroup);
     }
-  }, FULL_SCENE_TIMEOUT_MS);
+  });
 
   it('carves real 3D vomitory openings and stepped radial stair aisles with adjustable count and position', () => {
     ensureCanvasMock();
