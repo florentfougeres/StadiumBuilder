@@ -342,11 +342,12 @@ export const Viewport: React.FC = () => {
     orbit.enableDamping = !isSoftwareGl;
     orbit.dampingFactor = 0.07;
     orbit.maxPolarAngle = Math.PI * 0.492;
-    orbit.minDistance = 8;
+    orbit.minDistance = 1;
     orbit.maxDistance = 540;
     orbit.target.set(0, 6, 0);
-    // The wheel closes in on what the cursor points at, not always on the pitch centre.
-    orbit.zoomToCursor = true;
+    // The wheel is handled below: it flies toward the surface under the cursor instead of the orbit
+    // target, so it never stalls at the target and the pivot follows what is being looked at.
+    orbit.enableZoom = false;
 
     // Keyboard flight: arrows glide across the ground, Page Up / Down change altitude, Shift speeds up.
     const flightKeys = new Set<string>();
@@ -584,17 +585,32 @@ export const Viewport: React.FC = () => {
     const dragOffset = new THREE.Vector3();
     let surfaceDrag: { id: string; group: THREE.Group; moved: boolean } | null = null;
 
-    const setRay = (e: PointerEvent) => {
+    const setRay = (e: MouseEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
       ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(ndc, camera);
     };
     /** Point under the cursor on the horizontal plane at `y`, or null when looking above it. */
-    const groundAt = (e: PointerEvent, y: number): THREE.Vector3 | null => {
+    const groundAt = (e: MouseEvent, y: number): THREE.Vector3 | null => {
       setRay(e);
       dragPlane.constant = -y;
       return raycaster.ray.intersectPlane(dragPlane, planeHit);
+    };
+    /** Nearest hit actually drawn: hidden ancestors, invisible materials and helpers don't stop the ray. */
+    const isDrawn = (o: THREE.Object3D): boolean => {
+      for (let cur: THREE.Object3D | null = o; cur; cur = cur.parent) if (!cur.visible) return false;
+      const mats = (o as THREE.Mesh).material;
+      if (!mats) return false;
+      return (Array.isArray(mats) ? mats : [mats]).some((m) => m.visible && m.opacity > 0.02);
+    };
+    const pickSurface = (e: MouseEvent): THREE.Vector3 | null => {
+      const currentEngine = engineRef.current;
+      if (!currentEngine) return null;
+      setRay(e);
+      const targets: THREE.Object3D[] = [...currentEngine.placedMap.values()];
+      if (currentEngine.stadiumRoot) targets.push(currentEngine.stadiumRoot);
+      return raycaster.intersectObjects(targets, true).find((h) => isDrawn(h.object))?.point ?? null;
     };
     const pickPlaced = (e: PointerEvent): string | null => {
       const currentEngine = engineRef.current;
@@ -700,15 +716,57 @@ export const Viewport: React.FC = () => {
     const onDoubleClick = (e: MouseEvent) => {
       const currentEngine = engineRef.current;
       if (!currentEngine?.stadiumRoot || useStadiumStore.getState().placingType) return;
-      setRay(e as PointerEvent);
-      const targets: THREE.Object3D[] = [currentEngine.stadiumRoot, ...currentEngine.placedMap.values()];
-      const hit = raycaster.intersectObjects(targets, true).find((h) => h.object.visible);
-      const point = hit?.point ?? groundAt(e as PointerEvent, 0);
+      const point = pickSurface(e) ?? groundAt(e, 0);
       if (!point) return;
       _focusOffset.copy(camera.position).sub(orbit.target);
       const distance = Math.min(_focusOffset.length(), 70);
       _focusOffset.setLength(distance);
       startCameraTransition(point.clone().add(_focusOffset), point.clone(), camera.fov);
+    };
+
+    /**
+     * Wheel / pinch: fly along the cursor ray toward the surface under it. The step is a share of the
+     * distance to that surface, so zooming keeps working right up to a seat row, and the orbit pivot is
+     * moved to that surface's depth so rotating afterwards turns around what was zoomed on.
+     */
+    const _zoomPoint = new THREE.Vector3();
+    const _zoomOffset = new THREE.Vector3();
+    const _zoomForward = new THREE.Vector3();
+    const zoomAnchor = { x: -1e9, y: -1e9, time: 0 };
+    const ZOOM_MIN_DISTANCE = 1.5;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const currentEngine = engineRef.current;
+      if (!currentEngine || !orbit.enabled || surfaceDrag) return;
+      const now = performance.now();
+      // One raycast per gesture: the anchor is kept while the cursor stays put.
+      if (Math.hypot(e.clientX - zoomAnchor.x, e.clientY - zoomAnchor.y) > 4 || now - zoomAnchor.time > 300) {
+        const hit = pickSurface(e);
+        const ground = hit ? null : groundAt(e, 0);
+        if (hit) _zoomPoint.copy(hit);
+        else if (ground && ground.distanceTo(camera.position) < orbit.maxDistance) _zoomPoint.copy(ground);
+        else _zoomPoint.copy(raycaster.ray.at(camera.position.distanceTo(orbit.target), _zoomOffset));
+        zoomAnchor.x = e.clientX;
+        zoomAnchor.y = e.clientY;
+      }
+      zoomAnchor.time = now;
+
+      const pixels = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+      // Trackpad pinch arrives as ctrl+wheel with small deltas: give it more gain.
+      const factor = Math.exp(-pixels * (e.ctrlKey ? 0.01 : 0.0018));
+      _zoomOffset.copy(camera.position).sub(_zoomPoint);
+      const distance = _zoomOffset.length();
+      const next = THREE.MathUtils.clamp(distance / factor, ZOOM_MIN_DISTANCE, orbit.maxDistance);
+      if (Math.abs(next - distance) < 1e-3) return;
+      // Moving along the line to the anchor keeps the anchor under the cursor.
+      camera.position.copy(_zoomPoint).add(_zoomOffset.setLength(next));
+      if (camera.position.y < 0.5) camera.position.y = 0.5;
+      camera.getWorldDirection(_zoomForward);
+      const depth = Math.max(orbit.minDistance, _zoomOffset.copy(_zoomPoint).sub(camera.position).dot(_zoomForward));
+      orbit.target.copy(camera.position).addScaledVector(_zoomForward, depth);
+      transitionActive = false;
+      markMotion();
+      requestRender();
     };
 
     const isTyping = (el: Element | null) =>
@@ -734,6 +792,7 @@ export const Viewport: React.FC = () => {
     renderer.domElement.addEventListener('pointermove', onPointerMove);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
     renderer.domElement.addEventListener('dblclick', onDoubleClick);
+    renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('keydown', onFlightKeyDown);
     window.addEventListener('keyup', onFlightKeyUp);
     window.addEventListener('blur', stopFlight);
@@ -848,6 +907,7 @@ export const Viewport: React.FC = () => {
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
+      renderer.domElement.removeEventListener('wheel', onWheel);
       window.removeEventListener('keydown', onFlightKeyDown);
       window.removeEventListener('keyup', onFlightKeyUp);
       window.removeEventListener('blur', stopFlight);
