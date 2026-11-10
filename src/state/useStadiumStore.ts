@@ -108,6 +108,12 @@ export interface StadiumStoreState {
   activeStandTab: StandTarget;
   cameraMode: CameraPresetMode;
   cameraTriggerNonce: number;
+  /** Drone view set by a "face à la tribune" button, cleared by any camera mode change. */
+  cameraFacing: StandSide | null;
+  /** Coupe mode: stand the camera looks toward; the half of the stadium in front of the plane is cut away. */
+  sectionSide: StandSide;
+  /** Coupe mode: distance (m) of the cut plane from the centre spot, towards the stand looked at. */
+  sectionOffset: number;
   transformMode: TransformMode;
   dockCollapsed: boolean;
   examplesOpen: boolean;
@@ -204,6 +210,9 @@ export interface StadiumStoreState {
   // View & UI
   setActiveStandTab: (target: StandTarget) => void;
   setCameraMode: (mode: CameraPresetMode) => void;
+  /** Faces a stand from across the pitch; in Coupe mode, turns the cut towards that stand instead. */
+  faceStand: (side: StandSide) => void;
+  setSectionOffset: (offset: number) => void;
   setTransformMode: (mode: TransformMode) => void;
   toggleDockCollapsed: () => void;
   setExamplesOpen: (open: boolean) => void;
@@ -591,6 +600,7 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
       history: { past: [], future: [] },
       selectedObjectId: null,
       cameraMode: 'drone',
+      cameraFacing: null,
       cameraTriggerNonce: get().cameraTriggerNonce + 1,
     });
   };
@@ -602,6 +612,9 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     activeStandTab: 'south',
     cameraMode: 'drone',
     cameraTriggerNonce: 1,
+    cameraFacing: null,
+    sectionSide: 'north',
+    sectionOffset: 0,
     transformMode: 'translate',
     dockCollapsed: false,
     examplesOpen: false,
@@ -973,8 +986,18 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
     setCameraMode: (mode) =>
       set((state) => ({
         cameraMode: mode,
+        cameraFacing: null,
         cameraTriggerNonce: state.cameraTriggerNonce + 1,
       })),
+
+    faceStand: (side) =>
+      set((state) =>
+        state.cameraMode === 'cross_section'
+          ? { sectionSide: side, sectionOffset: 0, cameraTriggerNonce: state.cameraTriggerNonce + 1 }
+          : { cameraMode: 'drone', cameraFacing: side, cameraTriggerNonce: state.cameraTriggerNonce + 1 }
+      ),
+
+    setSectionOffset: (offset) => set({ sectionOffset: offset }),
 
     setTransformMode: (mode) => set({ transformMode: mode }),
 

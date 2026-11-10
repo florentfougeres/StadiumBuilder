@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
@@ -15,11 +15,12 @@ import {
   resolveFloodlightRig,
   resolveRetractable,
   StadiumDocument,
+  StandSide,
 } from '../stadium/schema';
 import { computeStandSightlines } from '../stadium/sightlines';
 import { useStadiumStore } from '../state/useStadiumStore';
 import { CircleHelp, House } from 'lucide-react';
-import { IconButton } from './ui';
+import { IconButton, SliderField } from './ui';
 
 const _targetPos = new THREE.Vector3();
 const _targetLook = new THREE.Vector3();
@@ -142,13 +143,63 @@ const NAV_HELP_KEYS: [string, string][] = [
   ['Maj', 'aller plus vite'],
 ];
 
+/** Horizontal unit direction from the centre spot towards each stand (north is -Z, east is +X). */
+export const STAND_DIRECTION: Record<StandSide, THREE.Vector3> = {
+  north: new THREE.Vector3(0, 0, -1),
+  south: new THREE.Vector3(0, 0, 1),
+  east: new THREE.Vector3(1, 0, 0),
+  west: new THREE.Vector3(-1, 0, 0),
+};
+
+const OPPOSITE_STAND: Record<StandSide, StandSide> = { north: 'south', south: 'north', east: 'west', west: 'east' };
+
+/** Half the pitch (and track) measured from the centre spot towards `side`. */
+function pitchHalfTowards(doc: StadiumDocument, side: StandSide): number {
+  const track = getTrackRadialOffset(doc);
+  return side === 'north' || side === 'south'
+    ? doc.pitch.width / 2 + track.sideOffset
+    : doc.pitch.length / 2 + track.endOffset;
+}
+
+/** Furthest reach of the stadium from the centre spot along `side`'s axis, for the Coupe slider. */
+export function sectionReach(doc: StadiumDocument, side: StandSide): number {
+  const depth = Math.max(
+    calculateStandMetrics(doc, side).totalDepth,
+    calculateStandMetrics(doc, OPPOSITE_STAND[side]).totalDepth
+  );
+  return Math.round(pitchHalfTowards(doc, side) + depth + 10);
+}
+
+/**
+ * Drone pose above the pitch, short of the opposite stand and its roof, looking square at `side`'s
+ * stand. The lens widens (up to a limit) so the stand's whole length fits the viewport.
+ */
+function computeFacingPose(doc: StadiumDocument, side: StandSide, aspect: number) {
+  const dir = STAND_DIRECTION[side];
+  const metrics = calculateStandMetrics(doc, side);
+  const front = pitchHalfTowards(doc, side) + doc.stands[side].distanceToPitch;
+  const height = Math.max(12, metrics.maxHeight);
+  const targetReach = front + metrics.totalDepth * 0.4;
+  const opposite = OPPOSITE_STAND[side];
+  const cameraReach = pitchHalfTowards(doc, opposite) + doc.stands[opposite].distanceToPitch - 2;
+  const halfWidth = metrics.effectiveLength / 2 + 6;
+  // Fitted at the front row, the nearest and so the widest-looking part of the stand.
+  const halfFovX = Math.atan(halfWidth / (cameraReach + front));
+  const fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(halfFovX) / aspect));
+  return {
+    position: dir.clone().multiplyScalar(-cameraReach).setY(Math.max(16, height * 0.6)),
+    target: dir.clone().multiplyScalar(targetReach).setY(height * 0.4),
+    fov: THREE.MathUtils.clamp(fov, 40, 78),
+  };
+}
+
 function computePresetCameraPose(
   mode: CameraPresetMode,
-  doc: StadiumDocument
+  doc: StadiumDocument,
+  view: { facing: StandSide | null; sectionSide: StandSide; aspect: number }
 ): { position: THREE.Vector3; target: THREE.Vector3; fov: number } {
+  if (mode === 'drone' && view.facing) return computeFacingPose(doc, view.facing, view.aspect);
   const track = getTrackRadialOffset(doc);
-  const southMetrics = calculateStandMetrics(doc, 'south');
-  const northMetrics = calculateStandMetrics(doc, 'north');
 
   switch (mode) {
     case 'drone':
@@ -189,15 +240,30 @@ function computePresetCameraPose(
         fov: 36,
       };
     case 'cross_section': {
-      const standSpan = Math.max(northMetrics.totalDepth, southMetrics.totalDepth, 24);
+      // From outside the cut-away half, looking towards the chosen stand.
+      const side = view.sectionSide;
+      const dir = STAND_DIRECTION[side];
+      const standSpan = Math.max(
+        calculateStandMetrics(doc, side).totalDepth,
+        calculateStandMetrics(doc, OPPOSITE_STAND[side]).totalDepth,
+        24
+      );
+      const half = side === 'north' || side === 'south' ? doc.pitch.width / 2 : doc.pitch.length / 2;
       return {
-        position: new THREE.Vector3(0, 26, doc.pitch.width / 2 + standSpan + 62),
-        target: new THREE.Vector3(0, 11, -18),
+        position: dir.clone().multiplyScalar(-(half + standSpan + 62)).setY(26),
+        target: dir.clone().multiplyScalar(18).setY(11),
         fov: 40,
       };
     }
   }
 }
+
+const FACING_BUTTONS: { side: StandSide; letter: string; name: string }[] = [
+  { side: 'north', letter: 'N', name: 'nord' },
+  { side: 'south', letter: 'S', name: 'sud' },
+  { side: 'east', letter: 'E', name: 'est' },
+  { side: 'west', letter: 'O', name: 'ouest' },
+];
 
 export const Viewport: React.FC = () => {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -213,6 +279,17 @@ export const Viewport: React.FC = () => {
   const selectedObjectId = useStadiumStore((s) => s.selectedObjectId);
   const cameraMode = useStadiumStore((s) => s.cameraMode);
   const cameraTriggerNonce = useStadiumStore((s) => s.cameraTriggerNonce);
+  const cameraFacing = useStadiumStore((s) => s.cameraFacing);
+  const sectionSide = useStadiumStore((s) => s.sectionSide);
+  const sectionOffset = useStadiumStore((s) => s.sectionOffset);
+  const faceStand = useStadiumStore((s) => s.faceStand);
+  const setSectionOffset = useStadiumStore((s) => s.setSectionOffset);
+  const sectionMax = useMemo(
+    () => (cameraMode === 'cross_section' ? sectionReach(doc, sectionSide) : 0),
+    [doc, cameraMode, sectionSide]
+  );
+  /** Coupe mode's cut, one plane shared by every stadium material it applies to. */
+  const sectionPlaneRef = useRef(new THREE.Plane());
   const transformMode = useStadiumStore((s) => s.transformMode);
 
   const selectObject = useStadiumStore((s) => s.selectObject);
@@ -1083,14 +1160,14 @@ export const Viewport: React.FC = () => {
     };
   }, []);
 
-  // 2. Rebuild procedural stadium geometry cleanly whenever StadiumDocument, selection, or cross-section mode changes
+  // 2. Rebuild procedural stadium geometry cleanly whenever the StadiumDocument changes
   // Rebuild: at most once per frame, from the latest document. A slider drag sends many changes per
   // frame and each build takes a tenth of a second or more; building only the last one keeps the
   // drag responsive. The old stadium stays on screen until the new one replaces it.
   useEffect(() => {
     const frame = requestAnimationFrame(() => rebuildStadium());
     return () => cancelAnimationFrame(frame);
-  }, [doc, cameraMode]);
+  }, [doc]);
 
   const rebuildStadium = () => {
     const engine = engineRef.current;
@@ -1104,7 +1181,6 @@ export const Viewport: React.FC = () => {
       engine.skyEnv?.applySky(mode);
       engine.pipeline?.setMode(mode);
       engine.keyLight.position.copy(getSunDirection(mode)).multiplyScalar(260);
-      engine.gridHelper.visible = cameraMode === 'plan2d' || cameraMode === 'cross_section';
       engine.gridHelper.material.opacity = 0.14;
       engine.gridHelper.material.transparent = true;
 
@@ -1156,7 +1232,6 @@ export const Viewport: React.FC = () => {
     let built: ReturnType<typeof buildStadiumSceneGraph>;
     try {
       built = buildStadiumSceneGraph(doc, {
-        crossSectionClip: cameraMode === 'cross_section',
         maxAnisotropy: engine.maxAnisotropy,
         mergeStatic: true,
         distanceLod: true,
@@ -1181,8 +1256,52 @@ export const Viewport: React.FC = () => {
     engine.placedMap = placedObjectMap;
 
     engine.renderer.shadowMap.needsUpdate = true;
+    applySectionCut();
     applySelection();
   };
+
+  // Coupe mode: one clipping plane, added to (or removed from) every stadium material except the
+  // ground and the pitch. Moving the plane only changes its numbers, never the geometry.
+  const applySectionCut = () => {
+    const engine = engineRef.current;
+    if (!engine?.stadiumRoot) return;
+    const { cameraMode, sectionSide, sectionOffset } = useStadiumStore.getState();
+    const plane = sectionPlaneRef.current;
+    const on = cameraMode === 'cross_section';
+    // Keeps what lies beyond the plane, seen from the camera: dir · p >= offset.
+    plane.normal.copy(STAND_DIRECTION[sectionSide]);
+    plane.constant = -sectionOffset;
+    const seen = new Set<THREE.Material>();
+    const clip = (m: THREE.Material | undefined) => {
+      if (!m || seen.has(m)) return;
+      seen.add(m);
+      const others = (m.clippingPlanes ?? []).filter((p) => p !== plane);
+      const next = on ? [...others, plane] : others;
+      m.clippingPlanes = next.length > 0 ? next : null;
+      if (on) m.clipShadows = true;
+    };
+    for (const group of engine.stadiumRoot.children) {
+      if (group.userData.keepWholeInSection) continue;
+      group.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.material) return;
+        for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) clip(m);
+        clip(mesh.customDepthMaterial);
+        clip(mesh.customDistanceMaterial);
+      });
+    }
+    engine.pipeline?.setClippingPlanes(on ? [plane] : null);
+    engine.renderer.shadowMap.needsUpdate = true;
+    engine.requestRender();
+  };
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    // Ultra-subtle CAD grid shown only in Plan and Coupe.
+    engine.gridHelper.visible = cameraMode === 'plan2d' || cameraMode === 'cross_section';
+    applySectionCut();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraMode, sectionSide, sectionOffset]);
 
   // Selection: frames the chosen object and hands it to the gizmo. Also run after every rebuild,
   // so picking another object never rebuilds the stadium.
@@ -1303,7 +1422,11 @@ export const Viewport: React.FC = () => {
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine) return;
-    const pose = computePresetCameraPose(cameraMode, doc);
+    const pose = computePresetCameraPose(cameraMode, doc, {
+      facing: cameraFacing,
+      sectionSide,
+      aspect: engine.camera.aspect,
+    });
     engine.startCameraTransition(pose.position, pose.target, pose.fov);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraMode, cameraTriggerNonce]);
@@ -1343,6 +1466,41 @@ export const Viewport: React.FC = () => {
             <CircleHelp className="w-4 h-4" />
           </IconButton>
         </div>
+        <div
+          role="group"
+          aria-label={cameraMode === 'cross_section' ? 'Direction de la coupe' : 'Se placer face à une tribune'}
+          className="flex items-center gap-0.5 rounded-md bg-panel/95 border border-line p-1"
+        >
+          <span className="px-1.5 text-2xs text-ink-faint">{cameraMode === 'cross_section' ? 'Coupe vers' : 'Face à'}</span>
+          {FACING_BUTTONS.map(({ side, letter, name }) => (
+            <IconButton
+              key={side}
+              label={
+                cameraMode === 'cross_section'
+                  ? `Couper le stade et regarder vers la tribune ${name}`
+                  : `Se placer face à la tribune ${name}`
+              }
+              active={cameraMode === 'cross_section' ? sectionSide === side : cameraFacing === side}
+              onClick={() => faceStand(side)}
+            >
+              <span className="text-xs font-semibold">{letter}</span>
+            </IconButton>
+          ))}
+        </div>
+        {cameraMode === 'cross_section' && (
+          <div className="w-60 rounded-md bg-panel/95 border border-line p-2.5">
+            <SliderField
+              label="Position du plan de coupe"
+              hint="Distance du plan au centre du terrain, vers la tribune regardée. 0 = axe du terrain."
+              value={sectionOffset}
+              min={-sectionMax}
+              max={sectionMax}
+              step={1}
+              display={`${sectionOffset > 0 ? '+' : ''}${sectionOffset} m`}
+              onChange={(v) => setSectionOffset(Math.round(v))}
+            />
+          </div>
+        )}
         {helpOpen && (
           <div className="w-72 rounded-md bg-panel/95 border border-line p-3 text-xs text-ink">
             <p className="text-2xs font-medium uppercase tracking-wide text-ink-faint mb-2">Souris et trackpad</p>

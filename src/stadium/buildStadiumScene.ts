@@ -395,6 +395,9 @@ export function buildStadiumSceneGraph(
     Boolean(options.horizon)
   );
 
+  // The ground and the pitch stay whole when the viewport's Coupe plane cuts the stadium.
+  siteGroup.userData.keepWholeInSection = true;
+  pitchGroup.userData.keepWholeInSection = true;
   rootGroup.add(
     siteGroup,
     pitchGroup,

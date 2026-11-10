@@ -124,6 +124,11 @@ export function createRenderPipeline(
   /** Call after renderer.setPixelRatio, so the offscreen targets follow. */
   setPixelRatio: (pixelRatio: number, width: number, height: number) => void;
   setMode: (mode: LightingMode) => void;
+  /**
+   * Planes cutting the scene (Coupe mode). Ambient occlusion draws the scene with its own normal
+   * material, which would otherwise shade the cut-away half back in as a grey veil.
+   */
+  setClippingPlanes: (planes: THREE.Plane[] | null) => void;
   dispose: () => void;
 } {
   let pixelRatio = renderer.getPixelRatio();
@@ -170,6 +175,9 @@ export function createRenderPipeline(
     setMode: (mode) => {
       bloom.enabled = mode !== 'day';
       bloom.strength = mode === 'night' ? 0.42 : 0.26;
+    },
+    setClippingPlanes: (planes) => {
+      gtao.normalMaterial.clippingPlanes = planes;
     },
     dispose: () => {
       gtao.dispose();
