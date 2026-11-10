@@ -18,6 +18,8 @@ import {
 } from '../stadium/schema';
 import { computeStandSightlines } from '../stadium/sightlines';
 import { useStadiumStore } from '../state/useStadiumStore';
+import { CircleHelp, House } from 'lucide-react';
+import { IconButton } from './ui';
 
 const _targetPos = new THREE.Vector3();
 const _targetLook = new THREE.Vector3();
@@ -126,6 +128,20 @@ function detectSoftwareGl(): boolean {
   }
 }
 
+const NAV_HELP_POINTER: [string, string][] = [
+  ['Glisser', 'tourner autour du point visé'],
+  ['Alt + glisser', 'regarder autour, sans bouger'],
+  ['Clic droit / Maj + glisser', 'faire glisser la vue'],
+  ['Molette, pincement', 'avancer vers le curseur'],
+  ['Deux doigts', 'se déplacer au-dessus du sol'],
+  ['Double-clic', 'centrer sur un point'],
+];
+const NAV_HELP_KEYS: [string, string][] = [
+  ['Z Q S D, flèches', 'avancer, gauche, reculer, droite'],
+  ['E / A', 'monter / descendre (aussi Page ↑ / ↓)'],
+  ['Maj', 'aller plus vite'],
+];
+
 function computePresetCameraPose(
   mode: CameraPresetMode,
   doc: StadiumDocument
@@ -185,7 +201,11 @@ function computePresetCameraPose(
 
 export const Viewport: React.FC = () => {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const altitudeRef = useRef<HTMLSpanElement | null>(null);
+  const compassRef = useRef<HTMLDivElement | null>(null);
   const [webglLost, setWebglLost] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const setCameraMode = useStadiumStore((s) => s.setCameraMode);
 
   const doc = useStadiumStore((s) => s.doc);
   const selectedObjectId = useStadiumStore((s) => s.selectedObjectId);
@@ -350,9 +370,28 @@ export const Viewport: React.FC = () => {
     // target, so it never stalls at the target and the pivot follows what is being looked at.
     orbit.enableZoom = false;
 
-    // Keyboard flight: arrows glide across the ground, Page Up / Down change altitude, Shift speeds up.
+    // Keyboard flight, by physical key (`KeyboardEvent.code`) so it is the same on AZERTY and QWERTY:
+    // arrows or ZQSD / WASD glide across the ground, E / A (E / Q on QWERTY) and Page Up / Down change
+    // altitude, Shift speeds up. S belongs to the scale tool while an object is selected.
     const flightKeys = new Set<string>();
-    const FLIGHT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown'];
+    const FLIGHT_MOVES: Record<string, 'forward' | 'back' | 'left' | 'right' | 'up' | 'down'> = {
+      ArrowUp: 'forward',
+      KeyW: 'forward',
+      ArrowDown: 'back',
+      KeyS: 'back',
+      ArrowLeft: 'left',
+      KeyA: 'left',
+      ArrowRight: 'right',
+      KeyD: 'right',
+      PageUp: 'up',
+      KeyE: 'up',
+      PageDown: 'down',
+      KeyQ: 'down',
+    };
+    const flightHas = (move: string) => {
+      for (const code of flightKeys) if (FLIGHT_MOVES[code] === move) return true;
+      return false;
+    };
     let flightFast = false;
     const _flightForward = new THREE.Vector3();
     const _flightRight = new THREE.Vector3();
@@ -420,6 +459,22 @@ export const Viewport: React.FC = () => {
       }
     }
 
+    /** Altitude and compass read straight from the camera each frame, written to the DOM without React. */
+    const _hudDir = new THREE.Vector3();
+    let hudAltitude = '';
+    let hudHeading = NaN;
+    function updateHud() {
+      const altitude = `${Math.max(0, Math.round(camera.position.y))} m`;
+      if (altitude !== hudAltitude && altitudeRef.current) altitudeRef.current.textContent = hudAltitude = altitude;
+      camera.getWorldDirection(_hudDir);
+      // North is −z (the north stand side); the dial turns so N points where north is on screen.
+      const heading = Math.round(THREE.MathUtils.radToDeg(Math.atan2(_hudDir.x, -_hudDir.z)));
+      if (heading !== hudHeading && compassRef.current) {
+        hudHeading = heading;
+        compassRef.current.style.transform = `rotate(${-heading}deg)`;
+      }
+    }
+
     function requestRender() {
       if (pathTracing) return;
       if (renderBusy) {
@@ -467,12 +522,12 @@ export const Viewport: React.FC = () => {
           // Speed follows the view distance: slow near a stand, fast from high up.
           const speed = Math.max(8, camera.position.distanceTo(orbit.target) * 0.7) * (flightFast ? 3 : 1) * dt;
           _flightStep.set(0, 0, 0);
-          if (flightKeys.has('ArrowUp')) _flightStep.add(_flightForward);
-          if (flightKeys.has('ArrowDown')) _flightStep.sub(_flightForward);
-          if (flightKeys.has('ArrowRight')) _flightStep.add(_flightRight);
-          if (flightKeys.has('ArrowLeft')) _flightStep.sub(_flightRight);
-          if (flightKeys.has('PageUp')) _flightStep.y += 1;
-          if (flightKeys.has('PageDown')) _flightStep.y -= 1;
+          if (flightHas('forward')) _flightStep.add(_flightForward);
+          if (flightHas('back')) _flightStep.sub(_flightForward);
+          if (flightHas('right')) _flightStep.add(_flightRight);
+          if (flightHas('left')) _flightStep.sub(_flightRight);
+          if (flightHas('up')) _flightStep.y += 1;
+          if (flightHas('down')) _flightStep.y -= 1;
           if (_flightStep.lengthSq() > 0) {
             _flightStep.normalize().multiplyScalar(speed);
             // Never below the ground: the target stays at or above grass level.
@@ -491,6 +546,7 @@ export const Viewport: React.FC = () => {
         }
 
         if (transitionActive || needsMoreFrames) markMotion();
+        updateHud();
         const interactive = performance.now() - lastMotion < SETTLE_MS;
         if (pipeline) pipeline.render(interactive);
         else renderer.render(scene, camera);
@@ -730,6 +786,76 @@ export const Viewport: React.FC = () => {
      * distance to that surface, so zooming keeps working right up to a seat row, and the orbit pivot is
      * moved to that surface's depth so rotating afterwards turns around what was zoomed on.
      */
+    /**
+     * Two-finger trackpad scroll pans across the ground (pinch, sent as ctrl+wheel, still zooms).
+     * A mouse wheel sends no sideways delta and its legacy `wheelDeltaY` is not 3× `deltaY`; once a
+     * gesture reads as a trackpad it stays one, so its slow tail never turns into zoom steps.
+     */
+    let trackpadUntil = 0;
+    const isTrackpadScroll = (e: WheelEvent, now: number): boolean => {
+      if (e.ctrlKey || e.deltaMode !== 0) return false;
+      const legacy = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY;
+      const trackpad = now < trackpadUntil || e.deltaX !== 0 || (legacy !== undefined && legacy !== 0 && legacy === -3 * e.deltaY);
+      if (trackpad) trackpadUntil = now + 250;
+      return trackpad;
+    };
+    const _panForward = new THREE.Vector3();
+    const _panRight = new THREE.Vector3();
+    const panAcrossGround = (dx: number, dy: number) => {
+      camera.getWorldDirection(_panForward);
+      _panForward.y = 0;
+      if (_panForward.lengthSq() < 1e-6) _panForward.set(0, 0, -1);
+      _panForward.normalize();
+      _panRight.crossVectors(_panForward, camera.up).normalize();
+      // Content follows the fingers: fingers up push the ground away, so the drone moves forward.
+      const gain = Math.max(10, camera.position.distanceTo(orbit.target)) * 0.0022;
+      _panForward.multiplyScalar(dy * gain).addScaledVector(_panRight, dx * gain);
+      camera.position.add(_panForward);
+      orbit.target.add(_panForward);
+      transitionActive = false;
+      markMotion();
+      requestRender();
+    };
+
+    /**
+     * Alt + drag turns the head in place: the camera stays put and the view direction yaws / pitches,
+     * the orbit pivot moving along it at the same distance. Runs in the capture phase so the orbit
+     * controls never see the gesture.
+     */
+    let lookDrag: { x: number; y: number } | null = null;
+    const _lookOffset = new THREE.Vector3();
+    const _lookSpherical = new THREE.Spherical();
+    const onLookPointerDown = (e: PointerEvent) => {
+      if (!e.altKey || e.button !== 0 || isDraggingGizmo || useStadiumStore.getState().placingType) return;
+      e.stopImmediatePropagation();
+      pointerDownPos.set(e.clientX, e.clientY);
+      lookDrag = { x: e.clientX, y: e.clientY };
+      transitionActive = false;
+      renderer.domElement.setPointerCapture(e.pointerId);
+    };
+    const onLookPointerMove = (e: PointerEvent) => {
+      if (!lookDrag) return;
+      e.stopImmediatePropagation();
+      const dx = e.clientX - lookDrag.x;
+      const dy = e.clientY - lookDrag.y;
+      lookDrag.x = e.clientX;
+      lookDrag.y = e.clientY;
+      _lookOffset.copy(orbit.target).sub(camera.position);
+      _lookSpherical.setFromVector3(_lookOffset);
+      _lookSpherical.theta -= dx * 0.004;
+      _lookSpherical.phi = THREE.MathUtils.clamp(_lookSpherical.phi + dy * 0.004, 0.05, Math.PI - 0.05);
+      _lookOffset.setFromSpherical(_lookSpherical);
+      orbit.target.copy(camera.position).add(_lookOffset);
+      camera.lookAt(orbit.target);
+      markMotion();
+      requestRender();
+    };
+    const onLookPointerUp = (e: PointerEvent) => {
+      if (!lookDrag) return;
+      lookDrag = null;
+      if (renderer.domElement.hasPointerCapture(e.pointerId)) renderer.domElement.releasePointerCapture(e.pointerId);
+    };
+
     const _zoomPoint = new THREE.Vector3();
     const _zoomOffset = new THREE.Vector3();
     const _zoomForward = new THREE.Vector3();
@@ -740,6 +866,10 @@ export const Viewport: React.FC = () => {
       const currentEngine = engineRef.current;
       if (!currentEngine || !orbit.enabled || surfaceDrag) return;
       const now = performance.now();
+      if (isTrackpadScroll(e, now)) {
+        panAcrossGround(e.deltaX, e.deltaY);
+        return;
+      }
       // One raycast per gesture: the anchor is kept while the cursor stays put.
       if (Math.hypot(e.clientX - zoomAnchor.x, e.clientY - zoomAnchor.y) > 4 || now - zoomAnchor.time > 300) {
         const hit = pickSurface(e);
@@ -774,21 +904,26 @@ export const Viewport: React.FC = () => {
       el instanceof HTMLElement &&
       (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
     const onFlightKeyDown = (e: KeyboardEvent) => {
-      if (!FLIGHT_KEYS.includes(e.key) || e.metaKey || e.ctrlKey || e.altKey || isTyping(document.activeElement)) return;
+      if (!FLIGHT_MOVES[e.code] || e.metaKey || e.ctrlKey || e.altKey || isTyping(document.activeElement)) return;
+      if (e.code === 'KeyS' && useStadiumStore.getState().selectedObjectId) return;
       e.preventDefault();
       flightFast = e.shiftKey;
-      if (!flightKeys.has(e.key)) {
-        flightKeys.add(e.key);
+      if (!flightKeys.has(e.code)) {
+        flightKeys.add(e.code);
         markMotion();
         requestRender();
       }
     };
     const onFlightKeyUp = (e: KeyboardEvent) => {
       flightFast = e.shiftKey;
-      flightKeys.delete(e.key);
+      flightKeys.delete(e.code);
     };
     const stopFlight = () => flightKeys.clear();
 
+    renderer.domElement.addEventListener('pointerdown', onLookPointerDown, { capture: true });
+    renderer.domElement.addEventListener('pointermove', onLookPointerMove, { capture: true });
+    renderer.domElement.addEventListener('pointerup', onLookPointerUp, { capture: true });
+    renderer.domElement.addEventListener('pointercancel', onLookPointerUp, { capture: true });
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
     renderer.domElement.addEventListener('pointermove', onPointerMove);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
@@ -906,6 +1041,10 @@ export const Viewport: React.FC = () => {
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
       clearTimeout(settleTimer);
+      renderer.domElement.removeEventListener('pointerdown', onLookPointerDown, { capture: true });
+      renderer.domElement.removeEventListener('pointermove', onLookPointerMove, { capture: true });
+      renderer.domElement.removeEventListener('pointerup', onLookPointerUp, { capture: true });
+      renderer.domElement.removeEventListener('pointercancel', onLookPointerUp, { capture: true });
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
@@ -1139,6 +1278,65 @@ export const Viewport: React.FC = () => {
   return (
     <div className="relative w-full h-full select-none overflow-hidden bg-canvas">
       <div ref={mountRef} className="w-full h-full" />
+      <div className="absolute right-3 top-3 z-10 flex flex-col items-end gap-2">
+        <div className="flex items-center gap-1 rounded-md bg-panel/95 border border-line p-1">
+          <div
+            role="img"
+            aria-label="Boussole : N indique le nord (côté tribune nord)"
+            title="Boussole : N indique le nord (côté tribune nord)"
+            className="relative w-7 h-7 rounded-full border border-line"
+          >
+            <div ref={compassRef} className="absolute inset-0">
+              <span className="absolute left-1/2 top-0 -translate-x-1/2 text-[9px] leading-none font-semibold text-accent-ink">N</span>
+              <span className="absolute left-1/2 top-[9px] -translate-x-1/2 w-0 h-0 border-x-[3px] border-x-transparent border-b-[7px] border-b-accent" />
+              <span className="absolute left-1/2 bottom-[5px] -translate-x-1/2 w-0 h-0 border-x-[3px] border-x-transparent border-t-[7px] border-t-line-strong" />
+            </div>
+          </div>
+          <div className="px-1.5 text-right" title="Altitude de la caméra au-dessus de la pelouse">
+            <div className="text-2xs text-ink-faint leading-tight">Altitude</div>
+            <span ref={altitudeRef} className="block text-xs font-medium tabular-nums text-ink leading-tight">
+              –
+            </span>
+          </div>
+          <IconButton label="Revenir à la vue initiale" onClick={() => setCameraMode(useStadiumStore.getState().cameraMode)}>
+            <House className="w-4 h-4" />
+          </IconButton>
+          <IconButton
+            label="Commandes de navigation"
+            active={helpOpen}
+            aria-expanded={helpOpen}
+            onClick={() => setHelpOpen((open) => !open)}
+          >
+            <CircleHelp className="w-4 h-4" />
+          </IconButton>
+        </div>
+        {helpOpen && (
+          <div className="w-72 rounded-md bg-panel/95 border border-line p-3 text-xs text-ink">
+            <p className="text-2xs font-medium uppercase tracking-wide text-ink-faint mb-2">Souris et trackpad</p>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+              {NAV_HELP_POINTER.map(([keys, action]) => (
+                <React.Fragment key={keys}>
+                  <dt className="font-medium whitespace-nowrap">{keys}</dt>
+                  <dd className="text-ink-muted">{action}</dd>
+                </React.Fragment>
+              ))}
+            </dl>
+            <p className="text-2xs font-medium uppercase tracking-wide text-ink-faint mt-3 mb-2">Clavier</p>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+              {NAV_HELP_KEYS.map(([keys, action]) => (
+                <React.Fragment key={keys}>
+                  <dt className="font-medium whitespace-nowrap">{keys}</dt>
+                  <dd className="text-ink-muted">{action}</dd>
+                </React.Fragment>
+              ))}
+            </dl>
+            <p className="mt-3 text-2xs text-ink-faint">
+              Touches selon la position sur le clavier : ZQSD en AZERTY, WASD en QWERTY. Quand un objet est
+              sélectionné, S sert à l'outil Échelle.
+            </p>
+          </div>
+        )}
+      </div>
       {webglLost && (
         <div className="absolute inset-0 flex items-center justify-center bg-canvas/95 text-ink p-6 text-center z-30">
           <div className="max-w-md space-y-2">

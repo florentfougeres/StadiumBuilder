@@ -35,7 +35,7 @@ const CAMERA_MODES: { id: CameraPresetMode; label: string; icon: React.ReactNode
     id: 'drone',
     label: 'Drone',
     icon: <Video className="w-3.5 h-3.5" />,
-    hint: 'Drone · molette : zoom vers le curseur · double-clic : centrer sur un point · flèches : se déplacer (Maj plus vite, Page haut/bas : altitude)',
+    hint: 'Drone · ZQSD ou flèches : se déplacer · E / A : monter / descendre · Alt + glisser : regarder autour · molette : avancer vers le curseur · « ? » en haut à droite : toutes les commandes',
   },
   { id: 'touchline', label: 'Bord terrain', icon: <Camera className="w-3.5 h-3.5" /> },
   { id: 'spectator', label: 'Vue siège', icon: <Eye className="w-3.5 h-3.5" /> },

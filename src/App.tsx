@@ -222,7 +222,8 @@ export default function App() {
           setTransformMode('rotate');
           break;
         case 's':
-          setTransformMode('scale');
+          // Without a selection, S flies the drone backwards (see Viewport).
+          if (selectedObjectId) setTransformMode('scale');
           break;
         case 'h':
           togglePanels();
