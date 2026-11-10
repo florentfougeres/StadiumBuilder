@@ -324,6 +324,8 @@ export function buildStadiumSceneGraph(
     mergeStatic?: boolean;
     /** Lighter crowd and seats when seen from afar (see addDistanceLods). Viewport only. */
     distanceLod?: boolean;
+    /** Land out to the horizon around the site. Viewport only: exports keep the site alone. */
+    horizon?: boolean;
   } = {}
 ): BuiltStadiumScene {
   const rootGroup = new THREE.Group();
@@ -389,7 +391,8 @@ export function buildStadiumSceneGraph(
   const siteGroup = generateSiteGroup(
     doc,
     measureSiteFootprint(doc, [standsGroup, concourseGroup, skirtGroup]),
-    aniso
+    aniso,
+    Boolean(options.horizon)
   );
 
   rootGroup.add(

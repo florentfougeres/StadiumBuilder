@@ -319,7 +319,9 @@ export const Viewport: React.FC = () => {
     scene.environment = envTextures.dusk;
     if (skyEnv) scene.add(skyEnv.sky);
 
-    const camera = new THREE.PerspectiveCamera(44, width / height, 0.5, 1800);
+    // Far enough for the land laid out to the horizon (HORIZON_RADIUS), which the haze swallows;
+    // depth precision hangs on the near plane, not this.
+    const camera = new THREE.PerspectiveCamera(44, width / height, 0.5, 5000);
     camera.position.set(145, 96, 152);
 
     // Architectural + Broadcast Match Lighting Rig
@@ -1158,6 +1160,7 @@ export const Viewport: React.FC = () => {
         maxAnisotropy: engine.maxAnisotropy,
         mergeStatic: true,
         distanceLod: true,
+        horizon: true,
       });
     } catch (error) {
       console.error('Stadium build failed; keeping the previous stadium.', error);

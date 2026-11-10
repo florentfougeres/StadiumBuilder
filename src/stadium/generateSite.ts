@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createSiteGroundGeometry } from './generatePitch';
-import { createPlazaDetailNormalAndRoughness } from './materials';
-import { setFarDetail } from './meshKit';
+import { applySiteGroundDetail, createPlazaDetailNormalAndRoughness } from './materials';
+import { ignoreRaycasts, setFarDetail } from './meshKit';
 import {
   DEFAULT_STADIUM_MATERIALS,
   LightingMode,
@@ -338,7 +338,7 @@ function planSite(fp: SiteFootprint, site: SiteConfig): SiteLayout {
           if (!nearGate(ringPointNear(fp, p, F), GATE_WIDTH * 1.1)) tree(p.x, p.z, 0.72);
         }
       }
-      scatterTrees(layout, fp, rand, F + 92, 1400, 0.55);
+      scatterTrees(layout, fp, rand, F + 92, 3200, 0.5);
       break;
     }
 
@@ -511,20 +511,31 @@ function paintSiteGround(
   ctx.fillStyle = base[site.setting];
   ctx.fillRect(-HALF_SITE, -HALF_SITE, SITE_SIZE, SITE_SIZE);
 
-  // Mottling so lawns and asphalt are never a flat colour.
+  // Mottling so lawns and asphalt are never a flat colour: soft-edged dabs, which blend into one
+  // another where hard ellipses read as stains.
+  const urbanGround = site.setting === 'urban';
+  const light = createSoftBlob(urbanGround ? '255,255,255' : '150,165,80');
+  const dark = createSoftBlob(urbanGround ? '0,0,0' : '25,45,20');
   for (let i = 0; i < 9000; i++) {
     const x = (rand() * 2 - 1) * HALF_SITE;
     const z = (rand() * 2 - 1) * HALF_SITE;
-    const r = 2 + rand() * 9;
-    ctx.fillStyle =
-      site.setting === 'urban'
-        ? `rgba(${rand() < 0.5 ? '255,255,255' : '0,0,0'},0.035)`
-        : rand() < 0.5
-          ? 'rgba(120,140,60,0.10)'
-          : 'rgba(30,50,25,0.10)';
-    ctx.beginPath();
-    ctx.ellipse(x, z, r, r * 0.7, 0, 0, Math.PI * 2);
-    ctx.fill();
+    const r = 3 + rand() * 12;
+    ctx.globalAlpha = urbanGround ? 0.06 : 0.16;
+    ctx.drawImage(rand() < 0.5 ? light : dark, x - r, z - r * 0.7, r * 2, r * 1.4);
+  }
+  ctx.globalAlpha = 1;
+
+  // Broad lush and dry swathes, the scale at which a real lawn varies seen from the stands.
+  if (!urbanGround) {
+    const dry = createSoftBlob('175,165,90');
+    for (let i = 0; i < 700; i++) {
+      const x = (rand() * 2 - 1) * HALF_SITE;
+      const z = (rand() * 2 - 1) * HALF_SITE;
+      const r = 14 + rand() * 46;
+      ctx.globalAlpha = 0.14;
+      ctx.drawImage(rand() < 0.5 ? dry : dark, x - r, z - r * 0.7, r * 2, r * 1.4);
+    }
+    ctx.globalAlpha = 1;
   }
 
   if (site.setting === 'urban') {
@@ -567,6 +578,8 @@ function paintSiteGround(
       ctx.ellipse(c.x, c.z, rx, rz, 0.3, 0, Math.PI * 2);
       ctx.fill();
     }
+    // Trampled, yellowed grass either side of every path.
+    for (const c of layout.corridors) strokeCorridor(ctx, c, 'rgba(150,140,95,0.35)', 8.5);
     for (const c of layout.corridors) strokeCorridor(ctx, c, gravel, 5);
   }
 
@@ -578,6 +591,17 @@ function paintSiteGround(
       ctx.fillStyle = asphalt;
       ctx.fillRect(lot.x0, lot.z0, lot.x1 - lot.x0, lot.z1 - lot.z0);
       const cz = (lot.z0 + lot.z1) / 2;
+      // Worn, lighter wheel paths down the two aisles, oil stains in the bays.
+      ctx.fillStyle = 'rgba(150,150,145,0.16)';
+      for (const az of [lot.z0 + 10.2, lot.z1 - 10.2]) ctx.fillRect(lot.x0, az - 2.2, lot.x1 - lot.x0, 4.4);
+      for (let x = lot.x0 + 1.3; x < lot.x1 - 1.3; x += 2.6) {
+        for (const z of [lot.z0 + 3.5, cz - 3, cz + 3, lot.z1 - 3.5]) {
+          ctx.fillStyle = `rgba(15,15,18,${0.12 + rand() * 0.2})`;
+          ctx.beginPath();
+          ctx.ellipse(x + 1.3 + (rand() - 0.5) * 0.6, z + (rand() - 0.5) * 1.2, 0.5 + rand() * 0.5, 0.8 + rand() * 0.7, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
       ctx.fillStyle = '#62764a';
       ctx.fillRect(lot.x0 + 2, cz - 0.9, lot.x1 - lot.x0 - 4, 1.8);
     }
@@ -595,6 +619,11 @@ function paintSiteGround(
 
   // Ring roads with kerbs and a dashed centre line.
   for (const road of layout.ringRoads) {
+    // Dusty, tyre-worn verge along the kerbs.
+    ctx.strokeStyle = 'rgba(95,88,60,0.22)';
+    ctx.lineWidth = road.width + 15;
+    traceRing(ctx, fp, road.offset);
+    ctx.stroke();
     ctx.strokeStyle = sidewalk;
     ctx.lineWidth = road.width + 6;
     traceRing(ctx, fp, road.offset);
@@ -611,6 +640,23 @@ function paintSiteGround(
     ctx.setLineDash([]);
   }
 
+  // Contact shadows: the ground darkens under every crown and car, which plants them on it
+  // where the sun's shadow map does not reach (it only covers the stadium's surroundings).
+  const blob = createSoftBlob('10,18,8');
+  for (const t of layout.trees) {
+    const r = (t.conifer ? 2.6 : 3.6) * t.s;
+    ctx.globalAlpha = 0.55;
+    ctx.drawImage(blob, t.x - r, t.z - r, r * 2, r * 2);
+  }
+  ctx.globalAlpha = 0.5;
+  for (const c of layout.cars) {
+    const across = Math.abs(Math.sin(c.yaw)) > 0.5;
+    const w = across ? 2.4 : 5;
+    const d = across ? 5 : 2.4;
+    ctx.drawImage(blob, c.x - w / 2, c.z - d / 2, w, d);
+  }
+  ctx.globalAlpha = 1;
+
   // Forecourt last, so it sits over everything up to the facade.
   ctx.fillStyle = plazaColor;
   traceRing(ctx, fp, layout.forecourt);
@@ -626,6 +672,21 @@ function paintSiteGround(
   tex.anisotropy = maxAnisotropy;
   tex.needsUpdate = true;
   return tex;
+}
+
+/** A soft disc of `rgb` ("r,g,b") fading to nothing at its rim: dabs, contact shadows. */
+function createSoftBlob(rgb: string): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = 32;
+  c.height = 32;
+  const ctx = c.getContext('2d')!;
+  const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  g.addColorStop(0, `rgba(${rgb},0.75)`);
+  g.addColorStop(0.55, `rgba(${rgb},0.4)`);
+  g.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 32, 32);
+  return c;
 }
 
 /** Paved band from under the facade to the forecourt edge, with real-size slab relief. */
@@ -710,7 +771,30 @@ function createBroadleafCrownGeometry(detail: 0 | 1): THREE.BufferGeometry {
   });
   const merged = mergeVertices(mergeGeometries(parts)!, 0.001);
   merged.computeVertexNormals();
-  return merged;
+  return shadeCrown(merged, -0.9, 1.25);
+}
+
+/**
+ * Baked self-shading for a crown (multiplied by each tree's colour): the underside and the folds
+ * between lobes in shade, the top in light, a leafy flicker from vertex to vertex. Without it a
+ * crown is one flat-lit ball.
+ */
+function shadeCrown(geo: THREE.BufferGeometry, bottom: number, top: number): THREE.BufferGeometry {
+  const p = geo.attributes.position;
+  const n = geo.attributes.normal;
+  const col = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) {
+    const up = THREE.MathUtils.clamp((p.getY(i) - bottom) / (top - bottom), 0, 1);
+    // Normals that turn back toward the trunk are the folds between lobes.
+    const out = (n.getX(i) * p.getX(i) + n.getY(i) * p.getY(i) + n.getZ(i) * p.getZ(i)) / (Math.hypot(p.getX(i), p.getY(i), p.getZ(i)) || 1);
+    const flicker = Math.sin(i * 12.9898) * 43758.5453;
+    const v = (0.42 + 0.5 * up) * (0.75 + 0.25 * Math.max(0, out)) * (0.9 + 0.2 * (flicker - Math.floor(flicker)));
+    col[i * 3] = v;
+    col[i * 3 + 1] = v;
+    col[i * 3 + 2] = v * 0.92;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
 }
 
 function buildTrees(trees: TreeSpot[], lighting: LightingMode): THREE.Group {
@@ -722,9 +806,9 @@ function buildTrees(trees: TreeSpot[], lighting: LightingMode): THREE.Group {
   const trunkGeo = new THREE.CylinderGeometry(0.16, 0.3, 1, 6);
   trunkGeo.translate(0, 0.5, 0);
   const broadGeo = createBroadleafCrownGeometry(1);
-  const coneGeo = new THREE.ConeGeometry(1, 2.6, 9);
+  const coneGeo = shadeCrown(new THREE.ConeGeometry(1, 2.6, 9), -1.3, 1.3);
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4f3d2e, roughness: 0.95 });
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+  const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, vertexColors: true });
 
   const broad = trees.filter((t) => !t.conifer);
   const conifers = trees.filter((t) => t.conifer);
@@ -745,8 +829,8 @@ function buildTrees(trees: TreeSpot[], lighting: LightingMode): THREE.Group {
   trees.forEach((t, i) => {
     const yaw = rand() * Math.PI * 2;
     q.setFromAxisAngle(up, yaw);
-    const trunkH = (t.conifer ? 2.2 : 3.4) * t.s;
-    m.compose(new THREE.Vector3(t.x, 0, t.z), q, new THREE.Vector3(t.s, trunkH, t.s));
+    const trunkH = (t.conifer ? 2.2 : 2.9) * t.s;
+    m.compose(new THREE.Vector3(t.x, 0, t.z), q, new THREE.Vector3(t.s * 1.25, trunkH, t.s * 1.25));
     trunks.setMatrixAt(i, m);
     if (t.conifer) {
       const r = 2.1 * t.s;
@@ -755,9 +839,9 @@ function buildTrees(trees: TreeSpot[], lighting: LightingMode): THREE.Group {
       color.setHSL(0.36 + rand() * 0.04, 0.32, (0.17 + rand() * 0.05) * light);
       coneMesh.setColorAt(ci++, color);
     } else {
-      const r = 3.1 * t.s;
+      const r = 3.3 * t.s;
       m.compose(
-        new THREE.Vector3(t.x, trunkH + r * 0.62, t.z),
+        new THREE.Vector3(t.x, trunkH + r * 0.5, t.z),
         q,
         new THREE.Vector3(r * (0.92 + rand() * 0.16), r * (0.8 + rand() * 0.14), r * (0.92 + rand() * 0.16))
       );
@@ -820,10 +904,25 @@ function buildCars(cars: CarSpot[]): THREE.Group {
   group.name = 'SiteCars';
   if (cars.length === 0) return group;
   const rand = seededRandom(5);
-  const bodyGeo = new THREE.BoxGeometry(4.3, 0.75, 1.8);
+  // Body on its wheels, a cabin with raked screens: the top of the cabin box is pulled in, more
+  // at the front (windscreen) than at the back. The wheels and the shade under the sills are one
+  // dark block set in from the body, drawn with the glass.
+  const bodyGeo = new THREE.BoxGeometry(4.35, 0.62, 1.8);
   bodyGeo.translate(0, 0.62, 0);
-  const cabinGeo = new THREE.BoxGeometry(2.3, 0.62, 1.6);
-  cabinGeo.translate(-0.25, 1.3, 0);
+  const cabin = new THREE.BoxGeometry(2.5, 0.6, 1.62);
+  const cp = cabin.attributes.position;
+  for (let i = 0; i < cp.count; i++) {
+    if (cp.getY(i) <= 0) continue;
+    const x = cp.getX(i);
+    cp.setX(i, x > 0 ? x - 0.62 : x + 0.3);
+    cp.setZ(i, cp.getZ(i) * 0.9);
+  }
+  cabin.translate(-0.2, 1.23, 0);
+  const wheels = new THREE.BoxGeometry(3.4, 0.62, 1.66);
+  wheels.translate(0, 0.31, 0);
+  const cabinGeo = mergeGeometries([cabin, wheels])!;
+  cabin.dispose();
+  wheels.dispose();
   const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.5, clearcoat: 0.8 });
   const cabinMat = new THREE.MeshStandardMaterial({ color: 0x1b2430, roughness: 0.12, metalness: 0.6 });
   const bodies = new THREE.InstancedMesh(bodyGeo, bodyMat, cars.length);
@@ -846,6 +945,56 @@ function buildCars(cars: CarSpot[]): THREE.Group {
   }
   group.add(bodies, cabins);
   return group;
+}
+
+/**
+ * Zebra crossings where a path, an avenue or a gate's approach crosses a ring road, as wide as
+ * the path (at most 12 m).
+ */
+function buildCrossings(fp: SiteFootprint, layout: SiteLayout): THREE.InstancedMesh | null {
+  const bars: { x: number; z: number; yaw: number; len: number }[] = [];
+  const done: Pt[] = [];
+  for (const road of layout.ringRoads) {
+    for (const c of layout.corridors) {
+      const side = (p: Pt) => ringLevel(fp, p.x, p.z, road.offset) - 1;
+      if (side(c.a) * side(c.b) >= 0) continue;
+      let lo = c.a;
+      let hi = c.b;
+      for (let k = 0; k < 24; k++) {
+        const mid = { x: (lo.x + hi.x) / 2, z: (lo.z + hi.z) / 2 };
+        if (side(mid) * side(lo) > 0) lo = mid;
+        else hi = mid;
+      }
+      const at = lo;
+      if (done.some((p) => Math.hypot(p.x - at.x, p.z - at.z) < 8)) continue;
+      done.push(at);
+      const len = Math.hypot(c.b.x - c.a.x, c.b.z - c.a.z) || 1;
+      const dx = (c.b.x - c.a.x) / len;
+      const dz = (c.b.z - c.a.z) / len;
+      // Bars lie along the traffic and repeat, a metre apart, across the carriageway.
+      const width = Math.min(12, c.r * 2);
+      const half = road.width / 2 - 0.6;
+      for (let w = -half; w <= half; w += 1) {
+        bars.push({ x: at.x + dx * w, z: at.z + dz * w, yaw: Math.atan2(-dz, dx), len: width });
+      }
+    }
+  }
+  if (bars.length === 0) return null;
+  const geo = new THREE.PlaneGeometry(0.5, 1).rotateX(-Math.PI / 2);
+  const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color: 0xe8e8e2, roughness: 0.75 }), bars.length);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  bars.forEach((b, i) => {
+    q.setFromAxisAngle(up, b.yaw);
+    mesh.setMatrixAt(i, m.compose(new THREE.Vector3(b.x, 0.04, b.z), q, new THREE.Vector3(1, 1, b.len)));
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.computeBoundingBox();
+  mesh.computeBoundingSphere();
+  mesh.receiveShadow = true;
+  mesh.name = 'SiteCrossings';
+  return mesh;
 }
 
 /** White bay lines of every parking lot. */
@@ -1686,7 +1835,13 @@ function buildPodium(
   };
 }
 
-export function generateSiteGroup(doc: StadiumDocument, stadiumFp: SiteFootprint, maxAnisotropy: number = 4): THREE.Group {
+export function generateSiteGroup(
+  doc: StadiumDocument,
+  stadiumFp: SiteFootprint,
+  maxAnisotropy: number = 4,
+  /** Lay land out to the horizon around the site (viewport only: see `buildHorizon`). */
+  horizon = false
+): THREE.Group {
   const site = resolveSite(doc);
   const mats = { ...DEFAULT_STADIUM_MATERIALS, ...(doc.materials ?? {}) };
   const group = new THREE.Group();
@@ -1710,7 +1865,7 @@ export function generateSiteGroup(doc: StadiumDocument, stadiumFp: SiteFootprint
   layout.lots = layout.lots.filter((r) => clear({ x: r.x0, z: r.z0 }) && clear({ x: r.x1, z: r.z1 }));
   layout.blocks = layout.blocks.filter((r) => clear({ x: r.x0, z: r.z0 }) && clear({ x: r.x1, z: r.z1 }));
   if (site.water === 'moat') group.add(buildMoat(fp, moat.from, moat.to));
-  if (site.water === 'waterfront') group.add(buildWaterfront(waterfront));
+  if (site.water === 'waterfront') group.add(buildWaterfront(waterfront, horizon));
   if (site.mound > 0.5) group.add(buildMound(fp, site.mound, moundRun));
 
   if (site.setting === 'none') {
@@ -1726,16 +1881,15 @@ export function generateSiteGroup(doc: StadiumDocument, stadiumFp: SiteFootprint
   groundNormal.wrapT = THREE.RepeatWrapping;
   groundNormal.repeat.set(SITE_SIZE / 6, SITE_SIZE / 6);
   groundNormal.needsUpdate = true;
-  const ground = new THREE.Mesh(
-    createSiteGroundGeometry(doc.pitch, SITE_SIZE, SITE_SIZE),
-    new THREE.MeshStandardMaterial({
-      map: paintSiteGround(fp, site, layout, mats.plazaSurface, maxAnisotropy),
-      normalMap: groundNormal,
-      normalScale: new THREE.Vector2(0.35, 0.35),
-      roughness: 0.92,
-      metalness: 0.02,
-    })
-  );
+  const groundMat = new THREE.MeshStandardMaterial({
+    map: paintSiteGround(fp, site, layout, mats.plazaSurface, maxAnisotropy),
+    normalMap: groundNormal,
+    normalScale: new THREE.Vector2(0.35, 0.35),
+    roughness: 0.92,
+    metalness: 0.02,
+  });
+  applySiteGroundDetail(groundMat);
+  const ground = new THREE.Mesh(createSiteGroundGeometry(doc.pitch, SITE_SIZE, SITE_SIZE), groundMat);
   ground.name = 'SiteGround';
   ground.position.y = -0.05;
   ground.receiveShadow = true;
@@ -1749,9 +1903,278 @@ export function generateSiteGroup(doc: StadiumDocument, stadiumFp: SiteFootprint
   );
   const markings = buildParkingMarkings(layout.lots);
   if (markings) group.add(markings);
+  const crossings = buildCrossings(fp, layout);
+  if (crossings) group.add(crossings);
   if (site.setting === 'urban') group.add(buildCityBlocks(layout.blocks, doc.lighting, fp));
+  if (horizon) group.add(buildHorizon(site.setting, doc.lighting, site.water === 'waterfront' ? waterfront : null));
   if (site.perimeterFence) group.add(buildPerimeterFence(fp, layout));
   if (site.entrances) group.add(buildEntrances(layout, doc.colors.seatsPrimary, doc.lighting));
+  return group;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Horizon
+// ---------------------------------------------------------------------------------------------
+
+/** Radius of the land laid round the site; the day haze swallows it before its edge. */
+export const HORIZON_RADIUS = 4000;
+const HORIZON_TEX_PX = 512;
+
+const FIELD_TONES = ['#6b8a3f', '#8f9a4e', '#bba865', '#5c7a36', '#7d6a4c', '#4f6e33', '#a8a060', '#73903f', '#8b7655'];
+const CITY_TONES = ['#6d6b67', '#7c756b', '#8a7a68', '#5f6266', '#76706a', '#7d6656'];
+
+/**
+ * The land beyond the site, painted at ~16 m a pixel: a patchwork of fields and woods around a
+ * green site, a carpet of roofs and streets around an urban one. The site square in the middle is
+ * covered by the site ground.
+ */
+function paintHorizonGround(urban: boolean, waterX: number | null): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = HORIZON_TEX_PX;
+  canvas.height = HORIZON_TEX_PX;
+  const ctx = canvas.getContext('2d')!;
+  const k = HORIZON_TEX_PX / (HORIZON_RADIUS * 2);
+  ctx.save();
+  ctx.scale(k, k);
+  ctx.translate(HORIZON_RADIUS, HORIZON_RADIUS);
+  const rand = seededRandom(404);
+  ctx.fillStyle = urban ? '#45484c' : '#5b7340';
+  ctx.fillRect(-HORIZON_RADIUS, -HORIZON_RADIUS, HORIZON_RADIUS * 2, HORIZON_RADIUS * 2);
+  if (urban) {
+    // Blocks of roofs on a loose street grid, a park here and there.
+    for (let x = -HORIZON_RADIUS; x < HORIZON_RADIUS; x += 95) {
+      for (let z = -HORIZON_RADIUS; z < HORIZON_RADIUS; z += 95) {
+        ctx.fillStyle = rand() < 0.08 ? '#56703a' : CITY_TONES[Math.floor(rand() * CITY_TONES.length)];
+        ctx.fillRect(x + 9, z + 9, 77, 77);
+      }
+    }
+  } else {
+    // Fields of every tone, tilted a little each, and dark woods between them.
+    for (let i = 0; i < 1400; i++) {
+      const x = (rand() * 2 - 1) * HORIZON_RADIUS;
+      const z = (rand() * 2 - 1) * HORIZON_RADIUS;
+      ctx.save();
+      ctx.translate(x, z);
+      ctx.rotate((rand() - 0.5) * 0.5);
+      ctx.fillStyle = FIELD_TONES[Math.floor(rand() * FIELD_TONES.length)];
+      ctx.fillRect(0, 0, 90 + rand() * 230, 70 + rand() * 180);
+      ctx.restore();
+    }
+    ctx.fillStyle = '#33452a';
+    for (let i = 0; i < 320; i++) {
+      ctx.beginPath();
+      ctx.ellipse((rand() * 2 - 1) * HORIZON_RADIUS, (rand() * 2 - 1) * HORIZON_RADIUS, 40 + rand() * 160, 30 + rand() * 90, rand() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // Fade into the site's own plain ground over the first hundred metres, so no seam shows.
+  ctx.fillStyle = urban ? 'rgba(61,64,68,0.45)' : 'rgba(91,115,64,0.45)';
+  for (const margin of [140, 90, 45]) ctx.fillRect(-HALF_SITE - margin, -HALF_SITE - margin, SITE_SIZE + margin * 2, SITE_SIZE + margin * 2);
+  if (waterX !== null) {
+    ctx.fillStyle = '#35505a';
+    ctx.fillRect(waterX, -HORIZON_RADIUS, HORIZON_RADIUS * 2, HORIZON_RADIUS * 2);
+  }
+  ctx.restore();
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/** Ground ring from the site square out to the horizon circle, without overlapping the site. */
+function createHorizonRingGeometry(): THREE.BufferGeometry {
+  // A multiple of 8 puts a vertex on each corner of the square, so its sides stay straight.
+  const segs = 160;
+  const rings = [0, 0.02, 0.06, 0.13, 0.25, 0.42, 0.65, 1];
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  for (let i = 0; i <= segs; i++) {
+    const a = (i / segs) * Math.PI * 2;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    const edge = HALF_SITE / Math.max(Math.abs(c), Math.abs(s));
+    for (const t of rings) {
+      const r = edge + (HORIZON_RADIUS - edge) * t;
+      pos.push(c * r, 0, s * r);
+      uv.push(0.5 + (c * r) / (HORIZON_RADIUS * 2), 0.5 - (s * r) / (HORIZON_RADIUS * 2));
+    }
+  }
+  const n = rings.length;
+  for (let i = 0; i < segs; i++) {
+    for (let j = 0; j < n - 1; j++) {
+      const a = i * n + j;
+      const b = (i + 1) * n + j;
+      idx.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Viewport only: land out to the horizon so the site no longer ends on a square edge against the
+ * sky. Around a green site, woods on the fields and the odd farm; around an urban one, the city
+ * carries on in low blocks and a few towers. Instanced, a few hundred thousand triangles at most,
+ * no shadows, and rays pass through it.
+ */
+function buildHorizon(setting: SiteSetting, lighting: LightingMode, waterX: number | null): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'SiteHorizon';
+  const urban = setting === 'urban';
+  const groundMat = new THREE.MeshStandardMaterial({
+    map: paintHorizonGround(urban, waterX),
+    roughness: 0.95,
+    metalness: 0,
+  });
+  applySiteGroundDetail(groundMat);
+  const ground = new THREE.Mesh(createHorizonRingGeometry(), groundMat);
+  ground.name = 'HorizonGround';
+  ground.position.y = -0.06;
+  ground.receiveShadow = true;
+  ignoreRaycasts(ground);
+  group.add(ground);
+
+  const rand = seededRandom(1717);
+  const spot = (minR: number): Pt | null => {
+    for (let k = 0; k < 8; k++) {
+      const a = rand() * Math.PI * 2;
+      const r = minR + Math.sqrt(rand()) * (HORIZON_RADIUS * 0.8 - minR);
+      const p = { x: Math.cos(a) * r, z: Math.sin(a) * r };
+      if (Math.abs(p.x) < HALF_SITE + 15 && Math.abs(p.z) < HALF_SITE + 15) continue;
+      if (waterX !== null && p.x > waterX - 20) continue;
+      return p;
+    }
+    return null;
+  };
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  const color = new THREE.Color();
+  const finish = (mesh: THREE.InstancedMesh, used: number) => {
+    mesh.count = used;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    mesh.computeBoundingBox();
+    ignoreRaycasts(mesh);
+    group.add(mesh);
+  };
+
+  if (urban) {
+    const tex = createFacadeTextures();
+    const glow = lighting === 'night' ? 1.1 : lighting === 'dusk' ? 0.55 : 0;
+    const box = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+    const count = 1600;
+    const blocks = new THREE.InstancedMesh(
+      box,
+      new THREE.MeshStandardMaterial({
+        map: tex.map,
+        emissive: new THREE.Color(glow > 0 ? 0xffffff : 0x000000),
+        emissiveMap: tex.emissive,
+        emissiveIntensity: glow,
+        roughness: 0.88,
+      }),
+      count
+    );
+    // Tiled gable roofs on the low blocks, like the city round the site: a unit prism, ridge along x.
+    const roofGeo = new THREE.BufferGeometry();
+    roofGeo.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(
+        [
+          // slopes
+          -0.5, 0, 0.5, 0.5, 0, 0.5, 0.5, 1, 0, -0.5, 0, 0.5, 0.5, 1, 0, -0.5, 1, 0,
+          0.5, 0, -0.5, -0.5, 0, -0.5, -0.5, 1, 0, 0.5, 0, -0.5, -0.5, 1, 0, 0.5, 1, 0,
+          // gables
+          0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 1, 0, -0.5, 0, -0.5, -0.5, 0, 0.5, -0.5, 1, 0,
+        ],
+        3
+      )
+    );
+    roofGeo.computeVertexNormals();
+    const roofs = new THREE.InstancedMesh(roofGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }), count);
+    let used = 0;
+    let roofed = 0;
+    const size = new THREE.Vector3();
+    for (let i = 0; i < count; i++) {
+      const p = spot(HALF_SITE + 30);
+      if (!p) continue;
+      const tower = rand() < 0.05;
+      const h = tower ? 45 + rand() * 70 : 9 + rand() * 18;
+      const w = tower ? 22 + rand() * 14 : 30 + rand() * 50;
+      const d = tower ? w : 14 + rand() * 18;
+      // Blocks follow the street grid, a few degrees off for the older quarters.
+      q.setFromAxisAngle(up, rand() < 0.8 ? 0 : (rand() - 0.5) * 0.6);
+      m.compose(new THREE.Vector3(p.x, 0, p.z), q, size.set(w, h, d));
+      blocks.setMatrixAt(used, m);
+      blocks.setColorAt(used++, color.set(PLASTER[Math.floor(rand() * PLASTER.length)]).multiplyScalar(0.92));
+      if (tower || rand() < 0.2) continue;
+      m.compose(new THREE.Vector3(p.x, h, p.z), q, size.set(w + 0.8, Math.min(6, d * 0.35), d + 0.8));
+      roofs.setMatrixAt(roofed, m);
+      roofs.setColorAt(roofed++, color.set(ROOF_TINTS[Math.floor(rand() * ROOF_TINTS.length)]));
+    }
+    finish(blocks, used);
+    finish(roofs, roofed);
+    return group;
+  }
+
+  // Woods: clumps of 20-face crowns (from 700 m on, a crown is a few pixels), darker than the
+  // site's trees as they recede into the haze. 4 000 of them weigh 80 000 triangles.
+  const crowns = new THREE.InstancedMesh(
+    shadeCrown(new THREE.IcosahedronGeometry(1, 0), -1, 1),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, vertexColors: true }),
+    4000
+  );
+  const light = lighting === 'night' ? 0.6 : lighting === 'dusk' ? 0.8 : 1;
+  let used = 0;
+  for (let w = 0; w < 200 && used < 4000 - 34; w++) {
+    const c = spot(HALF_SITE + 40);
+    if (!c) continue;
+    const n = 8 + Math.floor(rand() * 26);
+    const spread = 25 + rand() * 60;
+    for (let k = 0; k < n; k++) {
+      const x = c.x + (rand() - 0.5) * spread * 2;
+      const z = c.z + (rand() - 0.5) * spread;
+      if (Math.abs(x) < HALF_SITE + 10 && Math.abs(z) < HALF_SITE + 10) continue;
+      const r = 5 + rand() * 4;
+      q.setFromAxisAngle(up, rand() * Math.PI * 2);
+      m.compose(new THREE.Vector3(x, r * 1.3, z), q, new THREE.Vector3(r, r * 1.15, r));
+      crowns.setMatrixAt(used, m);
+      crowns.setColorAt(used++, color.setHSL(0.24 + rand() * 0.08, 0.34, (0.16 + rand() * 0.08) * light));
+    }
+  }
+  finish(crowns, used);
+
+  // Farms and hamlets: white walls under dark roofs.
+  const houses = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }),
+    260
+  );
+  let h = 0;
+  for (let v = 0; v < 26; v++) {
+    const c = spot(HALF_SITE + 120);
+    if (!c) continue;
+    for (let k = 0; k < 10; k++) {
+      const x = c.x + (rand() - 0.5) * 120;
+      const z = c.z + (rand() - 0.5) * 120;
+      if (Math.abs(x) < HALF_SITE + 20 && Math.abs(z) < HALF_SITE + 20) continue;
+      q.setFromAxisAngle(up, rand() * Math.PI);
+      m.compose(
+        new THREE.Vector3(x, 0, z),
+        q,
+        new THREE.Vector3(9 + rand() * 14, 5 + rand() * 4, 7 + rand() * 8)
+      );
+      houses.setMatrixAt(h, m);
+      houses.setColorAt(h++, color.set(rand() < 0.7 ? '#d9d2c3' : '#9a5a3c').multiplyScalar(light));
+    }
+  }
+  finish(houses, h);
   return group;
 }
 
@@ -1821,11 +2244,13 @@ function buildMoat(fp: SiteFootprint, from: number, to: number): THREE.Group {
 }
 
 /** River or bay along the east side of the site, behind a stone quay. */
-function buildWaterfront(x0: number): THREE.Group {
+function buildWaterfront(x0: number, horizon: boolean): THREE.Group {
   const group = new THREE.Group();
   group.name = 'SiteWaterfront';
-  const width = SITE_SIZE / 2 - x0;
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(width, SITE_SIZE).rotateX(-Math.PI / 2), waterMaterial());
+  // With the horizon laid out, the water runs on to it instead of stopping at the site's edge.
+  const reach = horizon ? HORIZON_RADIUS : HALF_SITE;
+  const width = reach - x0;
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(width, reach * 2).rotateX(-Math.PI / 2), waterMaterial());
   water.position.set(x0 + width / 2, 0.04, 0);
   water.receiveShadow = true;
   water.name = 'WaterfrontWater';

@@ -3158,6 +3158,75 @@ normal = normalize(normal + (viewMatrix * vec4(turfSlope.x, 0.0, -turfSlope.y, 0
   };
 }
 
+/**
+ * Tileable grey noise for the surroundings' ground (r: fine grain, g: clumps, b: grit), made once
+ * and shared by every build: it reaches the shader through a uniform, out of `disposeObject3D`'s
+ * sight, like the turf detail above.
+ */
+let siteGroundDetailTexture: THREE.DataTexture | null = null;
+function getSiteGroundDetailTexture(): THREE.DataTexture {
+  if (siteGroundDetailTexture) return siteGroundDetailTexture;
+  const size = 256;
+  const data = new Uint8Array(size * size * 4);
+  let seed = 7;
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const v = y / size;
+      const i = (y * size + x) * 4;
+      data[i] = clampByte(periodicFbm2D(u, v, 16, 4, 811) * 255);
+      data[i + 1] = clampByte(periodicFbm2D(u, v, 4, 3, 1223) * 255);
+      data[i + 2] = clampByte(128 + (rand() - 0.5) * 150);
+      data[i + 3] = 255;
+    }
+  }
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = 8;
+  tex.needsUpdate = true;
+  siteGroundDetailTexture = tex;
+  return tex;
+}
+
+/**
+ * World-space detail over the painted surroundings: the site's canvas carries under 2 px/m, which
+ * reads as a printed map from close by. Grain and grit fade in near the camera; slow clumps and a
+ * green-to-straw drift on lawns stay at every distance, so a field is never a flat colour. One
+ * extra texture, three samples a pixel.
+ */
+export function applySiteGroundDetail(material: THREE.MeshStandardMaterial): void {
+  const detail = getSiteGroundDetailTexture();
+  material.customProgramCacheKey = () => 'site-ground-detail-v1';
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.siteDetailMap = { value: detail };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vSiteXZ;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvSiteXZ = (modelMatrix * vec4(transformed, 1.0)).xz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vSiteXZ;\nuniform sampler2D siteDetailMap;')
+      .replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+float siteNear = 1.0 - smoothstep(25.0, 160.0, length(vViewPosition));
+vec3 siteFine = texture2D(siteDetailMap, vSiteXZ * 0.21).rgb;
+float siteClump = texture2D(siteDetailMap, mat2(0.8, -0.6, 0.6, 0.8) * vSiteXZ * 0.013 + 0.31).g;
+float siteLawn = smoothstep(0.02, 0.08, diffuseColor.g - max(diffuseColor.r, diffuseColor.b));
+float siteGrain = mix(1.0, 0.82 + 0.36 * siteFine.r + 0.16 * (siteFine.b - 0.5), siteNear);
+diffuseColor.rgb *= siteGrain * (0.9 + 0.2 * siteClump);
+// Lawns drift between lush and dry straw in broad patches.
+diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.18, 1.06, 0.74), siteLawn * smoothstep(0.45, 0.75, siteClump) * 0.6);`
+      );
+  };
+}
+
 // ============================================================================
 // 9. SHADED PBR MATERIAL SWATCH GENERATOR (ZERO BLACK SQUARES IN UI)
 // ============================================================================

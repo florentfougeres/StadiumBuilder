@@ -60,7 +60,7 @@ describe('viewport build budget', () => {
     it(`${preset.id} builds in time, finite, within the triangle budget`, () => {
       const doc = createPresetDocument(preset.id);
       const start = performance.now();
-      const { rootGroup } = buildStadiumSceneGraph(doc, { mergeStatic: true, distanceLod: true, maxAnisotropy: 1 });
+      const { rootGroup } = buildStadiumSceneGraph(doc, { mergeStatic: true, distanceLod: true, horizon: true, maxAnisotropy: 1 });
       const ms = performance.now() - start;
       try {
         expect(firstNonFinitePosition(rootGroup)).toBeNull();
@@ -76,6 +76,7 @@ describe('viewport build budget', () => {
     const { rootGroup } = buildStadiumSceneGraph(createPresetDocument('bowl_bowstring_60k'), {
       mergeStatic: true,
       distanceLod: true,
+      horizon: true,
       maxAnisotropy: 1,
     });
     const pending = new Map<THREE.EventDispatcher<{ dispose: object }>, string>();

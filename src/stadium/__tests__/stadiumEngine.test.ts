@@ -83,6 +83,7 @@ function ensureCanvasMock() {
           quadraticCurveTo: () => {},
           arc: () => {},
           ellipse: () => {},
+          drawImage: () => {},
           fill: () => {},
           stroke: () => {},
           save: () => {},
