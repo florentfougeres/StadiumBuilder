@@ -18,6 +18,19 @@ export function sanitizeFilename(name: string): string {
   );
 }
 
+/**
+ * Downloads a canvas data URL through a Blob: Chrome silently drops anchor downloads of data URLs
+ * over ~2 MB, which a full-resolution render easily exceeds.
+ */
+function downloadDataUrl(dataUrl: string, filename: string): void {
+  const [header, base64] = dataUrl.split(',', 2);
+  const mime = /^data:([^;]+)/.exec(header)?.[1] ?? 'application/octet-stream';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  triggerDownloadBlob(new Blob([bytes], { type: mime }), filename);
+}
+
 let captureHandler: (() => string | null) | null = null;
 
 export function registerViewportCaptureHandler(fn: (() => string | null) | null): void {
@@ -29,12 +42,7 @@ export function exportViewportPng(projectName: string): boolean {
   const dataUrl = captureHandler();
   if (!dataUrl) return false;
 
-  const anchor = document.createElement('a');
-  anchor.href = dataUrl;
-  anchor.download = `${sanitizeFilename(projectName)}-3d.png`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
+  downloadDataUrl(dataUrl, `${sanitizeFilename(projectName)}-3d.png`);
   return true;
 }
 
@@ -56,11 +64,6 @@ export async function exportPathTracedPng(
   const dataUrl = await pathTraceHandler(onProgress);
   if (!dataUrl) return false;
 
-  const anchor = document.createElement('a');
-  anchor.href = dataUrl;
-  anchor.download = `${sanitizeFilename(projectName)}-photo.png`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
+  downloadDataUrl(dataUrl, `${sanitizeFilename(projectName)}-photo.png`);
   return true;
 }
