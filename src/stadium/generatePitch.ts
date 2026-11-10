@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoundedBowlGeometry, sampleRoundedBowlRing } from './bowlRing';
 import { buildMovablePitch } from './generateMovablePitch';
 import { createGridironFurniture, drawGridironMarkings } from './gridiron';
-import { buildFootballGoal, buildPitchAdvertising } from './pitchside';
+import { buildFootballGoal, buildPitchAdvertising, fitBoardRing } from './pitchside';
 import {
   applyTurfCloseUpDetail,
   createGrassBladeNormalMap,
@@ -758,49 +758,6 @@ export function generatePitchGroup(
   const root = new THREE.Group();
   root.name = 'PitchAssembly';
 
-  // Exterior-Only Annular Ground Contact-Shadow Apron (strictly outside the stadium bowl, zero geometry over pitch!)
-  const aoCanvas = document.createElement('canvas');
-  aoCanvas.width = 256;
-  aoCanvas.height = 256;
-  const aoCtx = aoCanvas.getContext('2d')!;
-  aoCtx.clearRect(0, 0, 256, 256);
-  const aoGrad = aoCtx.createRadialGradient(128, 128, 58, 128, 128, 126);
-  aoGrad.addColorStop(0.0, 'rgba(2, 6, 23, 0)');
-  aoGrad.addColorStop(0.28, 'rgba(2, 6, 23, 0.36)');
-  aoGrad.addColorStop(0.68, 'rgba(2, 6, 23, 0.34)');
-  aoGrad.addColorStop(0.88, 'rgba(2, 6, 23, 0.12)');
-  aoGrad.addColorStop(1.0, 'rgba(2, 6, 23, 0)');
-  aoCtx.fillStyle = aoGrad;
-  aoCtx.fillRect(0, 0, 256, 256);
-  const aoTex = new THREE.CanvasTexture(aoCanvas);
-  const aoGeo = track
-    ? createHollowStadiumFrameGeometry(
-        340,
-        280,
-        track.straightHalfLength,
-        track.outerRadius + 12,
-        'normalized'
-      )
-    : createHollowHorizontalFrameGeometry(
-        300,
-        240,
-        totalLength + 28,
-        totalWidth + 28,
-        'normalized'
-      );
-  const aoMesh = new THREE.Mesh(
-    aoGeo,
-    new THREE.MeshBasicMaterial({
-      map: aoTex,
-      transparent: true,
-      depthWrite: false,
-      opacity: lighting === 'night' ? 0.55 : 0.42,
-    })
-  );
-  aoMesh.name = 'ExteriorContactShadow';
-  aoMesh.position.y = -0.025;
-  root.add(aoMesh);
-
   // Hollow Perimeter Technical Pit Apron & Optional Sunken Safety Moat (ZERO triangles underneath PitchTurf!)
   if (!track) {
     const pitApronMat = outfield
@@ -1087,15 +1044,24 @@ export function generatePitchGroup(
 
   // LED boards round the pitch (a gap for the dugouts), carpets beside the goals, TV cameras.
   if (pitch.adBoards) {
-    const sideOffset = track
-      ? Math.min(2.4, Math.max(1.15, track.innerRadius - pitch.width * 0.5 - 0.55))
-      : 2.8;
+    let hx = pitch.length / 2 + (track ? 2.6 : 3.2);
+    let hz = pitch.width / 2 + 2.8;
+    let cornerR = 2.6;
+    if (track) {
+      // Boards and their rear props stay clear of the kerb, on the straights and into the bends.
+      const kerbGap = 0.1;
+      const room = (x: number, z: number) => {
+        const along = Math.max(0, Math.abs(x) - track.straightHalfLength);
+        return track.innerRadius - Math.hypot(along, z) - kerbGap;
+      };
+      ({ hx, hz, cornerR } = fitBoardRing(hx, pitch.width / 2 + 2.4, 8.5, room, pitch.length / 2, pitch.width / 2, 0.3));
+    }
     root.add(
       buildPitchAdvertising(
         {
-          hx: pitch.length / 2 + (track ? 2.6 : 3.2),
-          hz: pitch.width / 2 + sideOffset,
-          cornerR: track ? 8.5 : 2.6,
+          hx,
+          hz,
+          cornerR,
           goalX: pitch.length / 2,
           dugoutGap: 23,
           carpets: !track,

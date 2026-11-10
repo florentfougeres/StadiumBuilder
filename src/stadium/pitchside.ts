@@ -225,6 +225,60 @@ const BOARD_DEPTH = 0.12;
 const MODULE_LEN = 1.0;
 const MODULE_GAP = 0.012;
 
+/** Where the rear prop of a board meets the ground, behind the face line (m). */
+const BOARD_PROP_FOOT = 0.4;
+/** How far a board reaches behind its face line: the rear prop's foot and its width. */
+export const BOARD_FOOTPRINT_M = BOARD_PROP_FOOT + 0.03;
+
+/**
+ * Fits a rounded-rectangle ring of boards (half extents `hx`, `hz`, corner radius `cornerR`)
+ * between the pitch and a boundary: `room(x, z)` is the free distance from a ground point to the
+ * boundary (negative beyond), and the ring keeps `pitchMargin` round the pitch, whose corner is at
+ * (`pitchX`, `pitchZ`). To follow a curved boundary (a running track's bends) the ring may move
+ * back behind the goals and draw in along the touchlines while its corners grow rounder; when
+ * nothing fits, the layout with the least overlap wins.
+ */
+export function fitBoardRing(
+  hx: number,
+  hz: number,
+  cornerR: number,
+  room: (x: number, z: number) => number,
+  pitchX: number,
+  pitchZ: number,
+  pitchMargin: number
+): { hx: number; hz: number; cornerR: number } {
+  // Smallest clearance of a layout: negative when the footprint crosses the boundary or the
+  // ring runs over the pitch.
+  const clearance = (end: number, side: number, r: number) => {
+    const cx = Math.max(0, pitchX - (end - r));
+    const cz = Math.max(0, pitchZ - (side - r));
+    let worst = Math.min(end - pitchX, side - pitchZ, r - Math.hypot(cx, cz)) - pitchMargin;
+    // The footprint's outline is the ring offset outward: same shape, every dimension + footprint.
+    const ox = end + BOARD_FOOTPRINT_M;
+    const oz = side + BOARD_FOOTPRINT_M;
+    const or = r + BOARD_FOOTPRINT_M;
+    for (let i = 0; i <= 32 && worst > -Infinity; i++) {
+      worst = Math.min(worst, room(((ox - or) * i) / 32, oz), room(ox, ((oz - or) * i) / 32));
+    }
+    for (let i = 0; i <= 24; i++) {
+      const a = ((Math.PI / 2) * i) / 24;
+      worst = Math.min(worst, room(ox - or + or * Math.cos(a), oz - or + or * Math.sin(a)));
+    }
+    return worst;
+  };
+  let best = { hx, hz, cornerR, score: -Infinity };
+  for (let end = hx; end <= hx + 4; end += 0.25) {
+    for (let side = hz; side > hz - 1.5; side -= 0.1) {
+      for (let r = cornerR; r <= Math.min(end, side) - 0.5; r += 0.5) {
+        const score = clearance(end, side, r);
+        if (score >= 0) return { hx: end, hz: side, cornerR: r };
+        if (score > best.score) best = { hx: end, hz: side, cornerR: r, score };
+      }
+    }
+  }
+  return { hx: best.hx, hz: best.hz, cornerR: best.cornerR };
+}
+
 /** A board module: the chord `a`→`b` of the ring, at distance `s` along it. */
 interface BoardModule {
   ax: number;
@@ -362,12 +416,12 @@ function buildBoardRing(modules: BoardModule[], ledMat: THREE.Material, bodyMat:
     ];
     for (const q of quads) pushQuad(bodyPos, bodyUv, q);
 
-    // Rear prop: from high on the back panel down to a foot 0.6 m behind.
+    // Rear prop: from high on the back panel down to a foot behind it.
     const mx = (lx + rx) / 2;
     const mz = (lz + rz) / 2;
     const dTop = BOARD_DEPTH + lean * 0.75;
     const pTop = new THREE.Vector3(mx - nx * dTop, top * 0.75, mz - nz * dTop);
-    const pFoot = new THREE.Vector3(mx - nx * 0.62, 0, mz - nz * 0.62);
+    const pFoot = new THREE.Vector3(mx - nx * BOARD_PROP_FOOT, 0, mz - nz * BOARD_PROP_FOOT);
     const dir = new THREE.Vector3().subVectors(pTop, pFoot);
     const leg = legGeo.clone().applyMatrix4(
       new THREE.Matrix4().compose(

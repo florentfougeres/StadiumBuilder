@@ -1140,6 +1140,8 @@ vec4 triplanarSample(sampler2D tex) {
  */
 function applyWorldTriplanarMapping<M extends THREE.MeshStandardMaterial>(material: M, tileM: number): M {
   const scale = 1 / tileM;
+  // Read by renderers that cannot run the injected shader (the path-traced export bakes UVs from it).
+  material.userData.worldTriplanarTileM = tileM;
   material.customProgramCacheKey = () => `world-triplanar-v1-${tileM}`;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.triplanarScale = { value: scale };
