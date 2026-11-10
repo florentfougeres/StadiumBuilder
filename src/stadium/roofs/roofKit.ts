@@ -338,10 +338,13 @@ function buildUndersideTruss(spokes: THREE.Vector3[][], closed: boolean): THREE.
 
 /**
  * Rainwater downpipes down every roof column: a slim pipe on the column's outer face (away from
- * the pitch), from its head to the ground, with a shoe at the foot. Columns are found by shape —
+ * the pitch), along the column from its head to its foot, with a shoe where the foot stands on the
+ * ground (a column standing on a stand crest drains into the building there). Columns are found by shape —
  * near-vertical cylinders at least 5 m tall and 14 cm thick — so every roof style that stands on
  * columns gets them, whichever builder made it.
  */
+const _UP = new THREE.Vector3(0, 1, 0);
+
 export function addColumnDownpipes(roof: THREE.Object3D): void {
   roof.updateMatrixWorld(true);
   const toRoot = roof.matrixWorld.clone().invert();
@@ -371,22 +374,25 @@ export function addColumnDownpipes(roof: THREE.Object3D): void {
     const r = new THREE.Vector3(Math.max(radiusTop, radiusBottom), 0, 0).applyMatrix4(m).sub(new THREE.Vector3().applyMatrix4(m)).length();
     const off = outward.multiplyScalar(r + 0.1);
     const top = hi.clone().add(off);
-    const foot = new THREE.Vector3(top.x, Math.min(lo.y, 0.3), top.z);
-    const h = top.y - foot.y;
+    const foot = lo.clone().add(off);
+    const axis = top.clone().sub(foot);
+    const h = axis.length();
     if (h < 3) return;
-    pipes.push(new THREE.Matrix4().compose(top.clone().lerp(foot, 0.5), new THREE.Quaternion(), new THREE.Vector3(1, h, 1)));
-    shoes.push(new THREE.Matrix4().makeTranslation(foot.x, foot.y + 0.12, foot.z));
+    const tilt = new THREE.Quaternion().setFromUnitVectors(_UP, axis.normalize());
+    pipes.push(new THREE.Matrix4().compose(top.clone().lerp(foot, 0.5), tilt, new THREE.Vector3(1, h, 1)));
+    if (foot.y < 1) shoes.push(new THREE.Matrix4().makeTranslation(foot.x, foot.y + 0.12, foot.z));
   });
   if (pipes.length === 0) return;
   const mat = new THREE.MeshStandardMaterial({ color: 0x6f767d, roughness: 0.45, metalness: 0.6 });
   const pipeMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 8), mat, pipes.length);
   pipes.forEach((p, i) => pipeMesh.setMatrixAt(i, p));
-  const shoeMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 0.24, 0.2), mat, shoes.length);
-  shoes.forEach((p, i) => shoeMesh.setMatrixAt(i, p));
-  for (const [mesh, name] of [
-    [pipeMesh, 'RoofDownpipes'],
-    [shoeMesh, 'RoofDownpipeShoes'],
-  ] as const) {
+  const meshes: [THREE.InstancedMesh, string][] = [[pipeMesh, 'RoofDownpipes']];
+  if (shoes.length > 0) {
+    const shoeMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 0.24, 0.2), mat, shoes.length);
+    shoes.forEach((p, i) => shoeMesh.setMatrixAt(i, p));
+    meshes.push([shoeMesh, 'RoofDownpipeShoes']);
+  }
+  for (const [mesh, name] of meshes) {
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
     mesh.castShadow = true;

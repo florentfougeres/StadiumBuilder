@@ -237,4 +237,15 @@ describe('box storeys per tier break', () => {
     expect(seats({ ...base, vipStoreysByBreak: [1, 2] })).toBeGreaterThan(seats({ ...base, vipStoreysByBreak: [1, 1] }));
     expect(() => generateStandsGroup({ ...doc, stands: { ...doc.stands, south: { ...base, vipStoreysByBreak: [1, 3] } } })).not.toThrow();
   });
+
+  it('leaves a break with 0 storeys as a plain break while the next one keeps its boxes', () => {
+    const doc = docOf('four_stands');
+    const base = { ...doc.stands.south, tiers: 3 as const, vipLoges: true };
+    const plain = computeStandSection({ ...base, vipLoges: false });
+    const mixed = computeStandSection({ ...base, vipStoreysByBreak: [0, 2] });
+    expect(mixed.breaks[0].hasVip).toBe(false);
+    expect(mixed.breaks[1].hasVip).toBe(true);
+    expect(mixed.breaks[0].topY - mixed.breaks[0].fromY).toBeCloseTo(plain.breaks[0].topY - plain.breaks[0].fromY, 3);
+    expect(() => generateStandsGroup({ ...doc, stands: { ...doc.stands, south: { ...base, vipStoreysByBreak: [0, 2] } } })).not.toThrow();
+  });
 });

@@ -64,8 +64,8 @@ export const VIP_STOREY_M = 3.2;
  * or glazed boxes (one storey, or a ring of up to three stacked storeys of suites).
  */
 export function tierBreakDims(hasVip: boolean, vipStoreys: number = 1): { recess: number; loggiaH: number; fasciaH: number } {
-  const storeys = Math.max(1, Math.min(3, Math.round(vipStoreys)));
-  return hasVip
+  const storeys = Math.max(0, Math.min(3, Math.round(vipStoreys)));
+  return hasVip && storeys > 0
     ? { recess: 1.45 + (storeys - 1) * 0.6, loggiaH: 1.95 + (storeys - 1) * VIP_STOREY_M, fasciaH: 0.9 }
     : { recess: 0.75, loggiaH: 0.95, fasciaH: 0.65 };
 }
@@ -121,12 +121,13 @@ export function resolveStandTiers(stand: StandConfig): ResolvedTierSpec[] {
 }
 
 /**
- * Storeys of boxes in the break below tier `breakIdx + 1`: its own setting, else the stand-wide
- * one (`1..3`).
+ * Storeys of boxes in the break below tier `breakIdx + 1`: its own setting (`0` for a plain break
+ * with no boxes), else the stand-wide one (`1..3`).
  */
 export function vipStoreysAtBreak(stand: StandConfig, breakIdx: number): number {
-  const n = stand.vipStoreysByBreak?.[breakIdx] ?? stand.vipStoreys ?? 1;
-  return Math.max(1, Math.min(3, Math.round(n)));
+  const own = stand.vipStoreysByBreak?.[breakIdx];
+  if (own !== undefined) return Math.max(0, Math.min(3, Math.round(own)));
+  return Math.max(1, Math.min(3, Math.round(stand.vipStoreys ?? 1)));
 }
 
 function resolveTierShapes(stand: StandConfig): Omit<ResolvedTierSpec, 'vipStoreys'>[] {
@@ -313,7 +314,7 @@ export function computeStandSection(stand: StandConfig): StandSection {
         frontD,
         topY: soffitY + fasciaH,
         shelteredRows: sheltered.length,
-        hasVip,
+        hasVip: hasVip && tier.vipStoreys > 0,
       });
       maxD = Math.max(maxD, recessD);
       curD = frontD;

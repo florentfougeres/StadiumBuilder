@@ -2322,13 +2322,10 @@ function buildCornerVirageQuadrant(
       const activeA = bIdx < standA.tiers - 1;
       const activeB = bIdx < standB.tiers - 1;
       const weight = (activeA ? 1 - w : 0) + (activeB ? w : 0);
-      const vipA = activeA && standA.vipLoges !== false;
-      const vipB = activeB && standB.vipLoges !== false;
-      const hasVip = vipA || vipB;
-      const dims = tierBreakDims(
-        hasVip,
-        Math.max(vipA ? tiersA[bIdx + 1]?.vipStoreys ?? 1 : 1, vipB ? tiersB[bIdx + 1]?.vipStoreys ?? 1 : 1)
-      );
+      const storeysA = activeA && standA.vipLoges !== false ? tiersA[bIdx + 1]?.vipStoreys ?? 1 : 0;
+      const storeysB = activeB && standB.vipLoges !== false ? tiersB[bIdx + 1]?.vipStoreys ?? 1 : 0;
+      const hasVip = storeysA > 0 || storeysB > 0;
+      const dims = tierBreakDims(hasVip, Math.max(storeysA, storeysB));
       const recessAdd = weight * dims.recess;
       const baseLoggiaH = weight * dims.loggiaH;
       // Same projection as each neighbouring stand, blended across the corner.

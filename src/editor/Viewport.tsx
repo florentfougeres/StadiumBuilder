@@ -449,6 +449,8 @@ export const Viewport: React.FC = () => {
     orbit.target.set(0, 6, 0);
     // The wheel is handled below: it flies toward the surface under the cursor instead of the orbit
     // target, so it never stalls at the target and the pivot follows what is being looked at.
+    // Touch has no wheel: the orbit's own pinch dolly is turned on only while fingers are down (see
+    // `onTouchPointerDown`), so the wheel and trackpad keep the handler below.
     orbit.enableZoom = false;
 
     // Keyboard flight, by physical key (`KeyboardEvent.code`) so it is the same on AZERTY and QWERTY:
@@ -939,6 +941,22 @@ export const Viewport: React.FC = () => {
       if (renderer.domElement.hasPointerCapture(e.pointerId)) renderer.domElement.releasePointerCapture(e.pointerId);
     };
 
+    /**
+     * Pinch on a touch screen: the orbit controls dolly with two fingers only while `enableZoom` is
+     * on, so it is on from the first finger down to the last one up. Capture phase, so it is set
+     * before the orbit controls read it on the second finger.
+     */
+    const touchPointers = new Set<number>();
+    const onTouchPointerDown = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch') return;
+      touchPointers.add(e.pointerId);
+      orbit.enableZoom = true;
+    };
+    const onTouchPointerEnd = (e: PointerEvent) => {
+      if (!touchPointers.delete(e.pointerId) || touchPointers.size > 0) return;
+      orbit.enableZoom = false;
+    };
+
     const _zoomPoint = new THREE.Vector3();
     const _zoomOffset = new THREE.Vector3();
     const _zoomForward = new THREE.Vector3();
@@ -1012,6 +1030,9 @@ export const Viewport: React.FC = () => {
     renderer.domElement.addEventListener('pointerup', onPointerUp);
     renderer.domElement.addEventListener('dblclick', onDoubleClick);
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
+    renderer.domElement.addEventListener('pointerdown', onTouchPointerDown, { capture: true });
+    renderer.domElement.addEventListener('pointerup', onTouchPointerEnd, { capture: true });
+    renderer.domElement.addEventListener('pointercancel', onTouchPointerEnd, { capture: true });
     window.addEventListener('keydown', onFlightKeyDown);
     window.addEventListener('keyup', onFlightKeyUp);
     window.addEventListener('blur', stopFlight);
@@ -1128,6 +1149,9 @@ export const Viewport: React.FC = () => {
       renderer.domElement.removeEventListener('pointermove', onLookPointerMove, { capture: true });
       renderer.domElement.removeEventListener('pointerup', onLookPointerUp, { capture: true });
       renderer.domElement.removeEventListener('pointercancel', onLookPointerUp, { capture: true });
+      renderer.domElement.removeEventListener('pointerdown', onTouchPointerDown, { capture: true });
+      renderer.domElement.removeEventListener('pointerup', onTouchPointerEnd, { capture: true });
+      renderer.domElement.removeEventListener('pointercancel', onTouchPointerEnd, { capture: true });
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);

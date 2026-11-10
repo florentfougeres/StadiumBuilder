@@ -1886,13 +1886,14 @@ const StandsPanel: React.FC = () => {
                   label={label}
                   size="sm"
                   disabled={off}
-                  value={tier.vipStoreys as 1 | 2 | 3}
+                  value={tier.vipStoreys as 0 | 1 | 2 | 3}
                   onChange={(n) => {
-                    const byBreak = resolvedTiers.slice(1).map((t) => t.vipStoreys as 1 | 2 | 3);
+                    const byBreak = resolvedTiers.slice(1).map((t) => t.vipStoreys as 0 | 1 | 2 | 3);
                     byBreak[b] = n;
                     updateStand(target, { vipStoreysByBreak: byBreak });
                   }}
                   options={[
+                    { id: 0, label: '0' },
                     { id: 1, label: '1' },
                     { id: 2, label: '2' },
                     { id: 3, label: '3' },
