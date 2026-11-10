@@ -8,6 +8,7 @@ import { CANOPY_ROOF_BUILDERS } from './roofs/canopyRoofs';
 import { CLOSED_ROOF_BUILDERS } from './roofs/closedRoofs';
 import { buildForecourtCanopy } from './roofs/forecourtCanopy';
 import { computeStadiumRingBounds } from './roofs/ringBounds';
+import { applyRoofRelief } from './roofs/roofRelief';
 import { RoofBuilder, addSlabDeckDetail, buildAnnularCanopyMesh, buildAnnularCatwalkFloodlights, buildCanopyMaterialBundle, createStrutBetween, hasRoofGantryLights } from './roofs/roofKit';
 import { SHELL_ROOF_BUILDERS } from './roofs/shellRoofs';
 import { buildContinuousColumnOrGoalpostRoof, buildSingleStandRoofGroup } from './roofs/standRoofs';
@@ -86,12 +87,37 @@ export function generateRoofGroup(
   maxAnisotropy: number = 4
 ): THREE.Group {
   const built = buildRoofAssembly(doc, crossSectionClip, maxAnisotropy);
+  if (isWholeRingRoof(doc)) applyRoofRelief(doc, built);
   const covered = doc.roof.coveredSides;
   const roof =
     !isContinuousBowlShape(doc.shape) || !covered || covered.length >= 4 ? built : clipRoofToSides(doc, built, covered);
   const forecourt = buildForecourtCanopy(doc, roof, maxAnisotropy);
   if (forecourt) roof.add(forecourt);
   return roof;
+}
+
+const SIDES: StandSide[] = ['north', 'south', 'east', 'west'];
+
+/** Separate stands with a roof style of their own: each stand is roofed apart. */
+function hasPerStandRoofOverrides(doc: StadiumDocument): boolean {
+  return (
+    !isContinuousBowlShape(doc.shape) &&
+    SIDES.some(
+      (s) =>
+        doc.stands[s].enabled &&
+        doc.stands[s].roofStyleOverride &&
+        doc.stands[s].roofStyleOverride !== 'inherit'
+    )
+  );
+}
+
+/**
+ * The roof is one piece around the whole ring, set over the tallest stand (so `roof.followStands`
+ * applies); otherwise each stand carries its own roof at its own height.
+ */
+export function isWholeRingRoof(doc: StadiumDocument): boolean {
+  if (doc.roof.style === 'none' || hasPerStandRoofOverrides(doc)) return false;
+  return Boolean(ARENA_ROOF_BUILDERS[doc.roof.style]) || isContinuousBowlShape(doc.shape);
 }
 
 function buildRoofAssembly(
@@ -102,15 +128,8 @@ function buildRoofAssembly(
   const root = new THREE.Group();
   root.name = 'RoofAssembly';
 
-  const sides: StandSide[] = ['north', 'south', 'east', 'west'];
-  const hasPerStandOverrides =
-    !isContinuousBowlShape(doc.shape) &&
-    sides.some(
-      (s) =>
-        doc.stands[s].enabled &&
-        doc.stands[s].roofStyleOverride &&
-        doc.stands[s].roofStyleOverride !== 'inherit'
-    );
+  const sides = SIDES;
+  const hasPerStandOverrides = hasPerStandRoofOverrides(doc);
 
   if (doc.roof.style === 'none' && !hasPerStandOverrides) {
     return root;

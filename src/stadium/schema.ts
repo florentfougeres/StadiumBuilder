@@ -470,6 +470,11 @@ export interface GlassWallConfig {
 export interface RoofConfig {
   style: RoofStyle;
   heightOffset: number;
+  /**
+   * Whole-arena roofs: share (`0..1`, default 0) of the way the roof drops from the tallest stand
+   * toward the crest of the stands below it, so it follows the bowl's relief instead of staying level.
+   */
+  followStands?: number;
   coverageRatio: number;
   opacity: number;
   /** Legacy open/closed flag, superseded by `retractable.openRatio` when that is set. */

@@ -403,7 +403,7 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
     'announces the capacity the 3D stands actually seat',
     () => {
       ensureCanvasMock();
-      expect(STADIUM_PRESETS.length).toBe(37);
+      expect(STADIUM_PRESETS.length).toBe(38);
       const off: string[] = [];
       for (const preset of STADIUM_PRESETS) {
         const doc = createPresetDocument(preset.id);

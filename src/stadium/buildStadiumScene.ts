@@ -23,6 +23,7 @@ import {
 import { ApronOutline, generatePitchGroup } from './generatePitch';
 import { generateRoofGroup } from './generateRoof';
 import { computeStadiumRingBounds } from './roofs/ringBounds';
+import { createRoofReliefField } from './roofs/roofRelief';
 import { generateSiteGroup, SiteFootprint } from './generateSite';
 import { generateStandsGroup } from './generateStand';
 import {
@@ -105,7 +106,11 @@ function applyScreenMount(doc: StadiumDocument, obj: PlacedObject, group: THREE.
     inner = Math.hypot(axis.x, axis.z);
     depth = bounds.standDepthAtNormal(axis.nx, axis.nz);
     crest = bounds.standHeightAtNormal(axis.nx, axis.nz);
-    roofEdgeY = bounds.maxStandH + Math.max(4, doc.roof.heightOffset) + 1.8;
+    roofEdgeY =
+      bounds.maxStandH +
+      Math.max(4, doc.roof.heightOffset) +
+      1.8 -
+      (createRoofReliefField(doc)?.dropAt(axis.x, axis.z) ?? 0);
   } else {
     const safePitch = clampPitchToTrack(doc.pitch);
     const metrics = calculateStandMetrics(doc, side);

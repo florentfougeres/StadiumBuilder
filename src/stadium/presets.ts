@@ -1984,6 +1984,37 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
       withMaterials(doc, { facadePattern: 'woven_basket', facade: 'woven_glassfibre_mesh', roof: 'ptfe_membrane' });
     }
   ),
+  // After Madrid's 2017 bowl grown from an athletics stand: the old arched main stand kept as the
+  // tallest side, lower new stands around, one cable-wheel membrane roof stepping down over them.
+  derivedPreset(
+    'bowl_bowstring_60k',
+    'stepped_cable_wheel_68k',
+    'Bol Asymétrique sous Roue de Câbles',
+    'Grande tribune cintrée conservée · tribunes plus basses · membrane PTFE qui suit leur relief',
+    'Bol Asymétrique Roue de Câbles',
+    null,
+    (doc) => {
+      doc.stands.south = {
+        ...doc.stands.south,
+        name: 'Tribune Principale Sud (cintrée, 3 étages)',
+        rows: 86,
+        tiers: 3,
+        slopeAngleDeg: 33,
+        crestProfile: 'arch_crest',
+      };
+      doc.stands.north = { ...doc.stands.north, name: 'Tribune Latérale Nord (2 étages)', rows: 64, tiers: 2 };
+      doc.stands.east = { ...doc.stands.east, name: 'Virage Est (2 étages)', rows: 60, tiers: 2 };
+      doc.stands.west = { ...doc.stands.west, name: 'Virage Ouest (2 étages)', rows: 60, tiers: 2 };
+      doc.roof = { ...doc.roof, style: 'bicycle_wheel', heightOffset: 5, coverageRatio: 1.08, opacity: 0.8, followStands: 1 };
+      doc.colors = { ...doc.colors, seatsPrimary: '#c8102e', seatsSecondary: '#f8fafc', roof: '#f8fafc', facade: '#cbd5e1' };
+      withMaterials(doc, {
+        roof: 'ptfe_membrane',
+        structure: 'white_steel',
+        facade: 'architectural_concrete',
+        envelopeStyle: 'exposed_structure',
+      });
+    }
+  ),
 ];
 
 /** A landmark object (lighthouse, galleon, footbridge…) standing on the site at `position`. */

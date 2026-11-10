@@ -73,6 +73,7 @@ import {
   TRACK_MAX_PITCH_WIDTH_M,
 } from '../stadium/schema';
 import { isIntegralShell, isMovableRoof, roofDefinition, ROOF_STYLES } from '../stadium/roofCatalog';
+import { isWholeRingRoof } from '../stadium/generateRoof';
 import { OFFERED_SHAPES, shapeDefinition } from '../stadium/shapeCatalog';
 import { ResolvedSeatTierStyle, resolveSeatTierStyle, SeatStyleScope, seatStyleAt } from '../stadium/seatPattern';
 import {
@@ -2336,6 +2337,17 @@ const RoofPanel: React.FC = () => {
             value={roof.heightOffset}
             display={`+${fr1(roof.heightOffset)} m`}
             onChange={(v) => updateRoof({ heightOffset: v })}
+          />
+          <SliderField
+            label="Suivre le relief des tribunes"
+            min={0}
+            max={1}
+            step={0.05}
+            disabled={!isWholeRingRoof(doc)}
+            value={roof.followStands ?? 0}
+            display={(roof.followStands ?? 0) > 0 ? `${Math.round((roof.followStands ?? 0) * 100)} %` : 'Toit à plat'}
+            scale={100}
+            onChange={(v) => updateRoof({ followStands: v })}
           />
           <SliderField
             label="Couverture des sièges"
