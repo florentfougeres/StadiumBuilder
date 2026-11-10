@@ -5,6 +5,7 @@ import {
   bowlSideWeights,
   computeRectangularCornerLayout,
   CornerQuadrantId,
+  bowlSweepSegments,
   getBowlArcRange,
   isOnRingCorner,
   RectangularCornerSpec,
@@ -3087,7 +3088,7 @@ function buildModernBowlSweep(
   const trackOffsets = getTrackRadialOffset(doc);
   const sunkenDepth = getEffectiveSunkenDepth(doc);
 
-  const segments = doc.shape === 'octagonal_arena' ? 160 : 144;
+  const segments = bowlSweepSegments(doc.shape);
   const profiles: Record<StandSide, StandProfile> = {
     east: buildStandProfilePoints(doc.stands.east, isHollow),
     south: buildStandProfilePoints(doc.stands.south, isHollow),

@@ -572,6 +572,11 @@ const ARC_STANDS_SIDE_BOW = 0.09;
 const ARC_STANDS_END_BOW = 0.26;
 
 /** Smallest gap between the pitch edge and the front of the stands when there is no track (m). */
+/** Slices the bowl sweep lays around a full ring; a cut through the bowl drops whole slices. */
+export function bowlSweepSegments(shape: StadiumShape): number {
+  return shape === 'octagonal_arena' ? 160 : 144;
+}
+
 export const MIN_PITCH_SETBACK = 4.5;
 
 /** Half-length and half-width (m) of a cricket ground's outfield, inside its boundary rope. */

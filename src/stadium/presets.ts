@@ -1857,7 +1857,145 @@ const REFERENCE_PRESETS: PresetDefinition[] = [
       withMaterials(doc, { pitchTurf: 'pro_synthetic', facade: 'glass_curtain' });
     }
   ),
+  derivedPreset(
+    'bowl_bowstring_60k',
+    'petal_iris_45k',
+    'Arène à Toit Iris',
+    'Pétales qui s’ouvrent en diaphragme · façade média lumineuse · écran en rive de toit',
+    'Arène Iris',
+    45000,
+    (doc) => {
+      doc.roof = { ...doc.roof, style: 'petal_iris', retractable: { openRatio: 0.55 } };
+      withMaterials(doc, { envelopeStyle: 'media_mesh', facadeGlowHex: '#7c3aed' });
+      doc.objects = [
+        {
+          id: 'obj-halo-iris',
+          type: 'halo_screen',
+          name: 'Écran en rive de toit',
+          position: [0, 30, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          haloShape: 'roof_edge',
+          haloBandHeight: 5,
+        },
+      ];
+    }
+  ),
+  derivedPreset(
+    'bowl_bowstring_60k',
+    'giant_arch_90k',
+    'Grand Stade sous Arche Géante',
+    'Arche géante portant le toit · panneaux mobiles qui glissent pour ombrer la pelouse',
+    'Stade de l’Arche',
+    90000,
+    (doc) => {
+      doc.roof = { ...doc.roof, style: 'giant_arch', archMovablePanels: true, retractable: { openRatio: 0.5 } };
+      withMaterials(doc, { facade: 'glass_curtain', roof: 'polycarbonate_glass' });
+    }
+  ),
+  derivedPreset(
+    'bowl_bowstring_60k',
+    'broken_ring_33k',
+    'Anneau Brisé à Pétales',
+    'Anneau inférieur ouvert sur le parvis · anneau supérieur découpé en pétales · couronne plissée',
+    'Anneau Brisé',
+    null,
+    (doc) => {
+      doc.ringBreach = { side: 'north', width: 40 };
+      doc.upperRingGaps = { count: 16, width: 5 };
+      doc.roof = { ...doc.roof, style: 'pleated_crown' };
+      withMaterials(doc, { facade: 'weathered_corten', envelopeStyle: 'exposed_structure' });
+    }
+  ),
+  derivedPreset(
+    'bowl_bowstring_60k',
+    'desert_mashrabiya_44k',
+    'Stade Moucharabieh du Désert',
+    'Peau en tente percée d’un moucharabieh · voiles tendues sur mâts · douves',
+    'Stade du Désert',
+    44000,
+    (doc) => {
+      doc.roof = { ...doc.roof, style: 'mast_sails' };
+      withMaterials(doc, {
+        envelopeStyle: 'enveloping_skin',
+        envelopeProfile: 'tent',
+        facade: 'limestone_travertine',
+        facadePattern: 'mashrabiya',
+        facadeDepth: 1.4,
+      });
+    }
+  ),
+  derivedPreset(
+    'bowl_bowstring_60k',
+    'harbour_prow_32k',
+    'Stade du Port en Proue',
+    'Coque en proue face à l’eau · quai, passerelle, phare et galion',
+    'Stade du Port',
+    32000,
+    (doc) => {
+      doc.roof = { ...doc.roof, style: 'prow_shell' };
+      withMaterials(doc, { facade: 'white_composite_panels' });
+      doc.site = { ...doc.site, setting: 'esplanade', water: 'waterfront' };
+      doc.objects = [
+        landmark('obj-lighthouse-port', 'lighthouse', 'Phare du port', [175, 0, -95]),
+        landmark('obj-galleon-port', 'galleon', 'Galion amarré', [200, 0, 40], Math.PI / 2),
+        landmark('obj-bridge-port', 'footbridge', 'Passerelle du quai', [0, 0, 175]),
+      ];
+    }
+  ),
+  derivedPreset(
+    'traditional_four_stands_42k',
+    'heritage_gable_24k',
+    'Vieux Stade à Pignons',
+    'Toits à pignon d’époque · escaliers extérieurs · balcons en treillis croisé · brique',
+    'Vieux Stade à Pignons',
+    24000,
+    (doc) => {
+      doc.roof = { ...doc.roof, style: 'historic_gable' };
+      withMaterials(doc, { facade: 'heritage_brick' });
+      for (const side of ['east', 'west'] as const) {
+        doc.stands[side] = { ...doc.stands[side], envelopeStyleOverride: 'external_stairs', fasciaStyle: 'criss_cross' };
+      }
+    }
+  ),
+  derivedPreset(
+    'bowl_bowstring_60k',
+    'saddle_vault_50k',
+    'Cuvette en Selle et Toit Végétalisé',
+    'Gradins en selle de cheval · voûte en selle plantée · façade en strates horizontales',
+    'Stade en Selle',
+    50000,
+    (doc) => {
+      doc.shape = 'saddle_bowl';
+      doc.roof = { ...doc.roof, style: 'saddle_vault' };
+      withMaterials(doc, { envelopeStyle: 'horizontal_strata', roof: 'green_roof', facade: 'limestone_travertine' });
+    }
+  ),
+  derivedPreset(
+    'bowl_bowstring_60k',
+    'tilted_cable_dome_40k',
+    'Cuvette Inclinée sous Dôme à Câbles',
+    'Cuvette basculée vers la tribune d’honneur · dôme à câbles · façade tressée',
+    'Dôme à Câbles',
+    40000,
+    (doc) => {
+      doc.shape = 'tilted_bowl';
+      doc.roof = { ...doc.roof, style: 'cable_dome' };
+      withMaterials(doc, { facadePattern: 'woven_basket', facade: 'woven_glassfibre_mesh', roof: 'ptfe_membrane' });
+    }
+  ),
 ];
+
+/** A landmark object (lighthouse, galleon, footbridge…) standing on the site at `position`. */
+function landmark(
+  id: string,
+  type: 'lighthouse' | 'galleon' | 'footbridge' | 'tower',
+  name: string,
+  position: [number, number, number],
+  yaw = 0
+): StadiumDocument['objects'][number] {
+  return { id, type, name, position, rotation: [0, yaw, 0], scale: [1, 1, 1] };
+}
 
 export const STADIUM_PRESETS: PresetDefinition[] = [...BASE_PRESETS, ...REFERENCE_PRESETS];
 
@@ -2012,6 +2150,106 @@ const PRESET_HIGHLIGHTS: Record<string, (doc: StadiumDocument) => void> = {
     doc.roof.enclosureGlazed = true;
     doc.pitch.hasMoat = true;
     doc.pitch.adBoardTheme = 'equipe_de_france';
+  },
+  // Reference typologies: each also shows a mood or an option the base templates leave out.
+  sliding_roof_arena_50k: (doc) => {
+    doc.lighting = 'night';
+    withMaterials(doc, { crowd: true, crowdAttendance: 0.9, facadeGlowHex: '#0ea5e9' });
+    doc.pitch.adBoardTheme = 'mls_usa';
+  },
+  stayed_masts_80k: (doc) => {
+    doc.site = { ...doc.site, setting: 'park', water: 'moat' };
+    withMaterials(doc, { crowd: true, crowdAttendance: 0.8 });
+    doc.pitch.adBoardTheme = 'world_cup';
+  },
+  concrete_portals_48k: (doc) => {
+    doc.stands.west = { ...doc.stands.west, pressBox: true, pressBoxTier: 1, pressBoxRows: 5, pressBoxLength: 40, dugouts: true };
+    doc.seatTierStyles = [{ pattern: 'gradient', color: '#1e3a8a', accent: '#60a5fa' }];
+    doc.lighting = 'dusk';
+  },
+  timber_lattice_36k: (doc) => {
+    doc.site = { ...doc.site, setting: 'park', mound: 4 };
+    doc.lighting = 'dusk';
+  },
+  lace_canopy_20k: (doc) => {
+    doc.lighting = 'night';
+    withMaterials(doc, { facadeGlowHex: '#f59e0b', facadeBaseGlow: true });
+    doc.site = { ...doc.site, setting: 'esplanade', water: 'waterfront' };
+  },
+  corner_girders_38k: (doc) => {
+    doc.stands.north = { ...doc.stands.north, tifo: true, banners: true, seatStyle: { pattern: 'lettering', text: 'RC' } };
+    withMaterials(doc, { crowd: true, crowdAttendance: 0.95 });
+    doc.lighting = 'night';
+  },
+  space_frame_crown_67k: (doc) => {
+    doc.roof.skylightMode = 'pitch_ring';
+    doc.roof.skylightRatio = 0.3;
+    withMaterials(doc, { facade: 'perforated_red_metal', facadePattern: 'honeycomb' });
+  },
+  counterweight_trusses_59k: (doc) => {
+    withMaterials(doc, { roof: 'solar_pv_panels' });
+    doc.roof.forecourtCanopy = { side: 'south', depth: 20 };
+    doc.site = { ...doc.site, setting: 'esplanade', entrances: true };
+  },
+  column_forest_42k: (doc) => {
+    withMaterials(doc, { colonnadeShape: 'palm' });
+    doc.lighting = 'dusk';
+  },
+  closed_scales_arena_30k: (doc) => {
+    doc.lighting = 'night';
+    withMaterials(doc, { crowd: true, crowdAttendance: 0.9 });
+    doc.stands.south = { ...doc.stands.south, vipLoges: true, vipStoreys: 3 };
+  },
+  inclined_mast_56k: (doc) => {
+    doc.site = { ...doc.site, setting: 'park' };
+    doc.lighting = 'night';
+    withMaterials(doc, { crowd: true, crowdAttendance: 0.85 });
+  },
+  stacking_roof_50k: (doc) => {
+    for (const side of ALL_SIDES) {
+      doc.stands[side] = { ...doc.stands[side], vomitoryLevels: 2, vomitoryStaggered: true };
+    }
+    withMaterials(doc, { facadePattern: 'voronoi', facade: 'black_zinc_cladding' });
+  },
+  gridiron_arches_70k: (doc) => {
+    doc.lighting = 'night';
+    withMaterials(doc, { crowd: true, crowdAttendance: 0.92 });
+    doc.site = { ...doc.site, setting: 'parking' };
+  },
+  petal_iris_45k: (doc) => {
+    doc.lighting = 'night';
+    withMaterials(doc, { crowd: true, crowdAttendance: 0.9 });
+    doc.pitch.adBoardTheme = 'champions_league';
+  },
+  giant_arch_90k: (doc) => {
+    doc.lighting = 'dusk';
+    withMaterials(doc, { crowd: true, crowdAttendance: 0.95 });
+    doc.site = { ...doc.site, setting: 'esplanade', entrances: true };
+    doc.pitch.adBoardTheme = 'premier_league';
+  },
+  broken_ring_33k: (doc) => {
+    doc.site = { ...doc.site, setting: 'esplanade', entrances: true };
+    doc.stands.north = { ...doc.stands.north, tifo: true, banners: true };
+    withMaterials(doc, { crowd: true, crowdAttendance: 0.9 });
+  },
+  desert_mashrabiya_44k: (doc) => {
+    doc.lighting = 'dusk';
+    doc.site = { ...doc.site, setting: 'esplanade', water: 'moat' };
+  },
+  harbour_prow_32k: (doc) => {
+    doc.lighting = 'dusk';
+  },
+  heritage_gable_24k: (doc) => {
+    doc.site = { ...doc.site, setting: 'urban', perimeterFence: true };
+    doc.pitch.grassPattern = 'checker';
+    doc.stands.south = { ...doc.stands.south, pressGantry: true, dugouts: true };
+  },
+  saddle_vault_50k: (doc) => {
+    doc.site = { ...doc.site, setting: 'park' };
+  },
+  tilted_cable_dome_40k: (doc) => {
+    doc.lighting = 'night';
+    withMaterials(doc, { facadeGlowHex: '#10b981' });
   },
 };
 

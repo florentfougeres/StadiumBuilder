@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { buildStadiumSceneGraph } from '../buildStadiumScene';
+import { calculateStadiumMetrics } from '../capacity';
 import { createPresetDocument } from '../presets';
 import { mosaicColourIndex } from '../parametricFacade';
 import { resolveSeats3d, resolveSuspendedMasts, type StadiumDocument } from '../schema';
@@ -110,5 +111,18 @@ describe('features from the European stadium analysis', () => {
     delete doc.ringBreach;
     doc.upperRingGaps = { count: 26, width: 6 };
     expect(triangles(scene(doc))).not.toBe(whole);
+  });
+
+  it('counts the seats a ring breach and petal gaps take away', () => {
+    const doc = createPresetDocument('bowl_bowstring_60k');
+    const whole = calculateStadiumMetrics(doc);
+    doc.ringBreach = { side: 'west', width: 30 };
+    const breached = calculateStadiumMetrics(doc);
+    expect(breached.totalCapacity).toBeLessThan(whole.totalCapacity);
+    // Only the breached stand loses seats.
+    expect(breached.stands.east.capacity).toBe(whole.stands.east.capacity);
+    delete doc.ringBreach;
+    doc.upperRingGaps = { count: 26, width: 6 };
+    expect(calculateStadiumMetrics(doc).totalCapacity).toBeLessThan(whole.totalCapacity * 0.9);
   });
 });

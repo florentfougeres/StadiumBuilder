@@ -1,4 +1,5 @@
 import {
+  bowlSweepSegments,
   buildShapeBowlRing,
   computeRectangularCornerLayout,
   RectangularCornerLayout,
@@ -13,7 +14,9 @@ import {
   isContinuousBowlShape,
   resolveAllCorners,
   resolveFloodlightRig,
+  resolveRingBreach,
   resolveStandVomitories,
+  resolveUpperRingGaps,
   vomitoryLevelsOfTier,
   RoofStyle,
   SeatingType,
@@ -376,6 +379,16 @@ export function calculateStandMetrics(
 
   let totalRowSeats = 0;
 
+  // A ring breach cuts every row of its stand over its width; petal gaps cut the upper tiers all
+  // round. Both are laid out along the ring's front perimeter, as in the 3D bowl sweep.
+  const ringPerimeter = bowlRing?.perimeter ?? 0;
+  // The sweep drops every quad touching a slice inside a cut, so each cut runs one slice wider.
+  const sliceStep = ringPerimeter / bowlSweepSegments(doc.shape);
+  const breach = ringPerimeter > 0 ? resolveRingBreach(doc) : null;
+  const breachLen = breach?.side === side ? breach.width + sliceStep : 0;
+  const petals = ringPerimeter > 0 ? resolveUpperRingGaps(doc) : null;
+  const petalShare = petals ? Math.min(1, (petals.count * (petals.width + sliceStep)) / ringPerimeter) : 0;
+
   for (const row of section.rows) {
     // Seats sit just past the middle of their tread, as in the 3D build.
     const curOutwardD = row.d + stand.rowDepth * 0.52;
@@ -389,7 +402,8 @@ export function calculateStandMetrics(
       straightFrontSpan +
       cornerQuadrants * (innerCornerArcPerQuadrant + cornerDelta);
 
-    const netSeatLen = Math.max(0, (rowArcSpan - totalAisleWidth) * 0.975);
+    const keptSpan = (rowArcSpan - breachLen) * (row.tierIdx > 0 ? 1 - petalShare : 1);
+    const netSeatLen = Math.max(0, (keptSpan - totalAisleWidth) * 0.975);
     const baseRowCount = Math.floor(netSeatLen / safeSeatWidth);
 
     const standingDensityFactor =
