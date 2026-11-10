@@ -82,6 +82,7 @@ import { buildStandEnvelope, facadeGradeY, hasOwnFacade, isHollowStand, resolveS
 import { splitRail } from './envelopes/rail';
 import { CORNER_STRUCTURES } from './corners';
 import { createStrut, ignoreRaycasts, setFarDetail } from './meshKit';
+import { buildStandDetails } from './standDetails';
 import {
   computeStandSection,
   StandSection,
@@ -491,6 +492,55 @@ function buildStraightTelescopicModule(
  * Builds a recessed 3D concourse vomitory tunnel fitting cleanly inside a physically carved
  * terrace opening (`[0 .. openDepth]` in local +Z, `[0 .. openRise]` in local +Y).
  */
+/** Block numbers over the vomitories: 128 plates in one atlas, numbered 101, 102… in build order. */
+const VOM_SIGN_COLS = 8;
+const VOM_SIGN_ROWS = 16;
+let vomitorySigns: { mat: THREE.MeshStandardMaterial; next: number } | null = null;
+
+/** Starts each stadium build's numbering at 101 with a fresh atlas (freed with the build). */
+function resetVomitorySigns(): void {
+  vomitorySigns = null;
+}
+
+/** A sign plate (1 x 1, facing -z) showing the next block number. */
+function nextVomitorySign(): THREE.Mesh {
+  if (!vomitorySigns) {
+    const cw = 64;
+    const ch = 32;
+    const canvas = document.createElement('canvas');
+    canvas.width = cw * VOM_SIGN_COLS;
+    canvas.height = ch * VOM_SIGN_ROWS;
+    const ctx = canvas.getContext('2d')!;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 20px Arial, Helvetica, sans-serif';
+    for (let i = 0; i < VOM_SIGN_COLS * VOM_SIGN_ROWS; i++) {
+      const x = (i % VOM_SIGN_COLS) * cw;
+      const y = Math.floor(i / VOM_SIGN_COLS) * ch;
+      ctx.fillStyle = '#1d2a48';
+      ctx.fillRect(x, y, cw, ch);
+      ctx.fillStyle = '#f2f4f7';
+      ctx.fillRect(x + 2, y + 2, cw - 4, 2);
+      ctx.fillText(String(101 + i), x + cw / 2, y + ch / 2 + 2);
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    vomitorySigns = { mat: new THREE.MeshStandardMaterial({ map: tex, roughness: 0.45, metalness: 0.1 }), next: 0 };
+  }
+  const cell = vomitorySigns.next++ % (VOM_SIGN_COLS * VOM_SIGN_ROWS);
+  const col = cell % VOM_SIGN_COLS;
+  const row = Math.floor(cell / VOM_SIGN_COLS);
+  const geo = new THREE.PlaneGeometry(1, 1).rotateY(Math.PI);
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, (col + uv.getX(i)) / VOM_SIGN_COLS, 1 - (row + 1 - uv.getY(i)) / VOM_SIGN_ROWS);
+  }
+  const sign = new THREE.Mesh(geo, vomitorySigns.mat);
+  sign.name = 'VomitoryBlockSign';
+  return sign;
+}
+
 function createCarvedVomitoryTunnel(
   width: number,
   openDepth: number,
@@ -560,6 +610,27 @@ function createCarvedVomitoryTunnel(
   );
   darkThroat.position.set(0, throatH * 0.5, safeD + 0.08);
   unit.add(darkThroat);
+
+  // Block number on the back wall of the opening, read from the pitch and the rows below.
+  const sign = nextVomitorySign();
+  sign.scale.set(Math.min(1.1, safeW * 0.55), 0.4, 1);
+  sign.position.set(0, throatH - 0.34, safeD - 0.38);
+  unit.add(sign);
+
+  // Steel gates folded back against both cheeks, and the threshold strip at the landing's edge.
+  const gateH = throatH * 0.92;
+  const gateW = (safeW - cheekThick * 2) * 0.45;
+  for (const side of [-1, 1]) {
+    const gate = new THREE.Mesh(new THREE.BoxGeometry(0.05, gateH, gateW), railMat);
+    gate.position.set(side * (safeW * 0.5 - cheekThick - 0.06), gateH * 0.5 + 0.02, safeD - 0.4 - gateW * 0.5);
+    gate.castShadow = true;
+    unit.add(gate);
+    for (let k = 1; k < 3; k++) {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.04, gateW), railMat);
+      bar.position.set(gate.position.x, (gateH * k) / 3, gate.position.z);
+      unit.add(bar);
+    }
+  }
 
   if (isNight) {
     const warmCeilingMat = new THREE.MeshBasicMaterial({
@@ -797,6 +868,20 @@ function buildStraightStandMesh(
     if (desks) group.add(desks);
   }
 
+  const details = buildStandDetails({
+    ringCount: sliceRingCount,
+    activeSegments: sliceActiveSegs,
+    closed: false,
+    profilePtsPerSlice,
+    sampleWorldPoint: (s, radD, py) => [sliceXs[s], py, radD],
+    isSeatSegmentMask,
+    isHoleQuad,
+    aisleCount: stand.aisleCount,
+    aisleWidth: stand.aisleWidth,
+    lit: doc.lighting !== 'day',
+  });
+  if (details) group.add(details);
+
   if (seats3d && stand.seatingType !== 'safe_standing') {
     const standPainter = createStandSeatPainter(doc, stand);
     const seats = buildSweepSeatInstances({
@@ -978,56 +1063,11 @@ function buildStraightStandMesh(
 
   const dummy = new THREE.Object3D();
 
-  // 5b. 3D Stepped Radial Stair Flights + Yellow Safety Nosings + Central Handrails along aisles
+  // 5b. Central handrails along aisles (the stair steps themselves come from standDetails).
   if (stand.aisleCount > 0 && rowPositions.length > 0) {
-    const stairStepMatrices: THREE.Matrix4[] = [];
-    const nosingMatrices: THREE.Matrix4[] = [];
-    const stairW = Math.max(0.85, stand.aisleWidth * 0.84);
-    const halfStepD = stand.rowDepth * 0.48;
-
     for (let a = 0; a < stand.aisleCount; a++) {
       // Match buildSweepSeatInstances X coordinates (`s=0` is `+span/2`, `s=end` is `-span/2`)
       const ax = spanLength * 0.5 - ((a + 0.5) / stand.aisleCount) * spanLength;
-
-      for (const rp of rowPositions) {
-        if (stand.id === 'south' && rp.tierIdx === 0 && Math.abs(ax) < 4.2 && rp.y < stand.elevationStart + 2.8) {
-          continue;
-        }
-        const inCarvedVom = carvedZones.some(
-          (cz) =>
-            cz.tierIdx === rp.tierIdx &&
-            ax > cz.xMin - stairW * 0.45 &&
-            ax < cz.xMax + stairW * 0.45 &&
-            cz.segSet.has(rp.treadSegIdx)
-        );
-        if (inCarvedVom) continue;
-
-        const halfRise = rp.riser * 0.5;
-        const rowFrontZ = rp.d - stand.rowDepth * 0.52;
-
-        // Intermediate half-step block creating real 2-riser-per-row stair steps
-        dummy.position.set(
-          ax,
-          rp.y + halfRise * 0.5,
-          rowFrontZ + stand.rowDepth * 0.74
-        );
-        dummy.rotation.set(0, 0, 0);
-        dummy.scale.set(stairW, Math.max(0.08, halfRise), halfStepD);
-        dummy.updateMatrix();
-        stairStepMatrices.push(dummy.matrix.clone());
-
-        // High-visibility safety nosing on both stair steps
-        for (const [ny, nz] of [
-          [rp.y + 0.018, rowFrontZ + 0.05],
-          [rp.y + halfRise + 0.018, rowFrontZ + stand.rowDepth * 0.52],
-        ]) {
-          dummy.position.set(ax, ny, nz);
-          dummy.rotation.set(0, 0, 0);
-          dummy.scale.set(stairW * 0.94, 0.032, 0.065);
-          dummy.updateMatrix();
-          nosingMatrices.push(dummy.matrix.clone());
-        }
-      }
 
       // Central brushed-steel stair handrail per run of rows: stopped at each cross aisle and
       // around any carved vomitory.
@@ -1067,42 +1107,6 @@ function buildStraightStandMesh(
         }
         if (band.dEnd - d > 1.2) rail(d + 0.25, y, band.dEnd - 0.25, band.yEnd);
       }
-    }
-
-    if (stairStepMatrices.length > 0) {
-      const stepGeom = new THREE.BoxGeometry(1, 1, 1);
-      const stepMesh = new THREE.InstancedMesh(
-        stepGeom,
-        vomPortalMat,
-        stairStepMatrices.length
-      );
-      stepMesh.name = 'RadialStairSteps';
-      for (let i = 0; i < stairStepMatrices.length; i++) {
-        stepMesh.setMatrixAt(i, stairStepMatrices[i]);
-      }
-      stepMesh.instanceMatrix.needsUpdate = true;
-      stepMesh.receiveShadow = true;
-      group.add(stepMesh);
-    }
-
-    if (nosingMatrices.length > 0) {
-      const nosingMat = new THREE.MeshStandardMaterial({
-        color: 0xeab308,
-        roughness: 0.52,
-        metalness: 0.08,
-      });
-      const nosingGeom = new THREE.BoxGeometry(1, 1, 1);
-      const nosingMesh = new THREE.InstancedMesh(
-        nosingGeom,
-        nosingMat,
-        nosingMatrices.length
-      );
-      nosingMesh.name = 'RadialStairNosings';
-      for (let i = 0; i < nosingMatrices.length; i++) {
-        nosingMesh.setMatrixAt(i, nosingMatrices[i]);
-      }
-      nosingMesh.instanceMatrix.needsUpdate = true;
-      group.add(nosingMesh);
     }
   }
 
@@ -1189,28 +1193,6 @@ function buildStraightStandMesh(
         if (glazing) group.add(glazing);
       }
 
-      // Structural tapered cantilever soffit beams underneath deep cantilevered upper tiers
-      if (bal.overhangSpan > 1.5) {
-        const bracketCount = Math.max(4, Math.floor(spanLength / 9.5));
-        for (let b = 0; b <= bracketCount; b++) {
-          const bx = -spanLength * 0.47 + (b / bracketCount) * (spanLength * 0.94);
-          group.add(
-            createStrut(
-              new THREE.Vector3(
-                bx,
-                bal.soffitY -
-                  Math.max(0.15, Math.min(1.35, bal.overhangSpan * 0.22, bal.soffitY - bal.clearY)),
-                bal.recessD - 0.15
-              ),
-              new THREE.Vector3(bx, bal.soffitY - 0.06, bal.d + 0.22),
-              0.11,
-              0.24,
-              structureMat,
-              4
-            )
-          );
-        }
-      }
     }
   }
 
@@ -2564,6 +2546,23 @@ function buildCornerVirageQuadrant(
     group.add(cap);
   }
 
+  const cornerDetails = buildStandDetails({
+    ringCount: segs + 1,
+    activeSegments: segs,
+    closed: false,
+    profilePtsPerSlice,
+    sampleWorldPoint: (s, radD, py) => {
+      const pt = sampleCornerQuadrantPoint(corner, s / segs, radD);
+      return [pt.x, py, pt.z];
+    },
+    isSeatSegmentMask: isSeatMask,
+    isHoleQuad: isCornerHole,
+    aisleCount: 2,
+    aisleWidth: (standA.aisleWidth + standB.aisleWidth) * 0.5,
+    lit: doc.lighting !== 'day',
+  });
+  if (cornerDetails) group.add(cornerDetails);
+
   if (cornerSeats3d) {
     const painterA = createStandSeatPainter(doc, standA, { lettering: false });
     const painterB = createStandSeatPainter(doc, standB, { lettering: false });
@@ -3779,6 +3778,23 @@ function buildModernBowlSweep(
   bowlMesh.receiveShadow = true;
   group.add(bowlMesh);
 
+  const bowlDetails = buildStandDetails({
+    ringCount,
+    activeSegments,
+    closed,
+    profilePtsPerSlice,
+    sampleWorldPoint: (s, radD, py) => {
+      const pt = sampleRoundedBowlRing(bowlRing, tAtSlice(s), radD);
+      return [pt.x, py, pt.z];
+    },
+    isSeatSegmentMask,
+    isHoleQuad: isBowlQuadHole,
+    aisleCount: Math.max(8, doc.stands.south.aisleCount * 4),
+    aisleWidth: doc.stands.south.aisleWidth,
+    lit: doc.lighting !== 'day',
+  });
+  if (bowlDetails) group.add(bowlDetails);
+
   if (bowlSeats3d) {
     const refStand = doc.stands.south;
     // Quarters of the ring from t = 0: east, south, west, north.
@@ -4346,6 +4362,7 @@ export function generateStandsGroup(
 ): THREE.Group {
   const root = new THREE.Group();
   root.name = 'StandsAssembly';
+  resetVomitorySigns();
 
   const mats = resolveStadiumMaterials(doc);
   const concreteMat = createConcreteBowlMaterial(maxAnisotropy);

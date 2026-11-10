@@ -156,6 +156,37 @@ function buildCanopyDetail(
     fascia((spoke) => spoke[spoke.length - 1], 0.9)
   );
 
+  // Box gutter (chéneau) behind the rear fascia: an open channel the deck drains into, whose
+  // outlets feed the downpipes on the columns (see `addColumnDownpipes`).
+  {
+    const gutterMat = new THREE.MeshStandardMaterial({ color: 0x8b9298, roughness: 0.45, metalness: 0.6, side: THREE.DoubleSide });
+    const pos: number[] = [];
+    const idx: number[] = [];
+    const out = new THREE.Vector3();
+    for (const spoke of spokes) {
+      const p = spoke[spoke.length - 1];
+      // Outward: from the previous point of the spoke to its rear end, level.
+      out.subVectors(p, spoke[spoke.length - 2]).setY(0).normalize();
+      const o = p.clone().addScaledVector(out, 0.55);
+      const i = p.clone().addScaledVector(out, 0.05);
+      // Profile: inner lip, inner bottom, outer bottom, outer lip.
+      pos.push(i.x, p.y - 0.1, i.z, i.x, p.y - 0.55, i.z, o.x, p.y - 0.55, o.z, o.x, p.y - 0.05, o.z);
+    }
+    for (let k = 0; k < segs; k++) {
+      const a = k * 4;
+      const b = ((k + 1) % count) * 4;
+      for (let f = 0; f < 3; f++) idx.push(a + f, b + f, a + f + 1, b + f, b + f + 1, a + f + 1);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const gutter = new THREE.Mesh(geo, gutterMat);
+    gutter.name = 'RoofGutter';
+    gutter.castShadow = true;
+    group.add(gutter);
+  }
+
   // Seam ribs: a small triangular ridge along every n-th spoke, n chosen for the target spacing.
   let frontLength = 0;
   for (let i = 1; i < count; i++) frontLength += spokes[i][0].distanceTo(spokes[i - 1][0]);
@@ -254,6 +285,23 @@ function buildUndersideTruss(spokes: THREE.Vector3[][], closed: boolean): THREE.
   const bottom = (i: number, k: number) => spokes[i % count][k].clone().add(down);
   const members: [THREE.Vector3, THREE.Vector3, number][] = [];
   const spans = closed ? nodes.length : nodes.length - 1;
+  // Purlins: light members straight under the deck, spoke to spoke, at every depth point and
+  // halfway between them, carrying the sheeting onto the trusses.
+  const purlinDrop = new THREE.Vector3(0, -0.14, 0);
+  for (let i = 0; i < segs; i++) {
+    const a = spokes[i];
+    const b = spokes[(i + 1) % count];
+    for (let k = 0; k < a.length; k++) {
+      members.push([a[k].clone().add(purlinDrop), b[k].clone().add(purlinDrop), 0.05]);
+      if (k + 1 < a.length) {
+        members.push([
+          a[k].clone().lerp(a[k + 1], 0.5).add(purlinDrop),
+          b[k].clone().lerp(b[k + 1], 0.5).add(purlinDrop),
+          0.04,
+        ]);
+      }
+    }
+  }
   for (let n = 0; n < nodes.length; n++) {
     const i = nodes[n];
     const depthPts = spokes[i].length;
@@ -286,6 +334,65 @@ function buildUndersideTruss(spokes: THREE.Vector3[][], closed: boolean): THREE.
   mesh.castShadow = true;
   mesh.name = 'RoofUndersideTruss';
   return mesh;
+}
+
+/**
+ * Rainwater downpipes down every roof column: a slim pipe on the column's outer face (away from
+ * the pitch), from its head to the ground, with a shoe at the foot. Columns are found by shape —
+ * near-vertical cylinders at least 5 m tall and 14 cm thick — so every roof style that stands on
+ * columns gets them, whichever builder made it.
+ */
+export function addColumnDownpipes(roof: THREE.Object3D): void {
+  roof.updateMatrixWorld(true);
+  const toRoot = roof.matrixWorld.clone().invert();
+  const pipes: THREE.Matrix4[] = [];
+  const shoes: THREE.Matrix4[] = [];
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const m = new THREE.Matrix4();
+  roof.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || (mesh as THREE.InstancedMesh).isInstancedMesh) return;
+    const geo = mesh.geometry as THREE.CylinderGeometry;
+    if (geo.type !== 'CylinderGeometry') return;
+    const { height, radiusTop, radiusBottom } = geo.parameters;
+    if (height < 5 || Math.min(radiusTop, radiusBottom) < 0.14) return;
+    m.multiplyMatrices(toRoot, mesh.matrixWorld);
+    a.set(0, -height / 2, 0).applyMatrix4(m);
+    b.set(0, height / 2, 0).applyMatrix4(m);
+    const lo = a.y < b.y ? a.clone() : b.clone();
+    const hi = a.y < b.y ? b.clone() : a.clone();
+    const len = hi.distanceTo(lo);
+    if (len < 5 || (hi.y - lo.y) / len < 0.95) return;
+    const outward = new THREE.Vector3(lo.x, 0, lo.z);
+    if (outward.lengthSq() < 1e-6) outward.set(1, 0, 0);
+    outward.normalize();
+    // Scale of the mesh widens the column: measure its radius in root space.
+    const r = new THREE.Vector3(Math.max(radiusTop, radiusBottom), 0, 0).applyMatrix4(m).sub(new THREE.Vector3().applyMatrix4(m)).length();
+    const off = outward.multiplyScalar(r + 0.1);
+    const top = hi.clone().add(off);
+    const foot = new THREE.Vector3(top.x, Math.min(lo.y, 0.3), top.z);
+    const h = top.y - foot.y;
+    if (h < 3) return;
+    pipes.push(new THREE.Matrix4().compose(top.clone().lerp(foot, 0.5), new THREE.Quaternion(), new THREE.Vector3(1, h, 1)));
+    shoes.push(new THREE.Matrix4().makeTranslation(foot.x, foot.y + 0.12, foot.z));
+  });
+  if (pipes.length === 0) return;
+  const mat = new THREE.MeshStandardMaterial({ color: 0x6f767d, roughness: 0.45, metalness: 0.6 });
+  const pipeMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 8), mat, pipes.length);
+  pipes.forEach((p, i) => pipeMesh.setMatrixAt(i, p));
+  const shoeMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 0.24, 0.2), mat, shoes.length);
+  shoes.forEach((p, i) => shoeMesh.setMatrixAt(i, p));
+  for (const [mesh, name] of [
+    [pipeMesh, 'RoofDownpipes'],
+    [shoeMesh, 'RoofDownpipeShoes'],
+  ] as const) {
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    mesh.castShadow = true;
+    mesh.name = name;
+    roof.add(mesh);
+  }
 }
 
 export function buildAnnularCanopyMesh(
