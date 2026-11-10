@@ -7,7 +7,7 @@ import { registerGlbCameraHandler } from '../export/exportGlb';
 import { registerPathTraceHandler, registerViewportCaptureHandler } from '../export/exportPng';
 import { createRenderPipeline, createSkyEnvironments, getSunDirection } from './renderPipeline';
 import { buildStadiumSceneGraph, disposeObject3D } from '../stadium/buildStadiumScene';
-import { generatePlacedObjectGroup } from '../stadium/generateLights';
+import { generatePlacedObjectGroup, setSelectionHighlight } from '../stadium/generateLights';
 import { calculateStandMetrics, getTrackRadialOffset } from '../stadium/capacity';
 import {
   CameraPresetMode,
@@ -204,6 +204,8 @@ export const Viewport: React.FC = () => {
   const altitudeRef = useRef<HTMLSpanElement | null>(null);
   const compassRef = useRef<HTMLDivElement | null>(null);
   const [webglLost, setWebglLost] = useState(false);
+  /** Set when the last document could not be built; the previous stadium stays on screen. */
+  const [buildFailed, setBuildFailed] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const setCameraMode = useStadiumStore((s) => s.setCameraMode);
 
@@ -1080,17 +1082,17 @@ export const Viewport: React.FC = () => {
   }, []);
 
   // 2. Rebuild procedural stadium geometry cleanly whenever StadiumDocument, selection, or cross-section mode changes
+  // Rebuild: at most once per frame, from the latest document. A slider drag sends many changes per
+  // frame and each build takes a tenth of a second or more; building only the last one keeps the
+  // drag responsive. The old stadium stays on screen until the new one replaces it.
   useEffect(() => {
+    const frame = requestAnimationFrame(() => rebuildStadium());
+    return () => cancelAnimationFrame(frame);
+  }, [doc, cameraMode]);
+
+  const rebuildStadium = () => {
     const engine = engineRef.current;
     if (!engine) return;
-
-    engine.transform.detach();
-
-    if (engine.stadiumRoot) {
-      engine.scene.remove(engine.stadiumRoot);
-      disposeObject3D(engine.stadiumRoot);
-      engine.stadiumRoot = null;
-    }
 
     // Update sky dome, outdoor PBR environment reflections, atmospheric haze, and stadium match floodlights
     const applyAtmosphere = (mode: LightingMode) => {
@@ -1147,27 +1149,56 @@ export const Viewport: React.FC = () => {
 
     applyAtmosphere(doc.lighting);
 
-    const { rootGroup, placedObjectMap } = buildStadiumSceneGraph(doc, {
-      selectedObjectId,
-      crossSectionClip: cameraMode === 'cross_section',
-      maxAnisotropy: engine.maxAnisotropy,
-      mergeStatic: true,
-    });
+    // Built before the old stadium is removed: a generator that throws on some combination of
+    // settings leaves the last valid stadium on screen instead of an empty scene or a crash.
+    let built: ReturnType<typeof buildStadiumSceneGraph>;
+    try {
+      built = buildStadiumSceneGraph(doc, {
+        crossSectionClip: cameraMode === 'cross_section',
+        maxAnisotropy: engine.maxAnisotropy,
+        mergeStatic: true,
+        distanceLod: true,
+      });
+    } catch (error) {
+      console.error('Stadium build failed; keeping the previous stadium.', error);
+      setBuildFailed(true);
+      engine.requestRender();
+      return;
+    }
+    setBuildFailed(false);
+    const { rootGroup, placedObjectMap } = built;
 
+    engine.transform.detach();
+    if (engine.stadiumRoot) {
+      engine.scene.remove(engine.stadiumRoot);
+      disposeObject3D(engine.stadiumRoot);
+    }
     engine.scene.add(rootGroup);
     engine.stadiumRoot = rootGroup;
     engine.placedMap = placedObjectMap;
 
-    if (selectedObjectId && placedObjectMap.has(selectedObjectId)) {
-      const targetGroup = placedObjectMap.get(selectedObjectId)!;
-      engine.transform.attach(targetGroup);
-      // Effect 3 owns mode changes; reading the store here keeps them from rebuilding the stadium.
+    engine.renderer.shadowMap.needsUpdate = true;
+    applySelection();
+  };
+
+  // Selection: frames the chosen object and hands it to the gizmo. Also run after every rebuild,
+  // so picking another object never rebuilds the stadium.
+  const applySelection = () => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const selectedObjectId = useStadiumStore.getState().selectedObjectId;
+    engine.transform.detach();
+    for (const group of engine.placedMap.values()) setSelectionHighlight(group, false);
+    const target = selectedObjectId ? engine.placedMap.get(selectedObjectId) : undefined;
+    if (target) {
+      setSelectionHighlight(target, true);
+      engine.transform.attach(target);
+      // Effect 3 owns mode changes; reading the store here keeps them from re-running this one.
       engine.transform.setMode(useStadiumStore.getState().transformMode);
     }
-
-    engine.renderer.shadowMap.needsUpdate = true;
     engine.requestRender();
-  }, [doc, selectedObjectId, cameraMode]);
+  };
+  useEffect(applySelection, [selectedObjectId]);
 
   // Placement preview: the chosen equipment follows the cursor until a click drops it.
   useEffect(() => {
@@ -1190,7 +1221,6 @@ export const Viewport: React.FC = () => {
           scale: [1, 1, 1],
         },
         doc.lighting,
-        false,
         doc.materials,
         engine.maxAnisotropy
       );
@@ -1337,6 +1367,15 @@ export const Viewport: React.FC = () => {
           </div>
         )}
       </div>
+      {buildFailed && (
+        <div
+          role="alert"
+          className="absolute left-1/2 bottom-4 -translate-x-1/2 z-20 max-w-md rounded-md border border-line bg-panel/95 px-3 py-2 text-xs text-ink shadow-lg"
+        >
+          Ce réglage n'a pas pu être construit : la dernière version valide reste affichée.
+          Annulez (Ctrl+Z) ou modifiez la valeur.
+        </div>
+      )}
       {webglLost && (
         <div className="absolute inset-0 flex items-center justify-center bg-canvas/95 text-ink p-6 text-center z-30">
           <div className="max-w-md space-y-2">

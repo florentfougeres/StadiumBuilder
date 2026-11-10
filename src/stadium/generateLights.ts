@@ -94,10 +94,48 @@ export function buildLedLoopBand(points: { x: number; z: number }[], height: num
   return mesh;
 }
 
+const SELECTION_HIGHLIGHT = 'SelectionHighlight';
+
+/**
+ * Shows or hides the green box around a placed object. Kept out of the generator so selecting an
+ * object only touches its own group instead of rebuilding the stadium. The box is measured in the
+ * group's own frame, so it follows the object as it is moved, turned or scaled.
+ */
+export function setSelectionHighlight(group: THREE.Object3D, selected: boolean): void {
+  const existing = group.getObjectByName(SELECTION_HIGHLIGHT);
+  if (existing) {
+    group.remove(existing);
+    (existing as THREE.LineSegments).geometry.dispose();
+    ((existing as THREE.LineSegments).material as THREE.Material).dispose();
+  }
+  if (!selected) return;
+
+  group.updateWorldMatrix(true, true);
+  const toLocal = new THREE.Matrix4().copy(group.matrixWorld).invert();
+  const box = new THREE.Box3();
+  const part = new THREE.Box3();
+  group.traverse((o) => {
+    const geometry = (o as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
+    if (!geometry?.attributes?.position || o.userData.outsideSelection) return;
+    if (!geometry.boundingBox) geometry.computeBoundingBox();
+    box.union(part.copy(geometry.boundingBox!).applyMatrix4(new THREE.Matrix4().multiplyMatrices(toLocal, o.matrixWorld)));
+  });
+  if (box.isEmpty()) return;
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+
+  const wire = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(size.x + 0.8, size.y + 0.8, size.z + 0.8)),
+    new THREE.LineBasicMaterial({ color: 0x10b981 })
+  );
+  wire.position.copy(center);
+  wire.name = SELECTION_HIGHLIGHT;
+  group.add(wire);
+}
+
 export function generatePlacedObjectGroup(
   obj: PlacedObject,
   lighting: LightingMode,
-  isSelected: boolean,
   materials?: StadiumMaterialsConfig,
   maxAnisotropy: number = 4
 ): THREE.Group {
@@ -659,23 +697,6 @@ export function generatePlacedObjectGroup(
       }
       break;
     }
-  }
-
-  if (isSelected) {
-    const box = new THREE.Box3().setFromObject(group);
-    const size = new THREE.Vector3();
-    const center = new THREE.Vector3();
-    box.getSize(size);
-    box.getCenter(center);
-
-    const helperGeo = new THREE.EdgesGeometry(
-      new THREE.BoxGeometry(size.x + 0.8, size.y + 0.8, size.z + 0.8)
-    );
-    const helperMat = new THREE.LineBasicMaterial({ color: 0x10b981 });
-    const wire = new THREE.LineSegments(helperGeo, helperMat);
-    wire.position.copy(center);
-    wire.name = 'SelectionHighlight';
-    group.add(wire);
   }
 
   group.position.set(obj.position[0], obj.position[1], obj.position[2]);

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createSiteGroundGeometry } from './generatePitch';
 import { createPlazaDetailNormalAndRoughness } from './materials';
+import { setFarDetail } from './meshKit';
 import {
   DEFAULT_STADIUM_MATERIALS,
   LightingMode,
@@ -676,8 +677,12 @@ function buildForecourt(
 // Vegetation, lighting columns, cars
 // ---------------------------------------------------------------------------------------------
 
-/** A broadleaf crown: a few noisy lobes, smoothed into one blob. */
-function createBroadleafCrownGeometry(): THREE.BufferGeometry {
+/**
+ * A broadleaf crown: a few noisy lobes, smoothed into one blob. Detail 1 (80 faces a lobe) for
+ * close views; detail 0 (20 faces a lobe) is the far level, where thousands of crowns are a few
+ * pixels each.
+ */
+function createBroadleafCrownGeometry(detail: 0 | 1): THREE.BufferGeometry {
   const lobes: [number, number, number, number][] = [
     [0, 0, 0, 1],
     [0.55, -0.12, 0.3, 0.72],
@@ -686,9 +691,10 @@ function createBroadleafCrownGeometry(): THREE.BufferGeometry {
     [-0.2, -0.2, 0.55, 0.66],
   ];
   const parts = lobes.map(([x, y, z, r], li) => {
-    // Detail 1 (80 faces a lobe): hundreds of crowns are instanced, and they are seen from afar.
-    const g = new THREE.IcosahedronGeometry(r, 1);
+    const g = new THREE.IcosahedronGeometry(r, detail);
     g.deleteAttribute('uv');
+    // Detail 0 comes with flat normals, which would keep the lobes' corners from welding below.
+    g.deleteAttribute('normal');
     const p = g.attributes.position;
     for (let i = 0; i < p.count; i++) {
       // Noise from the vertex position, so the copies of a shared corner move together and the
@@ -715,7 +721,7 @@ function buildTrees(trees: TreeSpot[], lighting: LightingMode): THREE.Group {
   const rand = seededRandom(23);
   const trunkGeo = new THREE.CylinderGeometry(0.16, 0.3, 1, 6);
   trunkGeo.translate(0, 0.5, 0);
-  const broadGeo = createBroadleafCrownGeometry();
+  const broadGeo = createBroadleafCrownGeometry(1);
   const coneGeo = new THREE.ConeGeometry(1, 2.6, 9);
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4f3d2e, roughness: 0.95 });
   const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
@@ -726,6 +732,7 @@ function buildTrees(trees: TreeSpot[], lighting: LightingMode): THREE.Group {
   const broadMesh = new THREE.InstancedMesh(broadGeo, leafMat, Math.max(1, broad.length));
   const coneMesh = new THREE.InstancedMesh(coneGeo, leafMat, Math.max(1, conifers.length));
   broadMesh.count = broad.length;
+  setFarDetail(broadMesh, createBroadleafCrownGeometry(0));
   coneMesh.count = conifers.length;
 
   const m = new THREE.Matrix4();

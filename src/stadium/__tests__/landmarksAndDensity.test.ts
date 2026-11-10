@@ -18,7 +18,7 @@ describe('landmarks and mast settings', () => {
       monumental_gate: 12,
     };
     for (const [type, minH] of Object.entries(heights) as [PlacedObjectType, number][]) {
-      const g = generatePlacedObjectGroup(placed(type), 'day', false);
+      const g = generatePlacedObjectGroup(placed(type), 'day');
       expect(new THREE.Box3().setFromObject(g).max.y).toBeGreaterThan(minH);
       disposeObject3D(g);
     }

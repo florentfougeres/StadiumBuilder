@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { addDistanceLods } from './meshKit';
 import {
   calculateStandMetrics,
   getTrackRadialOffset,
@@ -206,6 +207,11 @@ const HALO_CABLES = 12;
 const HALO_CABLE_TILTS = [0, 0.3, 0.55, 0.8, 1.0, 1.2, 1.35, 1.48, 1.6, 1.72];
 const HALO_CABLE_YAWS = [0, 0.3, -0.3, 0.6, -0.6];
 const UP = new THREE.Vector3(0, 1, 0);
+/**
+ * Distance from a stand's origin past which its crowd and seats switch to far detail: beyond the
+ * stadium's own radius, so a drone flight inside the bowl keeps every spectator in full.
+ */
+const FAR_DETAIL_DISTANCE_M = 170;
 
 /**
  * Suspends a halo screen from whatever structure is above it: each of the anchors on its top
@@ -220,12 +226,20 @@ function hangHaloFromStructure(obj: PlacedObject, group: THREE.Group, supports: 
 
   const raycaster = new THREE.Raycaster();
   raycaster.far = 260;
-  const solid = (hit: THREE.Intersection): boolean => {
-    const mat = (hit.object as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+  const solid = (obj: THREE.Object3D): boolean => {
+    const mat = (obj as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
     const m = Array.isArray(mat) ? mat[0] : mat;
     // Light cones and glows are see-through decoration, not something a cable can hang from.
     return Boolean(m) && m!.depthWrite !== false && !(m as THREE.MeshBasicMaterial).isMeshBasicMaterial;
   };
+  // Only solid meshes are worth a ray: up to 600 rays per halo, each testing every target.
+  // Seats, spectators and rails ignore rays anyway (see ignoreRaycasts).
+  const targets: THREE.Object3D[] = [];
+  for (const s of supports) {
+    s.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh && solid(o)) targets.push(o);
+    });
+  }
 
   const center = new THREE.Vector3();
   group.getWorldPosition(center);
@@ -243,7 +257,7 @@ function hangHaloFromStructure(obj: PlacedObject, group: THREE.Group, supports: 
       for (const tilt of HALO_CABLE_TILTS) {
         const dir = new THREE.Vector3(0, Math.cos(tilt), 0).addScaledVector(across, Math.sin(tilt)).normalize();
         raycaster.set(anchor, dir);
-        const hit = raycaster.intersectObjects(supports, true).find(solid);
+        const hit = raycaster.intersectObjects(targets, false)[0];
         if (hit) {
           end = hit.point;
           break search;
@@ -270,6 +284,8 @@ function hangHaloFromStructure(obj: PlacedObject, group: THREE.Group, supports: 
     new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.25, metalness: 0.88 })
   );
   cables.name = 'HaloSuspensionCables';
+  // The cables reach up to the roof; the selection box frames the screen alone.
+  cables.userData.outsideSelection = true;
   group.add(cables);
 }
 
@@ -299,7 +315,6 @@ function measureSiteFootprint(doc: StadiumDocument, built: THREE.Object3D[]): Si
 export function buildStadiumSceneGraph(
   doc: StadiumDocument,
   options: {
-    selectedObjectId?: string | null;
     crossSectionClip?: boolean;
     maxAnisotropy?: number;
     /**
@@ -307,6 +322,8 @@ export function buildStadiumSceneGraph(
      * Off by default so tests and exports keep the named part hierarchy.
      */
     mergeStatic?: boolean;
+    /** Lighter crowd and seats when seen from afar (see addDistanceLods). Viewport only. */
+    distanceLod?: boolean;
   } = {}
 ): BuiltStadiumScene {
   const rootGroup = new THREE.Group();
@@ -340,11 +357,9 @@ export function buildStadiumSceneGraph(
 
   const placedObjectMap = new Map<string, THREE.Group>();
   for (const obj of doc.objects) {
-    const isSelected = options.selectedObjectId === obj.id;
     const objGroup = generatePlacedObjectGroup(
       obj,
       doc.lighting,
-      isSelected,
       doc.materials,
       aniso
     );
@@ -394,6 +409,7 @@ export function buildStadiumSceneGraph(
       if (group !== objectsContainer) mergeStaticMeshes(group);
     }
   }
+  if (options.distanceLod) addDistanceLods(rootGroup, FAR_DETAIL_DISTANCE_M);
 
   return {
     rootGroup,

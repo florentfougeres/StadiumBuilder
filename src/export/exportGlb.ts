@@ -182,7 +182,6 @@ function prepareMaterialsForGltf(root: THREE.Object3D): (THREE.Material | THREE.
  */
 export async function exportStadiumGlb(doc: StadiumDocument): Promise<void> {
   const { rootGroup } = buildStadiumSceneGraph(doc, {
-    selectedObjectId: null,
     crossSectionClip: false,
     maxAnisotropy: 1,
   });

@@ -81,7 +81,7 @@ import { createStandSeatPainter, SeatPainter } from './seatPattern';
 import { buildStandEnvelope, facadeGradeY, hasOwnFacade, isHollowStand, resolveStandFacade } from './envelopes';
 import { splitRail } from './envelopes/rail';
 import { CORNER_STRUCTURES } from './corners';
-import { createStrut } from './meshKit';
+import { createStrut, ignoreRaycasts, setFarDetail } from './meshKit';
 import {
   computeStandSection,
   StandSection,
@@ -1465,6 +1465,24 @@ function getSeatGeometry(): THREE.BufferGeometry {
   return seatGeometryCache;
 }
 
+/** A seat seen from afar: its back alone, as one slab (12 triangles instead of 46). */
+let seatFarGeometryCache: THREE.BufferGeometry | null = null;
+function getSeatFarGeometry(): THREE.BufferGeometry {
+  if (seatFarGeometryCache) return seatFarGeometryCache;
+  const back = extrudeSeatProfile(
+    [
+      [0.13, 0.3],
+      [0.17, 0.3],
+      [0.245, 0.84],
+      [0.205, 0.86],
+    ],
+    0.44
+  );
+  back.computeVertexNormals();
+  seatFarGeometryCache = back;
+  return back;
+}
+
 /** Shared seat material; instance colours carry the club palette. */
 let seatMaterialCache: THREE.MeshStandardMaterial | null = null;
 function getSeatMaterial(): THREE.MeshStandardMaterial {
@@ -1698,6 +1716,8 @@ function buildSweepSeatInstances(opts: {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.name = 'Seats';
+  ignoreRaycasts(mesh);
+  setFarDetail(mesh, getSeatFarGeometry());
 
   const group = new THREE.Group();
   group.name = 'SeatingDressing';
@@ -1778,12 +1798,37 @@ function getCrowdBodyGeometry(kind: 'seated' | 'standing' | 'scarf'): THREE.Buff
   return geo;
 }
 
-/** Head with a darker crown of hair at height `y`; the instance colour carries the skin tone. */
-const crowdHeadGeometryCache = new Map<number, THREE.BufferGeometry>();
-function getCrowdHeadGeometry(y: number): THREE.BufferGeometry {
-  const cached = crowdHeadGeometryCache.get(y);
+/**
+ * A spectator seen from afar: the torso and what shows below it as two boxes (24 triangles
+ * instead of 84), in the same pose and shades as `getCrowdBodyGeometry`.
+ */
+function getCrowdBodyFarGeometry(kind: 'seated' | 'standing' | 'scarf'): THREE.BufferGeometry {
+  const key = `far-${kind}`;
+  const cached = crowdBodyGeometryCache.get(key);
   if (cached) return cached;
-  const g = new THREE.IcosahedronGeometry(0.105, 1);
+  const parts: BoxPart[] =
+    kind === 'seated'
+      ? [
+          [0.46, 0.62, 0.22, 0, 0.75, 0.04, 1], // torso and shoulders
+          [0.34, 0.5, 0.42, 0, 0.27, -0.1, 0.3], // legs
+        ]
+      : [
+          [0.46, 0.68, 0.22, 0, 1.2, 0, 1],
+          [0.3, 0.9, 0.14, 0, 0.45, 0, 0.3],
+        ];
+  const geo = mergeShadedBoxes(parts);
+  crowdBodyGeometryCache.set(key, geo);
+  return geo;
+}
+
+/** Head with a darker crown of hair at height `y`; the instance colour carries the skin tone. */
+const crowdHeadGeometryCache = new Map<string, THREE.BufferGeometry>();
+/** `detail` 1 for close views (80 triangles), 0 for the far level (20 triangles). */
+function getCrowdHeadGeometry(y: number, detail: 0 | 1 = 1): THREE.BufferGeometry {
+  const key = `${y}/${detail}`;
+  const cached = crowdHeadGeometryCache.get(key);
+  if (cached) return cached;
+  const g = new THREE.IcosahedronGeometry(0.105, detail);
   g.scale(0.92, 1.08, 1);
   const pos = g.attributes.position;
   const colors: number[] = [];
@@ -1795,7 +1840,7 @@ function getCrowdHeadGeometry(y: number): THREE.BufferGeometry {
   }
   g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   g.translate(0, y, 0.03);
-  crowdHeadGeometryCache.set(y, g);
+  crowdHeadGeometryCache.set(key, g);
   return g;
 }
 
@@ -1851,13 +1896,13 @@ function buildCrowd(spots: THREE.Matrix4[], opts: CrowdOptions): THREE.Group | n
   });
   if (occupied.length === 0) return null;
 
-  type Variant = { geo: THREE.BufferGeometry; headY: number; idx: number[] };
+  type Variant = { kind: 'seated' | 'standing' | 'scarf'; headY: number; idx: number[] };
   const variants: Variant[] =
     pose === 'seated'
-      ? [{ geo: getCrowdBodyGeometry('seated'), headY: 1.11, idx: occupied }]
+      ? [{ kind: 'seated', headY: 1.11, idx: occupied }]
       : [
-          { geo: getCrowdBodyGeometry('standing'), headY: 1.6, idx: [] },
-          { geo: getCrowdBodyGeometry('scarf'), headY: 1.6, idx: [] },
+          { kind: 'standing', headY: 1.6, idx: [] },
+          { kind: 'scarf', headY: 1.6, idx: [] },
         ];
   const flagIdx: number[] = [];
   if (pose === 'standing') {
@@ -1904,11 +1949,12 @@ function buildCrowd(spots: THREE.Matrix4[], opts: CrowdOptions): THREE.Group | n
     mesh.castShadow = false;
     mesh.receiveShadow = true;
     mesh.name = name;
+    ignoreRaycasts(mesh);
     group.add(mesh);
   };
   for (const v of variants) {
     if (v.idx.length === 0) continue;
-    const bodies = new THREE.InstancedMesh(v.geo, getCrowdMaterial(), v.idx.length);
+    const bodies = new THREE.InstancedMesh(getCrowdBodyGeometry(v.kind), getCrowdMaterial(), v.idx.length);
     const heads = new THREE.InstancedMesh(getCrowdHeadGeometry(v.headY), getCrowdMaterial(), v.idx.length);
     v.idx.forEach((i, k) => {
       const m = placed(i);
@@ -1919,6 +1965,8 @@ function buildCrowd(spots: THREE.Matrix4[], opts: CrowdOptions): THREE.Group | n
     });
     finish(bodies, 'CrowdBodies');
     finish(heads, 'CrowdHeads');
+    setFarDetail(bodies, getCrowdBodyFarGeometry(v.kind));
+    setFarDetail(heads, getCrowdHeadGeometry(v.headY, 0));
   }
   if (flagIdx.length > 0) {
     const flags = new THREE.InstancedMesh(getCrowdFlagGeometry(), getCrowdMaterial(), flagIdx.length);
@@ -2085,6 +2133,7 @@ function buildAisleHandrails(aisles: AisleRailPoint[][]): THREE.InstancedMesh | 
   mesh.computeBoundingSphere();
   mesh.castShadow = true;
   mesh.name = 'AisleHandrails';
+  ignoreRaycasts(mesh);
   return mesh;
 }
 

@@ -528,7 +528,6 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
       const doc = preset.createDocument();
       expect(doc.materials).toBeDefined();
       const { rootGroup } = buildStadiumSceneGraph(doc, {
-        selectedObjectId: null,
         crossSectionClip: false,
         maxAnisotropy: 4,
       });
@@ -647,7 +646,6 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
     for (const preset of STADIUM_PRESETS) {
       const doc = preset.createDocument();
       const { rootGroup } = buildStadiumSceneGraph(doc, {
-        selectedObjectId: null,
         crossSectionClip: false,
         maxAnisotropy: 4,
       });

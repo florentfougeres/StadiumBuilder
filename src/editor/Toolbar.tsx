@@ -22,7 +22,6 @@ import {
   Video,
 } from 'lucide-react';
 import { exportStadiumGlb } from '../export/exportGlb';
-import { exportArchitecturalPlanPdf } from '../export/exportPlan';
 import { exportPathTracedPng, exportViewportPng } from '../export/exportPng';
 import { CameraPresetMode, LightingMode, TransformMode } from '../stadium/schema';
 import { useStadiumStore } from '../state/useStadiumStore';
@@ -133,7 +132,13 @@ const ExportMenu: React.FC<{ onStatus: (msg: string) => void }> = ({ onStatus })
       label: 'Plan PDF',
       detail: 'A4, cotes et capacité',
       icon: <FileDown className="w-3.5 h-3.5" />,
-      onSelect: () => run(() => exportArchitecturalPlanPdf(doc), 'Plan PDF téléchargé', 'Échec du plan PDF'),
+      // jsPDF and its helpers weigh ~300 kB: loaded on the first PDF export, not at start-up.
+      onSelect: () =>
+        run(
+          async () => (await import('../export/exportPlan')).exportArchitecturalPlanPdf(doc),
+          'Plan PDF téléchargé',
+          'Échec du plan PDF'
+        ),
     },
     {
       label: 'Modèle 3D GLB',

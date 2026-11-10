@@ -335,6 +335,25 @@ export function applyShape(d: StadiumDocument, shape: StadiumShape): void {
   d.pitch = clampPitchToTrack(d.pitch);
 }
 
+/**
+ * Continuous edit in progress (a slider being dragged): `false` until its first change is
+ * recorded, then `true`; `null` outside a gesture. The whole gesture is one undo step, so a long
+ * drag no longer floods the history and pushes every earlier step out of it.
+ */
+let gestureRecorded: boolean | null = null;
+
+/** Opens a continuous edit; ends on its own at the next pointer release anywhere in the window. */
+export function beginEditGesture(): void {
+  gestureRecorded = false;
+  const end = () => {
+    gestureRecorded = null;
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+  };
+  window.addEventListener('pointerup', end);
+  window.addEventListener('pointercancel', end);
+}
+
 let autosaveTimer: number | null = null;
 let pendingSave: StadiumDocument | null = null;
 function scheduleAutosave(doc: StadiumDocument, onSaved: (ts: number) => void) {
@@ -535,7 +554,8 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
   let roofBeforeShell: RoofStyle = 'cantilever';
   const commitChange = (mutator: (draft: StadiumDocument) => void) => {
     const { doc, history } = get();
-    const nextHistory = pushHistorySnapshot(history, doc);
+    const nextHistory = gestureRecorded === true ? history : pushHistorySnapshot(history, doc);
+    if (gestureRecorded === false) gestureRecorded = true;
     const nextDoc = cloneDocument(doc);
     mutator(nextDoc);
     nextDoc.updatedAt = Date.now();

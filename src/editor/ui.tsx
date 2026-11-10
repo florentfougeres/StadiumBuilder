@@ -2,6 +2,7 @@ import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'reac
 import { createPortal } from 'react-dom';
 
 import { ChevronRight, X } from 'lucide-react';
+import { beginEditGesture } from '../state/useStadiumStore';
 
 const parseFr = (raw: string) => Number(raw.replace(/\s/g, '').replace(',', '.'));
 
@@ -169,6 +170,7 @@ export const SliderField: React.FC<{
         step={step}
         value={value}
         disabled={disabled}
+        onPointerDown={beginEditGesture}
         onChange={(e) => onChange(Number(e.target.value))}
         className="sf-range mt-1"
         style={{ '--fill': `${fill}%` } as React.CSSProperties}
