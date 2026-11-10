@@ -217,3 +217,24 @@ describe('hospitality boxes', () => {
     expect(count(group, 'SkyboxMullions')).toBeGreaterThan(0);
   });
 });
+
+describe('box storeys per tier break', () => {
+  it('lets each break hold its own number of box storeys', () => {
+    const doc = docOf('four_stands');
+    const base = { ...doc.stands.south, tiers: 3 as const, vipLoges: true };
+    const uniform = computeStandSection({ ...base, vipStoreys: 1, vipStoreysByBreak: undefined });
+    const mixed = computeStandSection({ ...base, vipStoreysByBreak: [1, 2] });
+    const height = (s: typeof uniform, i: number) => s.breaks[i].topY - s.breaks[i].fromY;
+    // The lower break is unchanged, the upper one grows by one storey of boxes.
+    expect(height(mixed, 0)).toBeCloseTo(height(uniform, 0), 3);
+    expect(height(mixed, 1)).toBeGreaterThan(height(uniform, 1) + 2.5);
+
+    const seats = (stand: typeof base) => {
+      const d = docOf('four_stands');
+      d.stands.south = stand;
+      return calculateStadiumMetrics(d).stands.south.capacity;
+    };
+    expect(seats({ ...base, vipStoreysByBreak: [1, 2] })).toBeGreaterThan(seats({ ...base, vipStoreysByBreak: [1, 1] }));
+    expect(() => generateStandsGroup({ ...doc, stands: { ...doc.stands, south: { ...base, vipStoreysByBreak: [1, 3] } } })).not.toThrow();
+  });
+});

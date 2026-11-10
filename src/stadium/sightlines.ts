@@ -24,6 +24,8 @@ export interface ResolvedTierSpec {
   riserHeight: number;
   /** How far (m) the tier's front projects over the rear rows of the tier below (`0..8.5`). */
   overhang: number;
+  /** Storeys of hospitality boxes in the break below this tier (`1..3`; unused for the lowest tier). */
+  vipStoreys: number;
 }
 
 /** Projection of an upper tier over the rows below, as stands were drawn before it became a setting. */
@@ -47,6 +49,7 @@ export function verticalBoxStandPatch(stand: StandConfig): Partial<StandConfig> 
     rows: rows * 5,
     vipLoges: true,
     vipStoreys: 1,
+    vipStoreysByBreak: undefined,
     rakeProfile: 'constant',
     crossAisles: undefined,
     tierConfigs: Array.from({ length: 5 }, (_, t) => ({ rows, slopeAngleDeg: 42, overhang: t === 0 ? 0 : overhang })),
@@ -111,6 +114,22 @@ export function getTierStartRows(totalRows: number, tiers: number): number[] {
  * for a stand, supporting both symmetric stands and asymmetric per-tier `stand.tierConfigs`.
  */
 export function resolveStandTiers(stand: StandConfig): ResolvedTierSpec[] {
+  return resolveTierShapes(stand).map((tier) => ({
+    ...tier,
+    vipStoreys: tier.tierIndex === 0 ? 0 : vipStoreysAtBreak(stand, tier.tierIndex - 1),
+  }));
+}
+
+/**
+ * Storeys of boxes in the break below tier `breakIdx + 1`: its own setting, else the stand-wide
+ * one (`1..3`).
+ */
+export function vipStoreysAtBreak(stand: StandConfig, breakIdx: number): number {
+  const n = stand.vipStoreysByBreak?.[breakIdx] ?? stand.vipStoreys ?? 1;
+  return Math.max(1, Math.min(3, Math.round(n)));
+}
+
+function resolveTierShapes(stand: StandConfig): Omit<ResolvedTierSpec, 'vipStoreys'>[] {
   const safeTiers = Math.max(1, Math.min(5, Math.floor(stand.tiers)));
   const fallbackOverhang = Math.max(
     0,
@@ -119,7 +138,7 @@ export function resolveStandTiers(stand: StandConfig): ResolvedTierSpec[] {
 
   if (stand.tierConfigs && stand.tierConfigs.length > 0) {
     const defaultStarts = getTierStartRows(Math.max(safeTiers * 3, stand.rows), safeTiers);
-    const resolved: ResolvedTierSpec[] = [];
+    const resolved: Omit<ResolvedTierSpec, 'vipStoreys'>[] = [];
     for (let t = 0; t < safeTiers; t++) {
       const cfg = stand.tierConfigs[t];
       if (cfg) {
@@ -269,7 +288,6 @@ export function tierRowRisers(
 export function computeStandSection(stand: StandConfig): StandSection {
   const tiers = resolveStandTiers(stand);
   const hasVip = tiers.length >= 2 && stand.vipLoges !== false;
-  const { recess, loggiaH: baseLoggiaH, fasciaH } = tierBreakDims(hasVip, stand.vipStoreys);
   const frontWallD = 0.34;
 
   const rows: StandSectionRow[] = [];
@@ -280,6 +298,7 @@ export function computeStandSection(stand: StandConfig): StandSection {
 
   for (const tier of tiers) {
     if (tier.tierIndex > 0 && rows.length > 0) {
+      const { recess, loggiaH: baseLoggiaH, fasciaH } = tierBreakDims(hasVip, tier.vipStoreys);
       const frontD = Math.max(frontWallD + 1.5, curD - tier.overhang);
       const sheltered = rows.filter((r) => r.d + stand.rowDepth > frontD);
       const highestShelteredTread = sheltered.reduce((m, r) => Math.max(m, r.y), -Infinity);

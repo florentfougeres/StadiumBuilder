@@ -159,6 +159,8 @@ export interface StandConfig {
   vipLoges?: boolean;
   /** Storeys of glazed hospitality boxes in each tier break when `vipLoges` is on (1 to 3). */
   vipStoreys?: 1 | 2 | 3;
+  /** Storeys of boxes per tier break, from the lowest break up; a missing entry uses `vipStoreys`. */
+  vipStoreysByBreak?: (1 | 2 | 3)[];
   roofStyleOverride?: RoofStyle | 'inherit';
   /** Retractable stand: how far it is currently rolled back from its forward position (m, `0..15`). */
   retractShift?: number;

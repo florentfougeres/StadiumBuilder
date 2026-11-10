@@ -1638,22 +1638,36 @@ const StandsPanel: React.FC = () => {
             onChange={(v) => updateStand(target, { vipLoges: v })}
           />
         )}
-        {stand.tiers >= 2 && stand.vipLoges !== false && (
-          <FieldRow label="Étages de loges">
-            <Segmented
-              label="Étages de loges"
-              size="sm"
-              disabled={off}
-              value={stand.vipStoreys ?? 1}
-              onChange={(vipStoreys) => updateStand(target, { vipStoreys })}
-              options={[
-                { id: 1, label: '1' },
-                { id: 2, label: '2' },
-                { id: 3, label: '3' },
-              ]}
-            />
-          </FieldRow>
-        )}
+        {stand.tiers >= 2 &&
+          stand.vipLoges !== false &&
+          resolvedTiers.slice(1).map((tier) => {
+            const b = tier.tierIndex - 1;
+            // One break: a single setting; several: one per break, between the levels it separates.
+            const label =
+              resolvedTiers.length === 2
+                ? 'Étages de loges'
+                : `Loges entre niv. ${tier.tierIndex} et ${tier.tierIndex + 1}`;
+            return (
+              <FieldRow key={b} label={label}>
+                <Segmented
+                  label={label}
+                  size="sm"
+                  disabled={off}
+                  value={tier.vipStoreys as 1 | 2 | 3}
+                  onChange={(n) => {
+                    const byBreak = resolvedTiers.slice(1).map((t) => t.vipStoreys as 1 | 2 | 3);
+                    byBreak[b] = n;
+                    updateStand(target, { vipStoreysByBreak: byBreak });
+                  }}
+                  options={[
+                    { id: 1, label: '1' },
+                    { id: 2, label: '2' },
+                    { id: 3, label: '3' },
+                  ]}
+                />
+              </FieldRow>
+            );
+          })}
         {separateStands && (
           <>
             <ToggleField

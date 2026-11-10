@@ -50,15 +50,16 @@ interface TierSpec {
   overhang: number;
   /** Rows with a cross aisle in front of them, each with its walkway width and wall height. */
   aisles: { row: number; width: number; wall: number }[];
+  /** Break below this tier: loggia recess, its height and the balcony fascia (m). */
+  recess: number;
+  loggiaH: number;
+  fasciaH: number;
 }
 
 interface StandSpec {
   tiers: TierSpec[];
   rowDepth: number;
   elevation: number;
-  recess: number;
-  loggiaH: number;
-  fasciaH: number;
   /** Tier breaks hold glazed hospitality boxes. */
   hasVip: boolean;
   topHeight: number;
@@ -105,11 +106,11 @@ function standSpec(stand: StandConfig): StandSpec {
         risers: rows.map((r) => r.riser),
         overhang: t.overhang,
         aisles: rows.flatMap((r, row) => (r.crossAisle ? [{ row, ...r.crossAisle }] : [])),
+        ...tierBreakDims(hasVip, t.vipStoreys),
       };
     }),
     rowDepth: stand.rowDepth,
     elevation: stand.elevationStart,
-    ...tierBreakDims(hasVip, stand.vipStoreys),
     hasVip,
     topHeight: section.topHeight,
     outerD: section.totalDepth,
@@ -127,13 +128,13 @@ function sameSpec(a: StandSpec, b: StandSpec): boolean {
         near(t.overhang, b.tiers[i].overhang) &&
         t.risers.every((r, k) => near(r, b.tiers[i].risers[k] ?? r)) &&
         t.aisles.length === b.tiers[i].aisles.length &&
-        t.aisles.every((a, k) => a.row === b.tiers[i].aisles[k].row && near(a.width, b.tiers[i].aisles[k].width))
+        t.aisles.every((a, k) => a.row === b.tiers[i].aisles[k].row && near(a.width, b.tiers[i].aisles[k].width)) &&
+        near(t.recess, b.tiers[i].recess) &&
+        near(t.loggiaH, b.tiers[i].loggiaH) &&
+        near(t.fasciaH, b.tiers[i].fasciaH)
     ) &&
     near(a.rowDepth, b.rowDepth) &&
-    near(a.elevation, b.elevation) &&
-    near(a.recess, b.recess) &&
-    near(a.loggiaH, b.loggiaH) &&
-    near(a.fasciaH, b.fasciaH)
+    near(a.elevation, b.elevation)
   );
 }
 
@@ -338,17 +339,11 @@ export function bowlSectionAt(model: BowlSectionModel, mix: BowlMix): BowlSectio
     : scheduledTierRows(model, A, B, f);
 
   // Value of a tier parameter: blended where both stands have the tier, else the one that has it.
-  const tierParam = (t: number, key: 'rows' | 'riser' | 'overhang') => {
+  const tierParam = (t: number, key: 'rows' | 'riser' | 'overhang' | 'recess' | 'loggiaH' | 'fasciaH') => {
     const ta = A.tiers[t];
     const tb = B.tiers[t];
     if (ta && tb) return lerp(ta[key], tb[key], s);
     return (ta ?? tb)?.[key] ?? 0;
-  };
-  const standParam = (t: number, key: 'recess' | 'loggiaH' | 'fasciaH') => {
-    const ta = A.tiers[t];
-    const tb = B.tiers[t];
-    if (ta && tb) return lerp(A[key], B[key], s);
-    return ta ? A[key] : B[key];
   };
   const rowDepth = lerp(A.rowDepth, B.rowDepth, s);
   const elevation = lerp(A.elevation, B.elevation, s);
@@ -374,13 +369,13 @@ export function bowlSectionAt(model: BowlSectionModel, mix: BowlMix): BowlSectio
         const sheltered = placed.filter((r) => r.d + r.depth > frontFull);
         const highest = sheltered.reduce((m, r) => Math.max(m, r.y), -Infinity);
         const soffitFull = Math.max(
-          curY + standParam(t, 'loggiaH'),
+          curY + tierParam(t, 'loggiaH'),
           Number.isFinite(highest) ? highest + OVERHANG_HEADROOM_M : -Infinity
         );
-        const recessD = curD + standParam(t, 'recess') * b;
+        const recessD = curD + tierParam(t, 'recess') * b;
         const soffitY = curY + (soffitFull - curY) * b;
         const frontD = curD - (curD - frontFull) * b;
-        const topY = soffitY + standParam(t, 'fasciaH') * b;
+        const topY = soffitY + tierParam(t, 'fasciaH') * b;
         pts.push([recessD, curY], [recessD, soffitY], [frontD, soffitY], [frontD, topY]);
         maxD = Math.max(maxD, recessD);
         curD = frontD;

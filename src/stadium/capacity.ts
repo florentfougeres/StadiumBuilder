@@ -211,7 +211,6 @@ export function calculateStandMetrics(
 
   const tierSpecs = resolveStandTiers(stand);
   const totalStandRows = tierSpecs.reduce((sum, t) => sum + t.rows, 0);
-  const upperTierCount = Math.max(0, tierSpecs.length - 1);
 
   const seatingType: SeatingType = stand.seatingType ?? 'seated';
   const hasVipLoges = tierSpecs.length >= 2 && stand.vipLoges !== false;
@@ -447,7 +446,9 @@ export function calculateStandMetrics(
       : 0;
 
   const skyboxBaysPerLevel = Math.floor((effectiveLength * 0.85) / 5.2);
-  const hospitalitySeats = hasVipLoges ? upperTierCount * skyboxBaysPerLevel * 14 : 0;
+  // Every storey of boxes in every tier break holds a row of suites.
+  const boxStoreys = tierSpecs.slice(1).reduce((sum, t) => sum + t.vipStoreys, 0);
+  const hospitalitySeats = hasVipLoges ? boxStoreys * skyboxBaysPerLevel * 14 : 0;
 
   const capacity = totalRowSeats + telescopicSeats + hospitalitySeats;
   const totalEffectiveRows = totalStandRows + tele.extraRows;

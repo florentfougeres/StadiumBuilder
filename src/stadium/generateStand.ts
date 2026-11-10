@@ -2327,7 +2327,7 @@ function buildCornerVirageQuadrant(
       const hasVip = vipA || vipB;
       const dims = tierBreakDims(
         hasVip,
-        Math.max(vipA ? standA.vipStoreys ?? 1 : 1, vipB ? standB.vipStoreys ?? 1 : 1)
+        Math.max(vipA ? tiersA[bIdx + 1]?.vipStoreys ?? 1 : 1, vipB ? tiersB[bIdx + 1]?.vipStoreys ?? 1 : 1)
       );
       const recessAdd = weight * dims.recess;
       const baseLoggiaH = weight * dims.loggiaH;
@@ -3284,7 +3284,8 @@ function buildModernBowlSweep(
     return {
       tiers,
       hasVip: tiers >= 2 && domStand.vipLoges !== false,
-      vipStoreys: domStand.vipStoreys ?? 1,
+      /** Storeys of boxes in the break below each tier, from the dominant stand. */
+      vipStoreys: sideSections[domStand.id].tiers.map((t) => t.vipStoreys),
       share: share.map((v) => v / shareSum),
       slopeTan,
       overhang,
@@ -3347,7 +3348,7 @@ function buildModernBowlSweep(
     const tierBlend = blendTierParamsAt(baseSample.nx, baseSample.nz);
     const domTiers = tierBlend.tiers;
     const domVip = tierBlend.hasVip;
-    const { recess: recOffset, loggiaH: baseLoggiaH, fasciaH } = tierBreakDims(domVip, tierBlend.vipStoreys);
+    const breakDimsOfTier = (t: number) => tierBreakDims(domVip, tierBlend.vipStoreys[t] ?? 1);
 
     const activeBreakSlots =
       domTiers === 2
@@ -3386,6 +3387,7 @@ function buildModernBowlSweep(
       activeBreakSlots.reduce((acc, slot) => {
         const lastRise = rawRise(slot - 1) * scale;
         const sheltered = tierBlend.overhang[tierOfStep(slot)] > 0;
+        const { loggiaH: baseLoggiaH, fasciaH } = breakDimsOfTier(tierOfStep(slot));
         const loggia = sheltered
           ? Math.max(baseLoggiaH, OVERHANG_HEADROOM_M - lastRise)
           : baseLoggiaH;
@@ -3416,6 +3418,7 @@ function buildModernBowlSweep(
       if (k === 6 || k === 12 || k === 18 || k === 24) {
         if (activeBreakSlots.includes(k)) {
           const overhang = tierBlend.overhang[tierOfStep(k)];
+          const { recess: recOffset, loggiaH: baseLoggiaH, fasciaH } = breakDimsOfTier(tierOfStep(k));
           const recD = curD + recOffset;
           const overD = Math.max(2.0, curD - overhang);
           // The last tread sits one riser below `curY`; keep standing headroom above it.
