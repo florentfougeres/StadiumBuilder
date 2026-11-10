@@ -549,16 +549,22 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
 
   /**
    * Switches to another project. Undo history belongs to one project, so it starts empty; the
-   * project left behind gets its pending edit written first. New projects are saved at once so
-   * they show in the project list.
+   * project left behind gets its pending edit written first.
+   *
+   * `isNew` gives the project its own id. `saveNow` writes it at once so it shows in the project
+   * list (imports, duplicates); an opened example or blank project is only written by the autosave
+   * of its first edit, so browsing the examples does not fill the list with untouched copies.
    */
-  const openProject = (next: StadiumDocument, isNew: boolean) => {
+  const openProject = (next: StadiumDocument, isNew: boolean, saveNow = isNew) => {
     // A fresh id per new project: two created within the same millisecond must not share a record.
     if (isNew) next.id = newProjectId();
     next.updatedAt = Date.now();
     void flushAutosave().then(async () => {
-      if (isNew) await saveProjectToDb(next, calculateStadiumMetrics(next).totalCapacity);
-      set({ savedProjects: await listProjectsFromDb(), lastSavedAt: Date.now() });
+      if (saveNow) await saveProjectToDb(next, calculateStadiumMetrics(next).totalCapacity);
+      set({
+        savedProjects: await listProjectsFromDb(),
+        lastSavedAt: isNew && !saveNow ? null : Date.now(),
+      });
     });
     set({
       doc: next,
@@ -601,9 +607,9 @@ export const useStadiumStore = create<StadiumStoreState>((set, get) => {
       }
     },
 
-    loadPreset: (presetId) => openProject(createPresetDocument(presetId), true),
+    loadPreset: (presetId) => openProject(createPresetDocument(presetId), true, false),
 
-    newBlankProject: () => openProject(createBlankDocument(), true),
+    newBlankProject: () => openProject(createBlankDocument(), true, false),
 
     loadDocument: (incoming) => openProject(normalizeStadiumDocument(cloneDocument(incoming)), false),
 
