@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { WebGLPathTracer } from 'three-gpu-pathtracer';
+import { DenoiseMaterial, WebGLPathTracer } from 'three-gpu-pathtracer';
+import { bakeWorldTriplanarUvs } from '../stadium/materials';
 
 const EQUIRECT_WIDTH = 1024;
 
@@ -184,62 +185,36 @@ function widenColorToRgba(geo: THREE.BufferGeometry): void {
   geo.setAttribute('color', new THREE.BufferAttribute(rgba, 4));
 }
 
-function triplanarTileM(material: THREE.Material | undefined): number | undefined {
-  return material?.userData.worldTriplanarTileM as number | undefined;
-}
-
 /**
- * The viewport maps concrete and facade materials by world-space triplanar projection in an
- * injected shader, which the tracer cannot run: it would sample their maps with the geometry's own
- * UVs, which have no common scale (the facade came out as one smeared dark texel). Bakes the same
- * projection into the UVs instead, choosing each triangle's axis from its world face normal.
- * Returns a non-indexed geometry when any of the mesh's materials is triplanar.
+ * One single-material mesh per material of a multi-material mesh. The tracer gives each mesh one
+ * material slot yet lists every material of a multi-material mesh, so every mesh after one (in its
+ * uuid order, new on each export) took its neighbour's material: sails printed with sponsor
+ * ribbons, a black pitch or grey seats, changing from one still to the next.
  */
-function bakeTriplanarUvs(
-  geo: THREE.BufferGeometry,
-  material: THREE.Material | THREE.Material[],
-  matrixWorld: THREE.Matrix4
-): THREE.BufferGeometry {
-  const mats = Array.isArray(material) ? material : [material];
-  if (!mats.some((mt) => triplanarTileM(mt) !== undefined)) return geo;
-  const flat = geo.index ? geo.toNonIndexed() : geo;
-  if (flat !== geo) geo.dispose();
-  const pos = flat.attributes.position;
-  const uvAttr = new THREE.BufferAttribute(new Float32Array(pos.count * 2), 2);
-  if (flat.attributes.uv) uvAttr.copy(flat.attributes.uv as THREE.BufferAttribute);
-  const groups =
-    Array.isArray(material) && flat.groups.length
-      ? flat.groups
-      : [{ start: 0, count: pos.count, materialIndex: 0 }];
-  const a = new THREE.Vector3();
-  const b = new THREE.Vector3();
-  const c = new THREE.Vector3();
-  const n = new THREE.Vector3();
-  const e = new THREE.Vector3();
+function splitByMaterial(mesh: THREE.Mesh): THREE.Mesh[] {
+  if (!Array.isArray(mesh.material)) return [mesh];
+  const materials = mesh.material;
+  const flat = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
+  const groups = flat.groups.length
+    ? flat.groups
+    : [{ start: 0, count: flat.attributes.position.count, materialIndex: 0 }];
+  const parts: THREE.Mesh[] = [];
   for (const group of groups) {
-    const tile = triplanarTileM(mats[group.materialIndex ?? 0]);
-    if (tile === undefined) continue;
-    const scale = 1 / tile;
-    const end = Math.min(pos.count, group.start + group.count);
-    for (let t = group.start; t + 2 < end; t += 3) {
-      a.fromBufferAttribute(pos, t).applyMatrix4(matrixWorld);
-      b.fromBufferAttribute(pos, t + 1).applyMatrix4(matrixWorld);
-      c.fromBufferAttribute(pos, t + 2).applyMatrix4(matrixWorld);
-      n.subVectors(c, b).cross(e.subVectors(a, b));
-      const ax = Math.abs(n.x);
-      const ay = Math.abs(n.y);
-      const az = Math.abs(n.z);
-      for (let k = 0; k < 3; k++) {
-        const v = k === 0 ? a : k === 1 ? b : c;
-        // Same projections as the viewport shader's triUvX / triUvY / triUvZ.
-        if (ax >= ay && ax >= az) uvAttr.setXY(t + k, -v.z * Math.sign(n.x) * scale, v.y * scale);
-        else if (ay >= az) uvAttr.setXY(t + k, v.x * scale, -v.z * Math.sign(n.y) * scale);
-        else uvAttr.setXY(t + k, v.x * Math.sign(n.z) * scale, v.y * scale);
-      }
+    const material = materials[group.materialIndex ?? 0];
+    if (!material || group.count <= 0) continue;
+    const geo = new THREE.BufferGeometry();
+    for (const [name, attr] of Object.entries(flat.attributes)) {
+      const a = attr as THREE.BufferAttribute;
+      const size = a.itemSize;
+      const end = Math.min(a.count, group.start + group.count);
+      const array = (a.array as Float32Array).slice(group.start * size, end * size);
+      geo.setAttribute(name, new THREE.BufferAttribute(array, size, a.normalized));
     }
+    parts.push(new THREE.Mesh(geo, material));
   }
-  flat.setAttribute('uv', uvAttr);
-  return flat;
+  if (flat !== mesh.geometry) flat.dispose();
+  mesh.geometry.dispose();
+  return parts;
 }
 
 /**
@@ -273,13 +248,15 @@ function buildTraceableScene(root: THREE.Object3D): {
     // three ignores geometry groups under a single material, but the tracer reads their material
     // index: a box's faces (indices 0-5) would take the next five materials of the scene.
     if (!Array.isArray(copy.material)) copy.geometry.clearGroups();
-    copy.geometry = bakeTriplanarUvs(copy.geometry, copy.material, mesh.matrixWorld);
-    widenColorToRgba(copy.geometry);
-    owned.push(copy);
-    copy.matrixAutoUpdate = false;
-    copy.matrix.copy(mesh.matrixWorld);
-    copy.matrixWorld.copy(mesh.matrixWorld);
-    group.add(copy);
+    copy.geometry = bakeWorldTriplanarUvs(copy.geometry, copy.material, mesh.matrixWorld);
+    for (const part of splitByMaterial(copy)) {
+      widenColorToRgba(part.geometry);
+      owned.push(part);
+      part.matrixAutoUpdate = false;
+      part.matrix.copy(mesh.matrixWorld);
+      part.matrixWorld.copy(mesh.matrixWorld);
+      group.add(part);
+    }
   });
   return { group, owned, ownedMaterials };
 }
@@ -312,7 +289,11 @@ export interface PathTraceRequest {
  * stays responsive; the caller pauses its own rendering meanwhile.
  */
 export async function renderPathTracedPng(req: PathTraceRequest): Promise<string> {
-  const { renderer, camera, stadium, lights, samples, onProgress } = req;
+  const { renderer, stadium, lights, samples, onProgress } = req;
+  // The view at the moment of the export: orbiting the viewport while samples accumulate would
+  // otherwise blend several views into a speckled, ghosted still.
+  const camera = req.camera.clone();
+  camera.updateMatrixWorld();
   const environment = bakeEquirectEnvironment(renderer, req.sky, req.background);
 
   const scene = new THREE.Scene();
@@ -334,7 +315,9 @@ export async function renderPathTracedPng(req: PathTraceRequest): Promise<string
   scene.add(group);
 
   const tracer = new WebGLPathTracer(renderer);
-  tracer.bounces = 6;
+  // An open-air scene gets nearly all its light within three bounces; more cost time for no
+  // visible gain. Glass rarely stacks more than three panes along a ray.
+  tracer.bounces = 3;
   tracer.filterGlossyFactor = 0.5;
   tracer.renderDelay = 0;
   tracer.fadeDuration = 0;
@@ -344,6 +327,13 @@ export async function renderPathTracedPng(req: PathTraceRequest): Promise<string
   // Quarter-frame passes: a whole 1080p frame per pass trips the GPU watchdog on large stadiums,
   // which loses the WebGL context and used to save a black image.
   tracer.tiles.set(2, 2);
+  // The tracer uploads each vertex's material index as a one-byte-per-texel texture about
+  // sqrt(vertex count) wide. WebGL's default 4-byte row alignment shears every row whose width is
+  // not a multiple of 4, so surfaces took other materials' looks (black pitch, yellow masts,
+  // missing sails) depending on the stadium's vertex count.
+  (
+    tracer as unknown as { _pathTracer: { material: { materialIndexAttribute: THREE.Texture } } }
+  )._pathTracer.material.materialIndexAttribute.unpackAlignment = 1;
 
   try {
     // Building the BVH blocks for a moment; let the progress label paint first.
@@ -358,10 +348,27 @@ export async function renderPathTracedPng(req: PathTraceRequest): Promise<string
       onProgress?.(0.15 + 0.85 * Math.min(1, tracer.samples / samples));
       await new Promise((resolve) => requestAnimationFrame(resolve));
     }
-    // Read the canvas right after the last sample is drawn, before anything redraws it.
-    tracer.renderSample();
     if (gl.isContextLost()) throw new Error('GPU context lost during path tracing');
-    return renderer.domElement.toDataURL('image/png');
+    // Edge-preserving denoise of the accumulated image, so fewer samples give a clean still; read
+    // the canvas right after it is drawn, before anything redraws it.
+    const denoise = new FullScreenQuad(
+      new DenoiseMaterial({
+        map: tracer.target.texture,
+        blending: THREE.NoBlending,
+        premultipliedAlpha: renderer.getContextAttributes()?.premultipliedAlpha ?? true,
+      })
+    );
+    try {
+      const material = denoise.material as THREE.ShaderMaterial;
+      material.uniforms.sigma.value = 2.5;
+      material.uniforms.threshold.value = 0.05;
+      renderer.setRenderTarget(null);
+      denoise.render(renderer);
+      return renderer.domElement.toDataURL('image/png');
+    } finally {
+      denoise.material.dispose();
+      denoise.dispose();
+    }
   } finally {
     tracer.dispose();
     environment.dispose();

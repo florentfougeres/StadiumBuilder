@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { registerGlbCameraHandler } from '../export/exportGlb';
 import { registerPathTraceHandler, registerViewportCaptureHandler } from '../export/exportPng';
 import { createRenderPipeline, createSkyEnvironments, getSunDirection } from './renderPipeline';
 import { buildStadiumSceneGraph, disposeObject3D } from '../stadium/buildStadiumScene';
@@ -825,6 +826,7 @@ export const Viewport: React.FC = () => {
     resizeObserver.observe(container);
 
     // Register synchronous PNG screenshot capture handler
+    registerGlbCameraHandler(() => camera);
     registerViewportCaptureHandler(() => {
       transformHelper.visible = false;
       if (pipeline) pipeline.render();
@@ -856,7 +858,7 @@ export const Viewport: React.FC = () => {
                 sky: skyEnv && mode !== 'night' ? skyEnv.sky : null,
                 background: skyTextures.night,
                 environmentIntensity: scene.environmentIntensity,
-                samples: 96,
+                samples: 48,
                 onProgress,
               });
             } finally {
@@ -899,6 +901,7 @@ export const Viewport: React.FC = () => {
     return () => {
       registerViewportCaptureHandler(null);
       registerPathTraceHandler(null);
+      registerGlbCameraHandler(null);
       resizeObserver.disconnect();
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);

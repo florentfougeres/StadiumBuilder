@@ -1187,6 +1187,64 @@ function applyWorldTriplanarMapping<M extends THREE.MeshStandardMaterial>(materi
   return material;
 }
 
+function triplanarTileM(material: THREE.Material | undefined): number | undefined {
+  return material?.userData.worldTriplanarTileM as number | undefined;
+}
+
+/**
+ * Bakes the world triplanar projection of `applyWorldTriplanarMapping` into a geometry's UVs, for
+ * renderers that cannot run its injected shader (the path-traced still, the GLB export): they would
+ * sample concrete and facade maps with the geometry's own UVs, which have no common scale. Each
+ * triangle takes the axis of its world face normal. Returns a non-indexed copy when any of the
+ * mesh's materials is triplanar (disposing `geo`), else `geo` itself.
+ */
+export function bakeWorldTriplanarUvs(
+  geo: THREE.BufferGeometry,
+  material: THREE.Material | THREE.Material[],
+  matrixWorld: THREE.Matrix4
+): THREE.BufferGeometry {
+  const mats = Array.isArray(material) ? material : [material];
+  if (!mats.some((mt) => triplanarTileM(mt) !== undefined)) return geo;
+  const flat = geo.index ? geo.toNonIndexed() : geo;
+  if (flat !== geo) geo.dispose();
+  const pos = flat.attributes.position;
+  const uvAttr = new THREE.BufferAttribute(new Float32Array(pos.count * 2), 2);
+  if (flat.attributes.uv) uvAttr.copy(flat.attributes.uv as THREE.BufferAttribute);
+  const groups =
+    Array.isArray(material) && flat.groups.length
+      ? flat.groups
+      : [{ start: 0, count: pos.count, materialIndex: 0 }];
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const e = new THREE.Vector3();
+  for (const group of groups) {
+    const tile = triplanarTileM(mats[group.materialIndex ?? 0]);
+    if (tile === undefined) continue;
+    const scale = 1 / tile;
+    const end = Math.min(pos.count, group.start + group.count);
+    for (let t = group.start; t + 2 < end; t += 3) {
+      a.fromBufferAttribute(pos, t).applyMatrix4(matrixWorld);
+      b.fromBufferAttribute(pos, t + 1).applyMatrix4(matrixWorld);
+      c.fromBufferAttribute(pos, t + 2).applyMatrix4(matrixWorld);
+      n.subVectors(c, b).cross(e.subVectors(a, b));
+      const ax = Math.abs(n.x);
+      const ay = Math.abs(n.y);
+      const az = Math.abs(n.z);
+      for (let k = 0; k < 3; k++) {
+        const v = k === 0 ? a : k === 1 ? b : c;
+        // Same projections as the viewport shader's triUvX / triUvY / triUvZ.
+        if (ax >= ay && ax >= az) uvAttr.setXY(t + k, -v.z * Math.sign(n.x) * scale, v.y * scale);
+        else if (ay >= az) uvAttr.setXY(t + k, v.x * scale, -v.z * Math.sign(n.y) * scale);
+        else uvAttr.setXY(t + k, v.x * Math.sign(n.z) * scale, v.y * scale);
+      }
+    }
+  }
+  flat.setAttribute('uv', uvAttr);
+  return flat;
+}
+
 // ============================================================================
 // 1. ARCHITECTURAL PRECAST / BOARD-FORMED CONCRETE BOWL MATERIAL (512x512, 6m TILE)
 // ============================================================================
