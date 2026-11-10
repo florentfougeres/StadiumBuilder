@@ -68,10 +68,12 @@ import {
   StadiumShape,
   SeatPattern,
   SeatTierStyle,
+  StadiumDocument,
   StandConfig,
   StandSide,
   TRACK_MAX_PITCH_WIDTH_M,
 } from '../stadium/schema';
+import { BLANK_PRESET_ID, createBlankDocument, createPresetDocument, STADIUM_PRESETS } from '../stadium/presets';
 import { isIntegralShell, isMovableRoof, roofDefinition, ROOF_STYLES } from '../stadium/roofCatalog';
 import { isWholeRingRoof } from '../stadium/generateRoof';
 import { OFFERED_SHAPES, shapeDefinition } from '../stadium/shapeCatalog';
@@ -98,6 +100,7 @@ import {
 import {
   AdvancedSection,
   Button,
+  CellNumber,
   FieldRow,
   GalleryOption,
   IconButton,
@@ -110,8 +113,10 @@ import {
   SelectField,
   SliderField,
   Switch,
+  Resettable,
   TextField,
   ToggleField,
+  resetTo,
 } from './ui';
 
 export const SHAPE_OPTIONS: { id: StadiumShape; label: string; desc: string }[] = OFFERED_SHAPES.map((id) => ({
@@ -464,8 +469,10 @@ const HEX_COLOR = /^#?([0-9a-f]{6})$/i;
 const ColorField: React.FC<{
   label: string;
   value: string;
+  /** The colour in the stadium's starting model: marks the field while it differs. */
+  defaultValue?: string;
   onChange: (value: string) => void;
-}> = ({ label, value, onChange }) => {
+}> = ({ label, value, defaultValue, onChange }) => {
   const [draft, setDraft] = useState<string | null>(null);
   const commit = () => {
     const match = draft === null ? null : HEX_COLOR.exec(draft.trim());
@@ -473,7 +480,10 @@ const ColorField: React.FC<{
     setDraft(null);
   };
   return (
-    <FieldRow label={label}>
+    <FieldRow
+      label={label}
+      onReset={resetTo(value.toLowerCase(), defaultValue?.toLowerCase(), () => defaultValue && onChange(defaultValue))}
+    >
       <input
         type="text"
         aria-label={`${label}, code hexadécimal`}
@@ -627,10 +637,18 @@ function PressBoxFields({
   const tier = pressBoxTier(stand, tierCount);
   const rows = stand.pressBoxRows ?? PRESS_ROWS;
   const length = stand.pressBoxLength ?? PRESS_LENGTH_DEFAULT;
+  // Compared with the model only where the model has a press box on this stand.
+  const model = useModel();
+  const mStand = target === 'all' ? undefined : model?.doc.stands[target];
+  const m = mStand?.pressBox === true ? mStand : undefined;
   return (
     <>
       {tierCount >= 2 && (
-        <FieldRow label="Étage de la presse">
+        <FieldRow
+          label="Étage de la presse"
+          disabled={disabled}
+          onReset={resetTo(tier, m && pressBoxTier(m, tierCount), (pressBoxTier) => updateStand(target, { pressBoxTier }))}
+        >
           <Segmented
             label="Étage de la presse"
             size="sm"
@@ -648,6 +666,7 @@ function PressBoxFields({
         step={1}
         disabled={disabled}
         value={rows}
+        defaultValue={m && (m.pressBoxRows ?? PRESS_ROWS)}
         display={`${rows}`}
         onChange={(pressBoxRows) => updateStand(target, { pressBoxRows })}
       />
@@ -659,6 +678,7 @@ function PressBoxFields({
         step={1}
         disabled={disabled}
         value={length}
+        defaultValue={m && (m.pressBoxLength ?? PRESS_LENGTH_DEFAULT)}
         display={`${length} m`}
         onChange={(pressBoxLength) => updateStand(target, { pressBoxLength })}
       />
@@ -719,6 +739,7 @@ const SeatColorsEditor: React.FC = () => {
   const activeStand = useStadiumStore((s) => s.activeStandTab);
   const updateSeatStyle = useStadiumStore((s) => s.updateSeatStyle);
   const setClubColors = useStadiumStore((s) => s.setClubColors);
+  const model = useModel();
   const [sel, setSel] = useState<SeatSelection>(() => selectionOf(activeStand));
   useEffect(() => setSel(selectionOf(activeStand)), [activeStand]);
 
@@ -782,11 +803,13 @@ const SeatColorsEditor: React.FC = () => {
         <ColorField
           label="Couleur principale"
           value={doc.colors.seatsPrimary}
+          defaultValue={model?.doc.colors.seatsPrimary}
           onChange={(seatsPrimary) => setClubColors({ seatsPrimary })}
         />
         <ColorField
           label="Couleur secondaire"
           value={doc.colors.seatsSecondary}
+          defaultValue={model?.doc.colors.seatsSecondary}
           onChange={(seatsSecondary) => setClubColors({ seatsSecondary })}
         />
         <p className="text-2xs leading-snug text-ink-faint">
@@ -1059,6 +1082,9 @@ const ShapePanel: React.FC = () => {
   const sunken = getEffectiveSunkenDepth(doc);
   const concourseWidth = doc.concourse?.width ?? 0;
   const concourseHeight = doc.concourse?.heightRatio ?? 0.5;
+  const model = useModel();
+  const md = model?.doc;
+  const mCorners = useMemo(() => (md ? resolveAllCorners(md) : null), [md]);
 
   // The horseshoe's open end has no east corners to dress.
   const lockedCorner = (id: CornerId) => doc.shape === 'horseshoe' && (id === 'ne' || id === 'se');
@@ -1075,6 +1101,7 @@ const ShapePanel: React.FC = () => {
         <GalleryPicker
           label="Forme de l’enceinte"
           value={doc.shape}
+          defaultValue={md?.shape}
           onChange={setShape}
           options={SHAPE_GALLERY}
         />
@@ -1086,6 +1113,7 @@ const ShapePanel: React.FC = () => {
             max={1}
             step={0.05}
             value={doc.cornerRoundness ?? 0.5}
+            defaultValue={md && (md.cornerRoundness ?? 0.5)}
             display={`${Math.round((doc.cornerRoundness ?? 0.5) * 100)} %`}
             onChange={setCornerRoundness}
           />
@@ -1117,6 +1145,11 @@ const ShapePanel: React.FC = () => {
         <SelectField<CornerMode | 'mixed'>
           label="Les quatre coins"
           value={sharedMode}
+          defaultValue={
+            mCorners && editable.every((id) => mCorners[id] === mCorners[editable[0]])
+              ? mCorners[editable[0]]
+              : undefined
+          }
           onChange={(mode) => mode !== 'mixed' && setAllCorners(mode)}
           options={
             sharedMode === 'mixed'
@@ -1130,6 +1163,7 @@ const ShapePanel: React.FC = () => {
           <OptionList<CornerJoin>
             label="Raccord entre tribunes de hauteurs différentes"
             value={doc.cornerJoin ?? 'blend'}
+            defaultValue={md && (md.cornerJoin ?? 'blend')}
             onChange={setCornerJoin}
             options={isContinuousBowlShape(doc.shape) ? BOWL_CORNER_JOIN_OPTIONS : CORNER_JOIN_OPTIONS}
           />
@@ -1143,6 +1177,7 @@ const ShapePanel: React.FC = () => {
               label={corner.label}
               disabled={lockedCorner(corner.id)}
               value={lockedCorner(corner.id) ? 'open' : resolvedCorners[corner.id]}
+              defaultValue={lockedCorner(corner.id) ? undefined : mCorners?.[corner.id]}
               onChange={(mode) => setCornerMode(corner.id, mode)}
               options={cornerOptions}
             />
@@ -1161,6 +1196,7 @@ const ShapePanel: React.FC = () => {
                 hint={seated ? undefined : 'Seulement pour un coin en gradins'}
                 disabled={!seated}
                 checked={seated && Boolean(doc.cornerAccess?.[corner.id])}
+                defaultValue={seated && md ? Boolean(md.cornerAccess?.[corner.id]) : undefined}
                 onChange={(on) => setCornerAccess(corner.id, on)}
               />
             );
@@ -1174,6 +1210,7 @@ const ShapePanel: React.FC = () => {
             max={SUNKEN_MAX_DEPTH}
             step={0.5}
             value={sunken}
+            defaultValue={md && getEffectiveSunkenDepth(md)}
             display={sunken > 0 ? `−${fr1(sunken)} m` : 'Au niveau du sol'}
             onChange={setSunkenDepth}
           />
@@ -1186,6 +1223,7 @@ const ShapePanel: React.FC = () => {
             max={24}
             step={0.5}
             value={concourseWidth}
+            defaultValue={md && (md.concourse?.width ?? 0)}
             display={concourseWidth > 0 ? `${fr1(concourseWidth)} m` : 'Aucune'}
             onChange={(v) => updateConcourse({ width: v })}
           />
@@ -1198,6 +1236,7 @@ const ShapePanel: React.FC = () => {
             scale={100}
             disabled={concourseWidth <= 0}
             value={concourseHeight}
+            defaultValue={md && (md.concourse?.heightRatio ?? 0.5)}
             display={concourseHeight >= 0.98 ? 'Jusqu’en haut des tribunes' : `${Math.round(concourseHeight * 100)} %`}
             onChange={(v) => updateConcourse({ heightRatio: v })}
           />
@@ -1219,20 +1258,29 @@ const PitchPanel: React.FC = () => {
     : 115;
   const movable = doc.pitch.movablePitch ?? 'none';
   const gridiron = doc.pitch.sport === 'american_football';
+  const model = useModel();
+  const mp = model?.doc.pitch;
 
   return (
     <>
       <PanelHeader title="Terrain" meta={gridiron ? '120 × 53⅓ yards' : `${doc.pitch.length} × ${doc.pitch.width} m`} />
       <PanelSection title="Sport">
-        <Segmented
+        <Resettable
           label="Sport"
           value={doc.pitch.sport ?? 'football'}
+          defaultValue={mp && (mp.sport ?? 'football')}
           onChange={(sport) => updatePitch({ sport })}
-          options={[
-            { id: 'football', label: 'Football' },
-            { id: 'american_football', label: 'Football américain' },
-          ]}
-        />
+        >
+          <Segmented
+            label="Sport"
+            value={doc.pitch.sport ?? 'football'}
+            onChange={(sport) => updatePitch({ sport })}
+            options={[
+              { id: 'football', label: 'Football' },
+              { id: 'american_football', label: 'Football américain' },
+            ]}
+          />
+        </Resettable>
         {gridiron ? (
           <>
             <p className="text-2xs text-ink-faint">
@@ -1242,6 +1290,7 @@ const PitchPanel: React.FC = () => {
             <ColorField
               label="Couleur des en-buts"
               value={doc.pitch.endZoneColor ?? '#1d3c78'}
+              defaultValue={mp && (mp.endZoneColor ?? '#1d3c78')}
               onChange={(endZoneColor) => updatePitch({ endZoneColor })}
             />
             <TextField
@@ -1265,6 +1314,7 @@ const PitchPanel: React.FC = () => {
               max={maxPitchLength}
               step={1}
               value={doc.pitch.length}
+              defaultValue={mp?.length}
               display={`${doc.pitch.length} m`}
               onChange={(v) => updatePitch({ length: v })}
             />
@@ -1279,6 +1329,7 @@ const PitchPanel: React.FC = () => {
               max={maxPitchWidth}
               step={1}
               value={doc.pitch.width}
+              defaultValue={mp?.width}
               display={`${doc.pitch.width} m`}
               onChange={(v) => updatePitch({ width: v })}
             />
@@ -1290,12 +1341,14 @@ const PitchPanel: React.FC = () => {
         <GalleryPicker
           label="Pelouse"
           value={mats.pitchTurf}
+          defaultValue={model?.mats.pitchTurf}
           onChange={(pitchTurf) => updateMaterials({ pitchTurf })}
           options={materialGallery(TURF_MATERIAL_CATALOG)}
         />
         <SelectField
           label="Motif de tonte"
           value={doc.pitch.grassPattern}
+          defaultValue={mp?.grassPattern}
           onChange={(v) => updatePitch({ grassPattern: v })}
           options={[
             { id: 'stripes', label: 'Bandes' },
@@ -1309,6 +1362,7 @@ const PitchPanel: React.FC = () => {
           label="Piste de 400 m"
           hint="400 m officiel (droites 84,39 m · rayon 36,5 m · couloirs 1,22 m)"
           checked={doc.pitch.hasTrack}
+          defaultValue={mp?.hasTrack}
           onChange={(v) => updatePitch({ hasTrack: v })}
         />
         {doc.pitch.hasTrack && (
@@ -1318,6 +1372,7 @@ const PitchPanel: React.FC = () => {
             max={9}
             step={1}
             value={doc.pitch.trackLanes}
+            defaultValue={mp?.hasTrack ? mp.trackLanes : undefined}
             display={`${doc.pitch.trackLanes} couloirs`}
             onChange={(trackLanes) => updatePitch({ trackLanes })}
           />
@@ -1328,6 +1383,7 @@ const PitchPanel: React.FC = () => {
           <SelectField
             label="Type"
             value={movable}
+            defaultValue={mp && (mp.movablePitch ?? 'none')}
             onChange={(movablePitch) => updatePitch({ movablePitch })}
             options={[
               { id: 'none', label: 'Fixe' },
@@ -1343,6 +1399,7 @@ const PitchPanel: React.FC = () => {
               max={1}
               step={0.05}
               value={doc.pitch.movablePitchState ?? 0}
+              defaultValue={mp && (mp.movablePitchState ?? 0)}
               display={`${Math.round((doc.pitch.movablePitchState ?? 0) * 100)} %`}
               scale={100}
               onChange={(movablePitchState) => updatePitch({ movablePitchState })}
@@ -1353,11 +1410,15 @@ const PitchPanel: React.FC = () => {
           <ToggleField
             label="Panneaux LED publicitaires"
             checked={doc.pitch.adBoards}
+            defaultValue={mp?.adBoards}
             onChange={(v) => updatePitch({ adBoards: v })}
           />
           <FieldRow
             label="Barrière devant les tribunes"
             hint="Vitre basse moderne, ou grillage anti-envahissement des stades des années 80-90"
+            onReset={resetTo(doc.frontFence ?? 'glass', model && (model.doc.frontFence ?? 'glass'), (frontFence) =>
+              setFrontFence({ frontFence })
+            )}
           >
             <Segmented
               label="Barrière devant les tribunes"
@@ -1377,6 +1438,7 @@ const PitchPanel: React.FC = () => {
               max={4}
               step={0.1}
               value={doc.frontFenceHeight ?? 2.5}
+              defaultValue={model && (model.doc.frontFenceHeight ?? 2.5)}
               display={`${fr1(doc.frontFenceHeight ?? 2.5)} m`}
               onChange={(frontFenceHeight) => setFrontFence({ frontFenceHeight })}
             />
@@ -1386,6 +1448,7 @@ const PitchPanel: React.FC = () => {
           <GalleryPicker
             label="Piste et abords"
             value={mats.trackSurface}
+            defaultValue={model?.mats.trackSurface}
             onChange={(trackSurface) => updateMaterials({ trackSurface })}
             options={materialGallery(TRACK_MATERIAL_CATALOG)}
           />
@@ -1439,6 +1502,115 @@ const SightlineProfile: React.FC<{
   );
 };
 
+type ResolvedTier = ReturnType<typeof resolveStandTiers>[number];
+
+/**
+ * One row per tier, its rows, rake and overhang side by side so tiers compare at a glance.
+ * The riser height that results is read-only.
+ */
+const TierTable: React.FC<{
+  tiers: ResolvedTier[];
+  disabled: boolean;
+  onChange: (tierIndex: number, patch: { rows?: number; slopeAngleDeg?: number; overhang?: number }) => void;
+}> = ({ tiers, disabled, onChange }) => (
+  <table className="w-full table-fixed text-xs">
+    <thead>
+      <tr className="text-2xs text-ink-faint">
+        <th scope="col" className="w-[4.5rem] pb-1 text-left font-normal">Étage</th>
+        <th scope="col" className="pb-1 pr-1 text-right font-normal">Rangs</th>
+        <th scope="col" className="pb-1 pr-1 text-right font-normal">Pente</th>
+        <th scope="col" className="pb-1 pr-1 text-right font-normal" title="Avancée au-dessus de l’étage inférieur">
+          Avancée
+        </th>
+        <th scope="col" className="w-11 pb-1 text-right font-normal" title="Hauteur de marche qui en résulte">
+          Marche
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+      {[...tiers].reverse().map((t) => {
+        const n = t.tierIndex + 1;
+        const edge = t.tierIndex === 0 ? 'bas' : t.tierIndex === tiers.length - 1 ? 'haut' : null;
+        return (
+          <tr key={t.tierIndex}>
+            <th scope="row" className="py-0.5 text-left font-normal text-ink-muted">
+              {n}
+              {edge && <span className="text-2xs text-ink-faint"> · {edge}</span>}
+            </th>
+            <td className="py-0.5 pr-1">
+              <CellNumber
+                label={`Rangs, étage ${n}`}
+                min={4}
+                max={60}
+                step={1}
+                disabled={disabled}
+                value={t.rows}
+                display={String(t.rows)}
+                onChange={(rows) => onChange(t.tierIndex, { rows })}
+              />
+            </td>
+            <td className="py-0.5 pr-1">
+              <CellNumber
+                label={`Pente, étage ${n}`}
+                min={16}
+                max={42}
+                step={0.5}
+                disabled={disabled}
+                value={t.slopeAngleDeg}
+                display={`${fr1(t.slopeAngleDeg)}°`}
+                onChange={(slopeAngleDeg) => onChange(t.tierIndex, { slopeAngleDeg })}
+              />
+            </td>
+            <td className="py-0.5 pr-1">
+              {t.tierIndex > 0 ? (
+                <CellNumber
+                  label={`Avancée, étage ${n}`}
+                  min={0}
+                  max={7.5}
+                  step={0.25}
+                  disabled={disabled}
+                  value={t.overhang}
+                  display={`${fr1(t.overhang)} m`}
+                  onChange={(overhang) => onChange(t.tierIndex, { overhang })}
+                />
+              ) : (
+                <span className="block pr-1.5 text-right text-ink-faint" aria-label="Sans objet">—</span>
+              )}
+            </td>
+            <td className="py-0.5 text-right tabular-nums text-ink-faint">{Math.round(t.riserHeight * 100)} cm</td>
+          </tr>
+        );
+      })}
+    </tbody>
+  </table>
+);
+
+interface ModelValues {
+  doc: StadiumDocument;
+  mats: ReturnType<typeof resolveStadiumMaterials>;
+}
+
+let modelCache: { presetId: string; model: ModelValues | undefined } | null = null;
+
+/**
+ * The stadium as its starting model built it: the values modified fields are compared to.
+ * Built once per model and shared by every panel. Undefined for a project whose model is no
+ * longer offered, which then shows no marks.
+ */
+function useModel(): ModelValues | undefined {
+  const presetId = useStadiumStore((s) => s.doc.presetId);
+  if (modelCache?.presetId !== presetId) {
+    const known = presetId === BLANK_PRESET_ID || STADIUM_PRESETS.some((p) => p.id === presetId);
+    const doc = !known ? null : presetId === BLANK_PRESET_ID ? createBlankDocument() : createPresetDocument(presetId);
+    modelCache = { presetId, model: doc ? { doc, mats: resolveStadiumMaterials(doc) } : undefined };
+  }
+  return modelCache.model;
+}
+
+const ColorDot: React.FC<{ color: string }> = ({ color }) => (
+  <span aria-hidden className="inline-block w-2.5 h-2.5 rounded-full border border-line-strong" style={{ background: color }} />
+);
+
 const StandsPanel: React.FC = () => {
   const doc = useStadiumStore((s) => s.doc);
   const target = useStadiumStore((s) => s.activeStandTab);
@@ -1477,6 +1649,28 @@ const StandsPanel: React.FC = () => {
     [stand, trackExtra, roofStyle]
   );
 
+  // Starting-model values of this stand, for the modified marks.
+  const model = useModel();
+  const mStand = model?.doc.stands[side];
+  const ms = <T,>(pick: (s: StandConfig) => T): T | undefined => (mStand ? pick(mStand) : undefined);
+  const mMats = model?.mats;
+  const mVom = useMemo(() => (mStand ? resolveStandVomitories(mStand) : null), [mStand]);
+  // A vomitory setting left automatic in both the project and the model follows the rows: not a change of its own.
+  const mVomOf = <K extends keyof NonNullable<typeof mVom>>(key: K, stored: keyof StandConfig) =>
+    stand[stored] === undefined && mStand?.[stored] === undefined ? vomSpec[key] : mVom?.[key];
+  const mSlope = ms((s) => s.slopeAngleDeg ?? slopeDegFromRiser(s.riserHeight, s.rowDepth));
+
+  const fittings = [
+    stand.dugouts === true && 'bancs de touche',
+    stand.pressBox === true && 'presse',
+    stand.tiers >= 2 && stand.vipLoges !== false && 'loges VIP',
+    separateStands && stand.tifo === true && 'tifo',
+    separateStands && stand.banners === true && 'banderoles',
+    separateStands && stand.embankment === true && 'talus',
+  ].filter(Boolean) as string[];
+  const fittingsSummary =
+    fittings.length === 0 ? 'Aucun' : fittings.join(', ').replace(/^./, (c) => c.toUpperCase());
+
   const tallestOther = (['north', 'south', 'east', 'west'] as StandSide[])
     .filter((s) => s !== side && metrics.stands[s].enabled)
     .reduce((max, s) => Math.max(max, metrics.stands[s].maxHeight), 0);
@@ -1509,8 +1703,16 @@ const StandsPanel: React.FC = () => {
           options={STAND_TABS}
         />
       </div>
-      <PanelSection title="Gradins" persistKey="stands:terraces">
-        <FieldRow label="Étages">
+      <PanelSection
+        title="Gradins"
+        persistKey="stands:terraces"
+        summary={`${stand.tiers} étage${stand.tiers > 1 ? 's' : ''} · ${stand.rows} rangs · ${fr1(slope)}°`}
+      >
+        <FieldRow
+          label="Étages"
+          disabled={off}
+          onReset={resetTo(stand.tiers, ms((s) => s.tiers), (tiers) => updateStand(target, { tiers }))}
+        >
           <Segmented
             label="Nombre d’étages"
             size="sm"
@@ -1527,6 +1729,7 @@ const StandsPanel: React.FC = () => {
           step={1}
           disabled={off}
           value={stand.rows}
+          defaultValue={ms((s) => s.rows)}
           display={`${stand.rows} · ${Math.round(stand.rows / stand.tiers)} par étage`}
           onChange={(v) => updateStand(target, { rows: v })}
         />
@@ -1538,6 +1741,7 @@ const StandsPanel: React.FC = () => {
           step={0.5}
           disabled={off}
           value={slope}
+          defaultValue={mSlope}
           display={`${fr1(slope)}°`}
           onChange={(v) => updateStand(target, { slopeAngleDeg: v })}
         />
@@ -1553,11 +1757,16 @@ const StandsPanel: React.FC = () => {
           step={0.5}
           disabled={off}
           value={stand.distanceToPitch}
+          defaultValue={ms((s) => s.distanceToPitch)}
           display={`${fr1(stand.distanceToPitch)} m`}
           onChange={(v) => updateStand(target, { distanceToPitch: v })}
         />
       </PanelSection>
-      <PanelSection title="Visibilité et évacuation" persistKey="stands:summary">
+      <PanelSection
+        title="Visibilité et évacuation"
+        persistKey="stands:summary"
+        summary={off ? undefined : `${sightlines.grade} · ${fr1(sm.evacuationMinutes)} min`}
+      >
         <FieldRow
           label="Évacuation"
           hint="Étage le plus lent, 79 personnes par mètre et par minute (Green Guide : 8 min au plus)"
@@ -1585,11 +1794,16 @@ const StandsPanel: React.FC = () => {
         </div>
         <SightlineProfile points={sightlines.points} />
       </PanelSection>
-      <PanelSection title="Sièges" persistKey="stands:seats">
+      <PanelSection
+        title="Sièges"
+        persistKey="stands:seats"
+        summary={SEATING_TYPE_OPTIONS.find((o) => o.id === (stand.seatingType ?? 'seated'))?.label}
+      >
         <OptionList
           label="Type de places"
           disabled={off}
           value={stand.seatingType ?? 'seated'}
+          defaultValue={ms((s) => s.seatingType ?? 'seated')}
           onChange={(id) =>
             updateStand(target, {
               seatingType: id,
@@ -1601,19 +1815,36 @@ const StandsPanel: React.FC = () => {
         <GalleryPicker
           label="Finition des sièges"
           value={mats.seatFinish}
+          defaultValue={mMats?.seatFinish}
           onChange={(seatFinish) => updateMaterials({ seatFinish })}
           options={materialGallery(SEAT_MATERIAL_CATALOG)}
         />
       </PanelSection>
-      <PanelSection title="Couleurs des sièges" defaultOpen={false} persistKey="stands:colors">
+      <PanelSection
+        title="Couleurs des sièges"
+        defaultOpen={false}
+        persistKey="stands:colors"
+        summary={
+          <span className="inline-flex items-center gap-1 align-middle">
+            <ColorDot color={doc.colors.seatsPrimary} />
+            {doc.colors.seatsSecondary && <ColorDot color={doc.colors.seatsSecondary} />}
+          </span>
+        }
+      >
         <SeatColorsEditor />
       </PanelSection>
-      <PanelSection title="Équipements et habillage" defaultOpen={false} persistKey="stands:fittings">
+      <PanelSection
+        title="Équipements et habillage"
+        defaultOpen={false}
+        persistKey="stands:fittings"
+        summary={fittingsSummary}
+      >
         <ToggleField
           label="Bancs de touche intégrés"
           hint="Abris des équipes encastrés dans le mur de front, de part et d’autre de la ligne médiane"
           disabled={off}
           checked={stand.dugouts === true}
+          defaultValue={ms((s) => s.dugouts === true)}
           onChange={(dugouts) => updateStand(target, { dugouts })}
         />
         <ToggleField
@@ -1625,6 +1856,7 @@ const StandsPanel: React.FC = () => {
           }
           disabled={off || editAll}
           checked={stand.pressBox === true}
+          defaultValue={ms((s) => s.pressBox === true)}
           onChange={(pressBox) => updateStand(target, { pressBox })}
         />
         {!editAll && stand.pressBox === true && (
@@ -1635,6 +1867,7 @@ const StandsPanel: React.FC = () => {
             label="Loges VIP entre les étages"
             disabled={off}
             checked={stand.vipLoges !== false}
+            defaultValue={ms((s) => s.vipLoges !== false)}
             onChange={(v) => updateStand(target, { vipLoges: v })}
           />
         )}
@@ -1675,6 +1908,7 @@ const StandsPanel: React.FC = () => {
               hint="Tous les supporters habillés en bandes diagonales des deux couleurs (public activé)"
               disabled={off || doc.materials?.crowd !== true}
               checked={stand.tifo === true}
+              defaultValue={ms((s) => s.tifo === true)}
               onChange={(tifo) => updateStand(target, { tifo })}
             />
             <ToggleField
@@ -1682,6 +1916,7 @@ const StandsPanel: React.FC = () => {
               hint="Bâches aux couleurs du club sur le mur du terrain et les nez de balcon"
               disabled={off}
               checked={stand.banners === true}
+              defaultValue={ms((s) => s.banners === true)}
               onChange={(banners) => updateStand(target, { banners })}
             />
             <ToggleField
@@ -1689,16 +1924,29 @@ const StandsPanel: React.FC = () => {
               hint="Gradins posés sur une butte de terre engazonnée, comme les petits stades et stades d’athlétisme"
               disabled={off}
               checked={stand.embankment === true}
+              defaultValue={ms((s) => s.embankment === true)}
               onChange={(embankment) => updateStand(target, { embankment })}
             />
           </>
         )}
       </PanelSection>
-      <PanelSection title="Public" defaultOpen={false} persistKey="stands:crowd">
+      <PanelSection
+        title="Public"
+        defaultOpen={false}
+        persistKey="stands:crowd"
+        summary={
+          mats.seats3d === false
+            ? 'Sièges simplifiés'
+            : mats.crowd === true
+            ? `Public · ${Math.round((mats.crowdAttendance ?? 0.9) * 100)} %`
+            : 'Sièges 3D, vides'
+        }
+      >
         <ToggleField
           label="Sièges 3D individuels"
           hint="Désactive pour un rendu plus léger sur les machines modestes"
           checked={mats.seats3d !== false}
+          defaultValue={mMats ? mMats.seats3d !== false : undefined}
           onChange={(seats3d) => updateMaterials({ seats3d })}
         />
         <ToggleField
@@ -1706,6 +1954,7 @@ const StandsPanel: React.FC = () => {
           hint="Désactivé, les sièges restent vides"
           disabled={mats.seats3d === false}
           checked={mats.crowd === true}
+          defaultValue={mMats ? mMats.crowd === true : undefined}
           onChange={(crowd) => updateMaterials({ crowd })}
         />
         <SliderField
@@ -1713,6 +1962,7 @@ const StandsPanel: React.FC = () => {
           hint="Part des places occupées par des spectateurs"
           disabled={mats.seats3d === false || mats.crowd !== true}
           value={mats.crowdAttendance ?? 0.9}
+          defaultValue={mMats ? (mMats.crowdAttendance ?? 0.9) : undefined}
           min={0}
           max={1}
           step={0.05}
@@ -1722,9 +1972,16 @@ const StandsPanel: React.FC = () => {
         />
       </PanelSection>
       <AdvancedSection tab="stands">
-        <SubGroup title="Profil des gradins">
+        <SubGroup
+          title="Profil des gradins"
+          summary={`${stand.rakeProfile === 'progressive' ? 'Progressive' : 'Constante'} · rang ${Math.round(stand.rowDepth * 100)} cm`}
+        >
           <FieldRow
             label="Pente des gradins"
+            disabled={off}
+            onReset={resetTo(stand.rakeProfile ?? 'constant', ms((s) => s.rakeProfile ?? 'constant'), (rakeProfile) =>
+              updateStand(target, { rakeProfile })
+            )}
             hint="Progressive : rangs bas plus plats, rangs hauts plus raides, même hauteur totale. Garde une bonne visibilité à chaque rang"
           >
             <Segmented
@@ -1747,6 +2004,7 @@ const StandsPanel: React.FC = () => {
             step={0.1}
             disabled={off}
             value={stand.elevationStart}
+            defaultValue={ms((s) => s.elevationStart)}
             display={`${fr1(stand.elevationStart)} m`}
             onChange={(v) => updateStand(target, { elevationStart: v })}
           />
@@ -1757,6 +2015,7 @@ const StandsPanel: React.FC = () => {
             step={0.01}
             disabled={off}
             value={stand.rowDepth}
+            defaultValue={ms((s) => s.rowDepth)}
             display={`${Math.round(stand.rowDepth * 100)} cm`}
             scale={100}
             onChange={(v) => updateStand(target, { rowDepth: v })}
@@ -1768,29 +2027,39 @@ const StandsPanel: React.FC = () => {
             step={0.01}
             disabled={off}
             value={stand.seatWidth}
+            defaultValue={ms((s) => s.seatWidth)}
             display={`${Math.round(stand.seatWidth * 100)} cm`}
             scale={100}
             onChange={(v) => updateStand(target, { seatWidth: v })}
           />
         </SubGroup>
         {stand.tiers >= 2 && (
-          <SubGroup title="Étage par étage">
-              <SliderField
-                label="Avancée en encorbellement"
-                hint="Avance les étages supérieurs au-dessus des derniers rangs de l’étage inférieur ; la dalle remonte pour garder 2,4 m au-dessus des rangs abrités"
-                min={0}
-                max={7.5}
-                step={0.25}
-                disabled={off}
-                value={tierOverhang}
-                display={tierOverhang > 0 ? `+${fr1(tierOverhang)} m` : 'Aligné'}
-                onChange={(v) => updateStand(target, { tierOverhang: v })}
-              />
-            <div className="flex items-center justify-between text-2xs">
+          <SubGroup
+            title="Étage par étage"
+            summary={`${resolvedTiers.length} étages${hasAsymmetricTiers ? ' · réglés un par un' : ''}`}
+          >
+            <SliderField
+              label="Avancée en encorbellement"
+              hint="Avance les étages supérieurs au-dessus des derniers rangs de l’étage inférieur ; la dalle remonte pour garder 2,4 m au-dessus des rangs abrités"
+              min={0}
+              max={7.5}
+              step={0.25}
+              disabled={off}
+              value={tierOverhang}
+              defaultValue={ms((s) => s.tierOverhang ?? DEFAULT_TIER_OVERHANG_M)}
+              display={tierOverhang > 0 ? `+${fr1(tierOverhang)} m` : 'Aligné'}
+              onChange={(v) => updateStand(target, { tierOverhang: v })}
+            />
+            <TierTable
+              tiers={resolvedTiers}
+              disabled={off}
+              onChange={(tierIndex, patch) => updateStandTier(target, tierIndex, patch)}
+            />
+            <div className="flex items-center justify-between gap-3 text-2xs">
               <span className="text-ink-faint">
                 {hasAsymmetricTiers
-                  ? 'Profil indépendant actif par étage'
-                  : 'Réglage séparé des rangs, pentes et surplombs'}
+                  ? 'Chaque étage a son propre profil.'
+                  : 'Modifier une case règle cet étage seul.'}
               </span>
               {hasAsymmetricTiers && (
                 <Button disabled={off} onClick={() => resetStandTiersUniform(target)}>
@@ -1798,70 +2067,12 @@ const StandsPanel: React.FC = () => {
                 </Button>
               )}
             </div>
-            <div className="space-y-2">
-              {resolvedTiers.map((tSpec) => (
-                <div
-                  key={tSpec.tierIndex}
-                  className="p-2.5 rounded border border-line bg-canvas/50 space-y-2"
-                >
-                  <div className="flex items-baseline justify-between text-xs">
-                    <span className="font-medium text-ink">
-                      Étage {tSpec.tierIndex + 1}
-                      {tSpec.tierIndex === 0
-                        ? ' (bas)'
-                        : tSpec.tierIndex === resolvedTiers.length - 1
-                        ? ' (haut)'
-                        : ''}
-                    </span>
-                    <span className="text-2xs text-ink-faint tabular-nums">
-                      {tSpec.rows} rangs · {fr1(tSpec.slopeAngleDeg)}° · marche{' '}
-                      {Math.round(tSpec.riserHeight * 100)} cm
-                    </span>
-                  </div>
-                  <SliderField
-                    label={`Rangs (étage ${tSpec.tierIndex + 1})`}
-                    min={4}
-                    max={60}
-                    step={1}
-                    disabled={off}
-                    value={tSpec.rows}
-                    display={`${tSpec.rows} rangs`}
-                    onChange={(r) =>
-                      updateStandTier(target, tSpec.tierIndex, { rows: r })
-                    }
-                  />
-                  <SliderField
-                    label={`Pente (étage ${tSpec.tierIndex + 1})`}
-                    min={16}
-                    max={42}
-                    step={0.5}
-                    disabled={off}
-                    value={tSpec.slopeAngleDeg}
-                    display={`${fr1(tSpec.slopeAngleDeg)}°`}
-                    onChange={(ang) =>
-                      updateStandTier(target, tSpec.tierIndex, { slopeAngleDeg: ang })
-                    }
-                  />
-                  {tSpec.tierIndex > 0 && (
-                    <SliderField
-                      label={`Encorbellement (étage ${tSpec.tierIndex + 1})`}
-                      min={0}
-                      max={7.5}
-                      step={0.25}
-                      disabled={off}
-                      value={tSpec.overhang}
-                      display={tSpec.overhang > 0 ? `+${fr1(tSpec.overhang)} m` : '0,0 m'}
-                      onChange={(ov) =>
-                        updateStandTier(target, tSpec.tierIndex, { overhang: ov })
-                      }
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
           </SubGroup>
         )}
-        <SubGroup title="Circulations">
+        <SubGroup
+          title="Circulations"
+          summary={`${vomSpec.count} vomitoire${vomSpec.count > 1 ? 's' : ''} · ${stand.aisleCount} escalier${stand.aisleCount > 1 ? 's' : ''}`}
+        >
           <CrossAisleList
             aisles={crossAisles}
             tierCount={resolvedTiers.length}
@@ -1884,11 +2095,14 @@ const StandsPanel: React.FC = () => {
               step={1}
               disabled={off}
               value={vomSpec.count}
+              defaultValue={mVomOf('count', 'vomitoryCount')}
               display={vomSpec.count === 0 ? 'Aucun' : `${vomSpec.count} ouvertures`}
               onChange={(v) => updateStand(target, { vomitoryCount: v })}
             />
             <FieldRow
               label="Rangées par étage"
+              disabled={off || vomSpec.count === 0}
+              onReset={resetTo(vomSpec.levels, mVomOf('levels', 'vomitoryLevels'), (vomitoryLevels) => updateStand(target, { vomitoryLevels }))}
               hint="Plusieurs rangées de vomitoires superposées dans un même étage, pour un étage très haut comme un mur de Kop"
             >
               <Segmented
@@ -1917,6 +2131,7 @@ const StandsPanel: React.FC = () => {
                   hint="Chaque rangée de vomitoires décalée d’une demi-travée par rapport à celle du dessous"
                   disabled={off}
                   checked={vomSpec.staggered}
+                  defaultValue={mVomOf('staggered', 'vomitoryStaggered')}
                   onChange={(vomitoryStaggered) => updateStand(target, { vomitoryStaggered })}
                 />
               </>
@@ -1929,6 +2144,7 @@ const StandsPanel: React.FC = () => {
               scale={100}
               disabled={off || vomSpec.count === 0}
               value={vomSpec.rowRatio}
+              defaultValue={mVomOf('rowRatio', 'vomitoryRowRatio')}
               display={`${Math.round(vomSpec.rowRatio * 100)} % ${vomSpec.levels > 1 ? 'de chaque rangée' : 'de l’étage'}`}
               onChange={(v) => updateStand(target, { vomitoryRowRatio: v })}
             />
@@ -1940,6 +2156,7 @@ const StandsPanel: React.FC = () => {
               scale={100}
               disabled={off || vomSpec.count === 0}
               value={vomSpec.offsetRatio}
+              defaultValue={mVomOf('offsetRatio', 'vomitoryOffsetRatio')}
               display={
                 Math.abs(vomSpec.offsetRatio) < 0.01
                   ? 'Centré'
@@ -1956,6 +2173,7 @@ const StandsPanel: React.FC = () => {
               step={1}
               disabled={off}
               value={stand.aisleCount}
+              defaultValue={ms((s) => s.aisleCount)}
               display={stand.aisleCount === 0 ? 'Aucun' : `${stand.aisleCount} volées`}
               onChange={(v) => updateStand(target, { aisleCount: v })}
             />
@@ -1966,13 +2184,17 @@ const StandsPanel: React.FC = () => {
               step={0.1}
               disabled={off || stand.aisleCount === 0}
               value={stand.aisleWidth}
+              defaultValue={ms((s) => s.aisleWidth)}
               display={`${fr1(stand.aisleWidth)} m`}
               onChange={(v) => updateStand(target, { aisleWidth: v })}
             />
           </SubGroup>
         </SubGroup>
         {!editAll && (
-          <SubGroup title="Tribune mobile">
+          <SubGroup
+            title="Tribune mobile"
+            summary={(stand.retractShift ?? 0) > 0 ? `Reculée de ${fr1(stand.retractShift ?? 0)} m` : 'Fixe'}
+          >
               <SliderField
                 label="Recul sur rails"
                 hint="Tribune montée sur rails, reculée pour dégager une piste ou avancée au bord du terrain"
@@ -1981,6 +2203,7 @@ const StandsPanel: React.FC = () => {
                 max={15}
                 step={0.5}
                 value={stand.retractShift ?? 0}
+                defaultValue={ms((s) => s.retractShift ?? 0)}
                 display={`${fr1(stand.retractShift ?? 0)} m`}
                 onChange={(v) =>
                   updateStand(target, {
@@ -2057,12 +2280,19 @@ const RoofPanel: React.FC = () => {
   const skyMode = roof.skylightMode ?? 'none';
   const skyRatio = roof.skylightRatio ?? 0.35;
   const trusses = resolveCounterweightTrusses(roof);
-  const cornerFrame = useMemo(() => {
+  const model = useModel();
+  const mr = model?.doc.roof;
+  const mm = model?.mats;
+  const [cornerFrame, mCornerFrame] = useMemo(() => {
     const m = calculateStadiumMetrics(doc);
     // Same floor as the roof builder's ring bounds.
     const maxStandH = Math.max(12, ...Object.values(m.stands).map((s) => s.maxHeight));
-    return resolveCornerPylonFrame(doc.roof, maxStandH);
-  }, [doc]);
+    return [resolveCornerPylonFrame(doc.roof, maxStandH), mr ? resolveCornerPylonFrame(mr, maxStandH) : undefined];
+  }, [doc, mr]);
+  const mTrusses = mr ? resolveCounterweightTrusses(mr) : undefined;
+  const mMasts = mr ? resolveSuspendedMasts(mr) : undefined;
+  const mRetract = mr ? resolveRetractable(mr) : undefined;
+  const mCovered = mr ? (mr.coveredSides ?? COVERED_SIDE_ORDER) : undefined;
 
   const toggleSide = (side: StandSide) => {
     const next = covered.includes(side) ? covered.filter((s) => s !== side) : [...covered, side];
@@ -2091,6 +2321,7 @@ const RoofPanel: React.FC = () => {
         <GalleryPicker
           label="Système de toiture"
           value={roof.style}
+          defaultValue={mr?.style}
           onChange={(style) => updateRoof({ style })}
           options={ROOF_GALLERY}
         />
@@ -2098,6 +2329,9 @@ const RoofPanel: React.FC = () => {
           <FieldRow
             label="Tribunes couvertes"
             hint="Pour un toit seulement sur la tribune principale, ou sur les deux tribunes latérales"
+            onReset={resetTo(covered.join(), mCovered?.join(), () =>
+              updateRoof({ coveredSides: mCovered && mCovered.length < 4 ? [...mCovered] : undefined })
+            )}
           >
             <div className="grid grid-cols-4 gap-1 w-44" role="group" aria-label="Tribunes couvertes">
               {COVERED_SIDE_ORDER.map((side) => {
@@ -2127,6 +2361,7 @@ const RoofPanel: React.FC = () => {
             max={36}
             step={1}
             value={resolveSuspendedMasts(roof).mastCount}
+            defaultValue={mMasts?.mastCount}
             display={String(resolveSuspendedMasts(roof).mastCount)}
             onChange={(v) => updateRoof({ mastCount: v })}
           />
@@ -2136,6 +2371,7 @@ const RoofPanel: React.FC = () => {
             max={45}
             step={0.5}
             value={resolveSuspendedMasts(roof).mastHeight}
+            defaultValue={mMasts?.mastHeight}
             display={`${resolveSuspendedMasts(roof).mastHeight} m`}
             onChange={(v) => updateRoof({ mastHeight: v })}
           />
@@ -2150,6 +2386,7 @@ const RoofPanel: React.FC = () => {
             max={72}
             step={1}
             value={resolvePortalCount(roof)}
+            defaultValue={mr && resolvePortalCount(mr)}
             display={String(resolvePortalCount(roof))}
             onChange={(v) => updateRoof({ portalCount: v })}
           />
@@ -2164,6 +2401,7 @@ const RoofPanel: React.FC = () => {
             max={6}
             step={1}
             value={resolveSpanningGirderCount(roof)}
+            defaultValue={mr && resolveSpanningGirderCount(mr)}
             display={String(resolveSpanningGirderCount(roof))}
             onChange={(v) => updateRoof({ girderCount: v })}
           />
@@ -2177,6 +2415,7 @@ const RoofPanel: React.FC = () => {
             max={48}
             step={1}
             value={trusses.trussCount}
+            defaultValue={mTrusses?.trussCount}
             display={String(trusses.trussCount)}
             onChange={(v) => updateRoof({ trussCount: v })}
           />
@@ -2187,6 +2426,7 @@ const RoofPanel: React.FC = () => {
             max={0.7}
             step={0.01}
             value={trusses.backspanRatio}
+            defaultValue={mTrusses?.backspanRatio}
             display={`${Math.round(trusses.backspanRatio * 100)} %`}
             scale={100}
             onChange={(v) => updateRoof({ backspanRatio: v })}
@@ -2202,6 +2442,7 @@ const RoofPanel: React.FC = () => {
             max={CORNER_PYLON_MAX_HEIGHT}
             step={1}
             value={Math.round(cornerFrame.pylonTopY)}
+            defaultValue={mCornerFrame && Math.round(mCornerFrame.pylonTopY)}
             display={`${Math.round(cornerFrame.pylonTopY)} m`}
             onChange={(v) => updateRoof({ pylonHeight: v })}
           />
@@ -2212,12 +2453,14 @@ const RoofPanel: React.FC = () => {
             max={25}
             step={1}
             value={cornerFrame.crownRise}
+            defaultValue={mCornerFrame?.crownRise}
             display={`${cornerFrame.crownRise} m`}
             onChange={(v) => updateRoof({ crownRise: v })}
           />
           <ToggleField
             label="Résille en treillis 3D"
             checked={Boolean(roof.spaceFrame)}
+            defaultValue={mr && Boolean(mr.spaceFrame)}
             onChange={(v) => updateRoof({ spaceFrame: v })}
           />
         </PanelSection>
@@ -2228,6 +2471,7 @@ const RoofPanel: React.FC = () => {
             label="Panneaux coulissants sur les latérales"
             hint="Ils glissent au-dessus de la pelouse pour l'ombrer, ou reculent sur le toit pour l'ouvrir"
             checked={Boolean(roof.archMovablePanels)}
+            defaultValue={mr && Boolean(mr.archMovablePanels)}
             onChange={(archMovablePanels) => updateRoof({ archMovablePanels })}
           />
           {roof.archMovablePanels && (
@@ -2238,6 +2482,7 @@ const RoofPanel: React.FC = () => {
                 max={1}
                 step={0.05}
                 value={resolveRetractable(roof).openRatio}
+                defaultValue={mRetract?.openRatio}
                 display={resolveRetractable(roof).openRatio === 0 ? 'Fermé' : `${Math.round(resolveRetractable(roof).openRatio * 100)} %`}
                 onChange={(openRatio) => updateRoof({ retractable: { ...roof.retractable, openRatio } })}
               />
@@ -2247,6 +2492,7 @@ const RoofPanel: React.FC = () => {
                 max={6}
                 step={1}
                 value={resolveRetractable(roof).panelCount}
+                defaultValue={mRetract?.panelCount}
                 display={String(resolveRetractable(roof).panelCount)}
                 onChange={(panelCount) => updateRoof({ retractable: { ...roof.retractable, panelCount } })}
               />
@@ -2258,6 +2504,7 @@ const RoofPanel: React.FC = () => {
       {isMovableRoof(roof.style) && (
         <RetractableRoofSection
           retractable={resolveRetractable(roof)}
+          model={mRetract}
           iris={roof.style === 'petal_iris'}
           horseshoe={shape === 'horseshoe'}
           onChange={(patch) => updateRoof({ retractable: { ...roof.retractable, ...patch } })}
@@ -2271,6 +2518,7 @@ const RoofPanel: React.FC = () => {
               label={`Tribune ${STAND_LABELS[side].toLowerCase()}`}
               disabled={!doc.stands[side].enabled}
               value={doc.stands[side].roofStyleOverride ?? 'inherit'}
+              defaultValue={model && (model.doc.stands[side].roofStyleOverride ?? 'inherit')}
               onChange={(v) => updateStand(side, { roofStyleOverride: v === 'inherit' ? undefined : v })}
               options={STAND_ROOF_OVERRIDES}
             />
@@ -2283,6 +2531,7 @@ const RoofPanel: React.FC = () => {
           label="Matériau de couverture"
           disabled={none}
           value={mats.roof}
+          defaultValue={mm?.roof}
           onChange={(r) => updateMaterials({ roof: r })}
           options={materialGallery(ROOF_MATERIAL_CATALOG)}
         />
@@ -2294,6 +2543,7 @@ const RoofPanel: React.FC = () => {
           step={0.05}
           disabled={none}
           value={roof.opacity}
+          defaultValue={mr?.opacity}
           display={`${Math.round(roof.opacity * 100)} %`}
           scale={100}
           onChange={(v) => updateRoof({ opacity: v })}
@@ -2349,6 +2599,7 @@ const RoofPanel: React.FC = () => {
             step={0.5}
             disabled={none}
             value={roof.heightOffset}
+            defaultValue={mr?.heightOffset}
             display={`+${fr1(roof.heightOffset)} m`}
             onChange={(v) => updateRoof({ heightOffset: v })}
           />
@@ -2359,6 +2610,7 @@ const RoofPanel: React.FC = () => {
             step={0.05}
             disabled={!isWholeRingRoof(doc)}
             value={roof.followStands ?? 0}
+            defaultValue={mr && (mr.followStands ?? 0)}
             display={(roof.followStands ?? 0) > 0 ? `${Math.round((roof.followStands ?? 0) * 100)} %` : 'Toit à plat'}
             scale={100}
             onChange={(v) => updateRoof({ followStands: v })}
@@ -2370,6 +2622,7 @@ const RoofPanel: React.FC = () => {
             step={0.05}
             disabled={none || roof.style === 'fixed_dome' || roof.style === 'air_dome' || roof.style === 'cable_dome'}
             value={roof.coverageRatio}
+            defaultValue={mr?.coverageRatio}
             display={`${Math.round(roof.coverageRatio * 100)} %`}
             scale={100}
             onChange={(v) => updateRoof({ coverageRatio: v })}
@@ -2382,6 +2635,7 @@ const RoofPanel: React.FC = () => {
             step={0.5}
             disabled={none}
             value={roof.outerOverhang ?? 0}
+            defaultValue={mr && (mr.outerOverhang ?? 0)}
             display={(roof.outerOverhang ?? 0) === 0 ? 'Par défaut' : `${(roof.outerOverhang ?? 0) > 0 ? '+' : '−'}${fr1(Math.abs(roof.outerOverhang ?? 0))} m`}
             onChange={(v) => updateRoof({ outerOverhang: v })}
           />
@@ -2391,6 +2645,7 @@ const RoofPanel: React.FC = () => {
           label="Percées de lumière"
           disabled={none}
           value={skyMode}
+          defaultValue={mr && (mr.skylightMode ?? 'none')}
           onChange={(mode) =>
             updateRoof({
               skylightMode: mode,
@@ -2414,6 +2669,7 @@ const RoofPanel: React.FC = () => {
             step={0.05}
             scale={100}
             value={skyRatio}
+            defaultValue={mr && (mr.skylightRatio ?? 0.35)}
             display={`${Math.round(skyRatio * 100)} %`}
             onChange={(v) => updateRoof({ skylightRatio: v })}
           />
@@ -2429,6 +2685,7 @@ const RoofPanel: React.FC = () => {
             hint="Prolonge le bord extérieur de la toiture jusqu’à la façade"
             disabled={none || (doc.concourse?.width ?? 0) <= 0}
             checked={roof.overConcourse !== false}
+            defaultValue={mr && mr.overConcourse !== false}
             onChange={(overConcourse) => updateRoof({ overConcourse })}
           />
           <ToggleField
@@ -2436,6 +2693,7 @@ const RoofPanel: React.FC = () => {
             hint="Habille d’une peau à lames le vide entre le haut de la façade (ou de la coursive) et le toit"
             disabled={none}
             checked={roof.enclosed !== false}
+            defaultValue={mr && mr.enclosed !== false}
             onChange={(enclosed) => updateRoof({ enclosed })}
           />
           <ToggleField
@@ -2443,12 +2701,14 @@ const RoofPanel: React.FC = () => {
             hint="Remplace la peau par des vitrages clairs entre les tribunes et le toit"
             disabled={none || roof.enclosed === false}
             checked={roof.enclosureGlazed === true}
+            defaultValue={mr && mr.enclosureGlazed === true}
             onChange={(enclosureGlazed) => updateRoof({ enclosureGlazed })}
           />
           <SelectField
             label="Mur vitré géant"
             disabled={none || roof.enclosed === false}
             value={roof.glassWall?.side ?? 'none'}
+            defaultValue={mr && (mr.glassWall?.side ?? 'none')}
             onChange={(side) =>
               updateRoof({
                 glassWall: side === 'none' ? undefined : { motion: 'pivot', openRatio: 0, ...roof.glassWall, side },
@@ -2483,6 +2743,7 @@ const RoofPanel: React.FC = () => {
                   step={0.05}
                   scale={100}
                   value={roof.glassWall.openRatio}
+                  defaultValue={mr?.glassWall?.openRatio}
                   display={`${Math.round(roof.glassWall.openRatio * 100)} %`}
                   onChange={(openRatio) => updateRoof({ glassWall: { ...roof.glassWall!, openRatio } })}
                 />
@@ -2495,6 +2756,7 @@ const RoofPanel: React.FC = () => {
             label="Canopée sur le parvis"
             disabled={none}
             value={roof.forecourtCanopy?.side ?? 'none'}
+            defaultValue={mr && (mr.forecourtCanopy?.side ?? 'none')}
             onChange={(side) =>
               updateRoof({
                 forecourtCanopy: side === 'none' ? undefined : { depth: 40, ...roof.forecourtCanopy, side },
@@ -2516,6 +2778,7 @@ const RoofPanel: React.FC = () => {
               max={FORECOURT_CANOPY_MAX_DEPTH}
               step={1}
               value={roof.forecourtCanopy.depth}
+              defaultValue={mr?.forecourtCanopy?.depth}
               display={`${roof.forecourtCanopy.depth} m`}
               onChange={(depth) => updateRoof({ forecourtCanopy: { ...roof.forecourtCanopy!, depth } })}
             />
@@ -2525,6 +2788,7 @@ const RoofPanel: React.FC = () => {
           <GalleryPicker
             label="Matériau de charpente"
             value={mats.structure}
+            defaultValue={mm?.structure}
             onChange={(structure) => updateMaterials({ structure })}
             options={materialGallery(STRUCTURE_MATERIAL_CATALOG)}
           />
@@ -2535,6 +2799,7 @@ const RoofPanel: React.FC = () => {
                 label={`Tribune ${STAND_LABELS[side].toLowerCase()}`}
                 disabled={!doc.stands[side].enabled}
                 value={doc.stands[side].structureMaterialOverride ?? 'inherit'}
+                defaultValue={model && (model.doc.stands[side].structureMaterialOverride ?? 'inherit')}
                 onChange={(v) => updateStand(side, { structureMaterialOverride: v === 'inherit' ? undefined : v })}
                 options={[
                   { id: 'inherit', label: 'Comme le stade' },
@@ -2628,11 +2893,14 @@ function RoofMotionButton({ openRatio, disabled }: { openRatio: number; disabled
 
 function RetractableRoofSection({
   retractable,
+  model,
   iris,
   horseshoe,
   onChange,
 }: {
   retractable: RetractableConfig;
+  /** The same settings in the stadium's starting model, for the modified marks. */
+  model: RetractableConfig | undefined;
   iris: boolean;
   horseshoe: boolean;
   onChange: (patch: Partial<RetractableConfig>) => void;
@@ -2655,6 +2923,7 @@ function RetractableRoofSection({
         <OptionList
           label="Mouvement"
           value={motion}
+          defaultValue={model?.motion}
           onChange={(m) => onChange({ motion: m, panelCount: RETRACTABLE_PANEL_LIMITS[m].def })}
           options={RETRACTABLE_MOTION_OPTIONS.map((o) => ({ id: o.id, label: o.label, detail: o.desc }))}
         />
@@ -2665,6 +2934,7 @@ function RetractableRoofSection({
         max={1}
         step={0.05}
         value={openRatio}
+        defaultValue={model?.openRatio}
         display={openRatio === 0 ? 'Fermé' : `${Math.round(openRatio * 100)} %`}
         scale={100}
         onChange={(v) => onChange({ openRatio: v })}
@@ -2677,17 +2947,25 @@ function RetractableRoofSection({
           max={limits.max}
           step={1}
           value={panelCount}
+          defaultValue={model?.motion === motion ? model.panelCount : undefined}
           display={String(panelCount)}
           onChange={(v) => onChange({ panelCount: v })}
         />
       )}
       {parks && (
-        <Segmented
+        <Resettable
           label="Côté de rangement"
           value={parkEnd}
-          options={PARK_END_OPTIONS}
+          defaultValue={model?.parkEnd}
           onChange={(v) => onChange({ parkEnd: v })}
-        />
+        >
+          <Segmented
+            label="Côté de rangement"
+            value={parkEnd}
+            options={PARK_END_OPTIONS}
+            onChange={(v) => onChange({ parkEnd: v })}
+          />
+        </Resettable>
       )}
       {motion === 'fold_central' && (
         <FieldRow label="Mât porteur">
@@ -2713,6 +2991,7 @@ function RetractableRoofSection({
         max={RETRACTABLE_MAX_PYLONS}
         step={1}
         value={pylonCount}
+        defaultValue={model?.pylonCount}
         display={pylonCount === 0 ? 'Aucun' : String(pylonCount)}
         onChange={(v) => onChange({ pylonCount: v })}
       />
@@ -2724,19 +3003,28 @@ function RetractableRoofSection({
           max={RETRACTABLE_MAX_PITCH_DEG}
           step={1}
           value={pitchDeg}
+          defaultValue={model?.pitchDeg}
           display={pitchDeg === 0 ? 'Plat' : `${pitchDeg}°`}
           onChange={(v) => onChange({ pitchDeg: v })}
         />
       )}
-      <Segmented
+      <Resettable
         label="Type de panneaux"
         value={panelKind}
-        options={PANEL_KIND_OPTIONS}
+        defaultValue={model?.panelKind}
         onChange={(v) => onChange({ panelKind: v })}
-      />
+      >
+        <Segmented
+          label="Type de panneaux"
+          value={panelKind}
+          options={PANEL_KIND_OPTIONS}
+          onChange={(v) => onChange({ panelKind: v })}
+        />
+      </Resettable>
       <GalleryPicker
         label="Matériau des panneaux"
         value={panelMaterial}
+        defaultValue={model?.panelMaterial}
         onChange={(v) => onChange({ panelMaterial: v })}
         options={materialGallery(ROOF_MATERIAL_CATALOG)}
       />
@@ -2757,6 +3045,7 @@ const FacadeStandOverrides: React.FC<{ envelope: EnvelopeStyle | RoofStyle; faca
   const activeStand = useStadiumStore((s) => s.activeStandTab);
   const [side, setSide] = useState<StandSide>(activeStand === 'all' ? 'south' : activeStand);
   const stand = doc.stands[side];
+  const mStand = useModel()?.doc.stands[side];
   const stadiumEnvelope = ENVELOPE_GALLERY.find((o) => o.id === envelope);
   const stadiumFacade = FACADE_MATERIAL_CATALOG.find((o) => o.id === facade);
   const customised = SEAT_GRID_SIDES.filter((s) => {
@@ -2780,6 +3069,7 @@ const FacadeStandOverrides: React.FC<{ envelope: EnvelopeStyle | RoofStyle; faca
         label={`Enveloppe de la tribune ${STAND_LABELS[side].toLowerCase()}`}
         disabled={!stand.enabled}
         value={stand.envelopeStyleOverride ?? 'inherit'}
+        defaultValue={mStand && (mStand.envelopeStyleOverride ?? 'inherit')}
         onChange={(v) => updateStand(side, { envelopeStyleOverride: v === 'inherit' ? undefined : v })}
         options={[
           {
@@ -2795,6 +3085,7 @@ const FacadeStandOverrides: React.FC<{ envelope: EnvelopeStyle | RoofStyle; faca
         label={`Revêtement de la tribune ${STAND_LABELS[side].toLowerCase()}`}
         disabled={!stand.enabled}
         value={stand.facadeMaterialOverride ?? 'inherit'}
+        defaultValue={mStand && (mStand.facadeMaterialOverride ?? 'inherit')}
         onChange={(v) => updateStand(side, { facadeMaterialOverride: v === 'inherit' ? undefined : v })}
         options={[
           {
@@ -2827,6 +3118,11 @@ const FacadePanel: React.FC = () => {
   const updateStand = useStadiumStore((s) => s.updateStand);
   const shell = isIntegralShell(doc.roof.style) ? doc.roof.style : null;
   const envelope = shell ?? mats.envelopeStyle ?? 'enveloping_skin';
+  const model = useModel();
+  const mm = model?.mats;
+  const mEnvelope = model
+    ? (isIntegralShell(model.doc.roof.style) ? model.doc.roof.style : null) ?? mm?.envelopeStyle ?? 'enveloping_skin'
+    : undefined;
 
   return (
     <>
@@ -2835,6 +3131,7 @@ const FacadePanel: React.FC = () => {
         <GalleryPicker
           label="Enveloppe extérieure"
           value={envelope}
+          defaultValue={mEnvelope}
           onChange={setEnvelope}
           options={ENVELOPE_GALLERY}
         />
@@ -2851,11 +3148,18 @@ const FacadePanel: React.FC = () => {
             max={14}
             step={0.5}
             value={resolveWaveAmplitude(doc.roof)}
+            defaultValue={model && resolveWaveAmplitude(model.doc.roof)}
             display={`${resolveWaveAmplitude(doc.roof)} m`}
             onChange={(waveAmplitude) => updateRoof({ waveAmplitude })}
           />
         )}
         {envelope === 'colonnade_forest' && (
+          <Resettable
+            label="Forme des poteaux"
+            value={mats.colonnadeShape ?? 'straight'}
+            defaultValue={mm && (mm.colonnadeShape ?? 'straight')}
+            onChange={(colonnadeShape) => updateMaterials({ colonnadeShape })}
+          >
           <Segmented
             label="Forme des poteaux"
             size="sm"
@@ -2868,6 +3172,7 @@ const FacadePanel: React.FC = () => {
               { id: 'square', label: 'Piliers', title: 'Piliers carrés massifs dans le revêtement de façade, une seule rangée' },
             ]}
           />
+          </Resettable>
         )}
         {envelope === 'colonnade_forest' && (
           <SliderField
@@ -2877,6 +3182,7 @@ const FacadePanel: React.FC = () => {
             max={4}
             step={0.1}
             value={mats.colonnadeDensity ?? 1}
+            defaultValue={mm && (mm.colonnadeDensity ?? 1)}
             display={`${fr1(mats.colonnadeDensity ?? 1)}×`}
             onChange={(colonnadeDensity) => updateMaterials({ colonnadeDensity })}
           />
@@ -2885,6 +3191,7 @@ const FacadePanel: React.FC = () => {
           <OptionList
             label="Silhouette de la peau"
             value={mats.envelopeProfile ?? 'straight'}
+            defaultValue={mm && (mm.envelopeProfile ?? 'straight')}
             onChange={(envelopeProfile) => updateMaterials({ envelopeProfile })}
             options={ENVELOPE_PROFILE_OPTIONS}
           />
@@ -2901,6 +3208,7 @@ const FacadePanel: React.FC = () => {
           max={12}
           step={0.5}
           value={mats.plinthHeight ?? 0}
+          defaultValue={mm && (mm.plinthHeight ?? 0)}
           display={(mats.plinthHeight ?? 0) >= 3 ? `${fr1(mats.plinthHeight ?? 0)} m` : 'Aucun'}
           onChange={(plinthHeight) => updateMaterials({ plinthHeight })}
         />
@@ -2913,6 +3221,7 @@ const FacadePanel: React.FC = () => {
               max={40}
               step={2}
               value={mats.facadeStripeSpacing ?? 0}
+              defaultValue={mm && (mm.facadeStripeSpacing ?? 0)}
               display={(mats.facadeStripeSpacing ?? 0) >= 4 ? `tous les ${mats.facadeStripeSpacing} m` : 'Aucune'}
               onChange={(facadeStripeSpacing) => updateMaterials({ facadeStripeSpacing })}
             />
@@ -2920,6 +3229,7 @@ const FacadePanel: React.FC = () => {
               label="Anneau lumineux en pied"
               hint="Bande orangée qui rougeoie au pied de la façade, surtout la nuit"
               checked={mats.facadeBaseGlow === true}
+              defaultValue={mm && mm.facadeBaseGlow === true}
               onChange={(facadeBaseGlow) => updateMaterials({ facadeBaseGlow })}
             />
           </>
@@ -2929,6 +3239,7 @@ const FacadePanel: React.FC = () => {
         <GalleryPicker
           label="Matériau de façade"
           value={mats.facade}
+          defaultValue={mm?.facade}
           onChange={(facade) => updateMaterials({ facade })}
           options={materialGallery(FACADE_MATERIAL_CATALOG)}
         />
@@ -2936,6 +3247,7 @@ const FacadePanel: React.FC = () => {
           <ColorField
             label="Couleur d’éclairage la nuit"
             value={mats.facadeGlowHex ?? '#ffffff'}
+            defaultValue={mm && (mm.facadeGlowHex ?? '#ffffff')}
             onChange={(facadeGlowHex) => updateMaterials({ facadeGlowHex })}
           />
         )}
@@ -2944,6 +3256,7 @@ const FacadePanel: React.FC = () => {
             label="Lames éclairées la nuit"
             hint="Projecteurs colorés derrière les lames, au crépuscule et la nuit"
             checked={Boolean(mats.facadeGlowHex)}
+            defaultValue={mm && Boolean(mm.facadeGlowHex)}
             onChange={(on) => updateMaterials({ facadeGlowHex: on ? doc.colors.seatsPrimary : undefined })}
           />
         )}
@@ -2951,6 +3264,7 @@ const FacadePanel: React.FC = () => {
           <ColorField
             label="Couleur de l’éclairage"
             value={mats.facadeGlowHex}
+            defaultValue={mm?.facadeGlowHex}
             onChange={(facadeGlowHex) => updateMaterials({ facadeGlowHex })}
           />
         )}
@@ -2960,6 +3274,7 @@ const FacadePanel: React.FC = () => {
         <GalleryPicker
           label="Motif géométrique 3D"
           value={pattern}
+          defaultValue={mm && (mm.facadePattern ?? 'none')}
           onChange={(facadePattern) => updateMaterials({ facadePattern })}
           options={FACADE_PATTERN_GALLERY}
         />
@@ -2984,6 +3299,7 @@ const FacadePanel: React.FC = () => {
                 label="Dégradé du bas vers le haut"
                 hint="Couleur 1 au pied de la façade, couleur 4 en haut, au lieu d'un tirage au hasard"
                 checked={mats.facadePaletteGradient ?? false}
+                defaultValue={mm && (mm.facadePaletteGradient ?? false)}
                 onChange={(facadePaletteGradient) => updateMaterials({ facadePaletteGradient })}
               />
             )}
@@ -3005,6 +3321,7 @@ const FacadePanel: React.FC = () => {
           step={0.1}
           disabled={pattern === 'none'}
           value={density}
+          defaultValue={mm && (mm.facadeDensity ?? 1.0)}
           display={`${fr1(density)}×`}
           onChange={(facadeDensity) => updateMaterials({ facadeDensity })}
         />
@@ -3015,6 +3332,7 @@ const FacadePanel: React.FC = () => {
           step={0.05}
           disabled={pattern === 'none'}
           value={depth}
+          defaultValue={mm && (mm.facadeDepth ?? 0.85)}
           display={`${fr1(depth)} m`}
           onChange={(facadeDepth) => updateMaterials({ facadeDepth })}
         />
@@ -3026,6 +3344,7 @@ const FacadePanel: React.FC = () => {
             max={1}
             step={0.05}
             value={mats.facadeBulge ?? 0}
+            defaultValue={mm && (mm.facadeBulge ?? 0)}
             display={`${Math.round((mats.facadeBulge ?? 0) * 6 * 10) / 10} m`}
             onChange={(facadeBulge) => updateMaterials({ facadeBulge })}
           />
@@ -3053,6 +3372,8 @@ const SitePanel: React.FC = () => {
   const updateMaterials = useStadiumStore((s) => s.updateMaterials);
   const mats = useMemo(() => resolveStadiumMaterials(doc), [doc]);
   const site = resolveSite(doc);
+  const model = useModel();
+  const ms = model ? resolveSite(model.doc) : undefined;
   return (
     <>
       <PanelHeader title="Abords" meta={SITE_OPTIONS.find((o) => o.id === site.setting)?.label} />
@@ -3060,6 +3381,7 @@ const SitePanel: React.FC = () => {
         <OptionList
           label="Cadre autour du stade"
           value={site.setting}
+          defaultValue={ms?.setting}
           onChange={(setting) => updateSite({ setting })}
           options={SITE_OPTIONS}
         />
@@ -3068,6 +3390,7 @@ const SitePanel: React.FC = () => {
         <GalleryPicker
           label="Revêtement du parvis"
           value={mats.plazaSurface}
+          defaultValue={model?.mats.plazaSurface}
           onChange={(plazaSurface) => updateMaterials({ plazaSurface })}
           options={materialGallery(PLAZA_MATERIAL_CATALOG)}
         />
@@ -3080,6 +3403,7 @@ const SitePanel: React.FC = () => {
           max={14}
           step={0.5}
           value={site.podiumHeight}
+          defaultValue={ms?.podiumHeight}
           display={site.podiumHeight > 0.5 ? `${fr1(site.podiumHeight)} m` : 'Aucun'}
           onChange={(podiumHeight) => updateSite({ podiumHeight })}
         />
@@ -3090,10 +3414,11 @@ const SitePanel: React.FC = () => {
           max={16}
           step={0.5}
           value={site.mound}
+          defaultValue={ms?.mound}
           display={site.mound > 0.5 ? `${fr1(site.mound)} m` : 'Aucune'}
           onChange={(mound) => updateSite({ mound })}
         />
-        <FieldRow label="Plan d’eau">
+        <FieldRow label="Plan d’eau" onReset={resetTo(site.water, ms?.water, (water) => updateSite({ water }))}>
           <Segmented
             label="Plan d’eau"
             size="sm"
@@ -3112,12 +3437,14 @@ const SitePanel: React.FC = () => {
           label="Entrées à tourniquets"
           hint="Pavillons d’accès lettrés sur les axes du stade, avec billetterie"
           checked={site.entrances}
+          defaultValue={ms?.entrances}
           onChange={(entrances) => updateSite({ entrances })}
         />
         <ToggleField
           label="Périmètre clôturé"
           hint="Grille anti-intrusion autour du parvis, ouverte à chaque entrée"
           checked={site.perimeterFence}
+          defaultValue={ms?.perimeterFence}
           onChange={(perimeterFence) => updateSite({ perimeterFence })}
         />
       </PanelSection>
@@ -3129,11 +3456,13 @@ const SitePanel: React.FC = () => {
 const FloodlightSection: React.FC = () => {
   const rigMode = useStadiumStore((s) => resolveFloodlightRig(s.doc));
   const setFloodlightRig = useStadiumStore((s) => s.setFloodlightRig);
+  const model = useModel();
   return (
     <PanelSection title="Éclairage du terrain">
       <OptionList
         label="Système de projecteurs"
         value={rigMode}
+        defaultValue={model ? resolveFloodlightRig(model.doc) : undefined}
         onChange={setFloodlightRig}
         options={FLOODLIGHT_RIG_CATALOG.map((o) => ({ id: o.id, label: o.label, detail: o.subtitle }))}
       />
@@ -3166,11 +3495,15 @@ function RingCutsFields() {
   const setRingCuts = useStadiumStore((s) => s.setRingCuts);
   const breach = resolveRingBreach(doc);
   const petals = resolveUpperRingGaps(doc);
+  const md = useModel()?.doc;
+  const mBreach = md ? resolveRingBreach(md) : undefined;
+  const mPetals = md ? resolveUpperRingGaps(md) : undefined;
   return (
     <>
       <SelectField<StandSide | 'none'>
         label="Brèche dans l’anneau"
         value={breach?.side ?? 'none'}
+        defaultValue={md ? (mBreach?.side ?? 'none') : undefined}
         onChange={(side) =>
           setRingCuts({
             ringBreach: side === 'none' ? undefined : { side, width: breach?.width ?? RING_BREACH_LIMITS.def },
@@ -3192,6 +3525,7 @@ function RingCutsFields() {
           max={RING_BREACH_LIMITS.max}
           step={1}
           value={breach.width}
+          defaultValue={mBreach?.width}
           display={`${breach.width} m`}
           onChange={(width) => setRingCuts({ ringBreach: { ...breach, width } })}
         />
@@ -3200,6 +3534,7 @@ function RingCutsFields() {
         label="Anneau supérieur en pétales"
         hint="Les étages au-dessus du premier sont découpés en pétales séparés par des vides"
         checked={petals !== null}
+        defaultValue={md ? mPetals !== null : undefined}
         onChange={(on) =>
           setRingCuts({
             upperRingGaps: on
@@ -3216,6 +3551,7 @@ function RingCutsFields() {
             max={UPPER_RING_GAP_LIMITS.count.max}
             step={1}
             value={petals.count}
+            defaultValue={mPetals?.count}
             display={String(petals.count)}
             onChange={(count) => setRingCuts({ upperRingGaps: { ...petals, count } })}
           />
@@ -3225,6 +3561,7 @@ function RingCutsFields() {
             max={UPPER_RING_GAP_LIMITS.width.max}
             step={0.5}
             value={petals.width}
+            defaultValue={mPetals?.width}
             display={`${petals.width} m`}
             onChange={(width) => setRingCuts({ upperRingGaps: { ...petals, width } })}
           />

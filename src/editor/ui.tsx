@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { ChevronRight, X } from 'lucide-react';
@@ -31,18 +31,95 @@ const RadioMark: React.FC<{ active: boolean }> = ({ active }) => (
   </span>
 );
 
+/* ------------------------------------------------------------------------------------------------
+ * Modified fields
+ *
+ * A field given the value it had in the stadium's starting model shows a blue dot in the left
+ * gutter while it differs; the dot (or a double-click on the label) puts the model value back.
+ * Each field reports its state up through the sections around it, so a collapsed section can say
+ * how many of its settings differ from the model.
+ * ---------------------------------------------------------------------------------------------- */
+
+interface ModifiedTracker {
+  report: (key: string, modified: boolean) => void;
+}
+
+const ModifiedTrackerContext = createContext<ModifiedTracker | null>(null);
+
+/** Equality used to decide whether a value still matches the model (float noise ignored). */
+export function sameValue(a: unknown, b: unknown): boolean {
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 1e-6;
+  return a === b;
+}
+
+/** Counts the modified fields reported from inside, and passes each report on to the parent. */
+function useModifiedTracker(): [number, ModifiedTracker] {
+  const parent = useContext(ModifiedTrackerContext);
+  const keys = useRef(new Set<string>());
+  const [count, setCount] = useState(0);
+  const tracker = useMemo<ModifiedTracker>(
+    () => ({
+      report(key, modified) {
+        const set = keys.current;
+        if (modified) set.add(key);
+        else set.delete(key);
+        setCount(set.size);
+        parent?.report(key, modified);
+      },
+    }),
+    [parent]
+  );
+  return [count, tracker];
+}
+
+/** Reports one field's modified state to the enclosing sections for as long as it is mounted. */
+function useReportModified(modified: boolean) {
+  const tracker = useContext(ModifiedTrackerContext);
+  const key = useId();
+  useEffect(() => {
+    tracker?.report(key, modified);
+  }, [tracker, key, modified]);
+  useEffect(() => () => tracker?.report(key, false), [tracker, key]);
+}
+
+/** Blue dot hung in the 16px gutter left of a modified field; clicking it restores the model value. */
+const ResetDot: React.FC<{ label: string; disabled?: boolean; onReset: () => void; top?: boolean }> = ({
+  label,
+  disabled,
+  onReset,
+  top,
+}) => (
+  <button
+    type="button"
+    onClick={onReset}
+    disabled={disabled}
+    aria-label={`Rétablir « ${label} » à la valeur du modèle`}
+    title="Modifié par rapport au modèle : cliquer pour rétablir"
+    className={`absolute -left-4 grid place-items-center w-4 h-4 rounded-full hover:bg-hover disabled:pointer-events-none ${
+      top ? 'top-2.5' : 'top-1/2 -translate-y-1/2'
+    }`}
+  >
+    <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-accent" />
+  </button>
+);
+
+/** How many settings differ from the model, shown on a collapsed header. */
+const ModifiedCount: React.FC<{ count: number }> = ({ count }) =>
+  count > 0 ? (
+    <span
+      className="inline-flex items-center gap-1 shrink-0 text-2xs text-accent-ink tabular-nums"
+      title={`${count} réglage${count > 1 ? 's' : ''} modifié${count > 1 ? 's' : ''} par rapport au modèle`}
+    >
+      <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-accent" />
+      {count}
+      <span className="sr-only"> modifié{count > 1 ? 's' : ''}</span>
+    </span>
+  ) : null;
+
 /** Open state of sections that carry a `persistKey`, kept across tab switches for the session. */
 const sectionOpenState = new Map<string, boolean>();
 
-/** Inspector section: a title row that collapses its body. */
-export const PanelSection: React.FC<{
-  title: string;
-  action?: React.ReactNode;
-  defaultOpen?: boolean;
-  /** Remembers the open state under this key while the page is open. */
-  persistKey?: string;
-  children: React.ReactNode;
-}> = ({ title, action, defaultOpen = true, persistKey, children }) => {
+function usePersistedOpen(persistKey: string | undefined, defaultOpen: boolean) {
   const [open, setOpenState] = useState(() =>
     persistKey ? (sectionOpenState.get(persistKey) ?? defaultOpen) : defaultOpen
   );
@@ -50,6 +127,26 @@ export const PanelSection: React.FC<{
     if (persistKey) sectionOpenState.set(persistKey, next);
     setOpenState(next);
   };
+  return [open, setOpen] as const;
+}
+
+/**
+ * Inspector section: a title row that collapses its body. Closed, the row keeps a short summary
+ * of what is inside and how many settings differ from the model. The body stays mounted while
+ * closed so those counts hold.
+ */
+export const PanelSection: React.FC<{
+  title: string;
+  action?: React.ReactNode;
+  defaultOpen?: boolean;
+  /** Remembers the open state under this key while the page is open. */
+  persistKey?: string;
+  /** Short state of the section, shown on the title row while it is closed. */
+  summary?: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ title, action, defaultOpen = true, persistKey, summary, children }) => {
+  const [open, setOpen] = usePersistedOpen(persistKey, defaultOpen);
+  const [modifiedCount, tracker] = useModifiedTracker();
   const bodyId = useId();
   return (
     <section className="border-b border-line">
@@ -59,56 +156,174 @@ export const PanelSection: React.FC<{
           onClick={() => setOpen(!open)}
           aria-expanded={open}
           aria-controls={bodyId}
-          className="flex flex-1 items-center gap-1 min-h-10 py-2 text-left text-xs font-semibold text-ink rounded"
+          className="flex flex-1 min-w-0 items-center gap-1 min-h-10 py-2 text-left text-xs font-semibold text-ink rounded"
         >
           <ChevronRight
             aria-hidden
             className={`w-3.5 h-3.5 shrink-0 text-ink-faint transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
           />
-          {title}
+          <span className="shrink-0">{title}</span>
+          {!open && (
+            <span className="flex flex-1 min-w-0 items-center justify-end gap-2 pl-3 font-normal">
+              {summary && <span className="min-w-0 truncate text-2xs text-ink-faint">{summary}</span>}
+              <ModifiedCount count={modifiedCount} />
+            </span>
+          )}
         </button>
         {action}
       </div>
-      {open && (
-        <div id={bodyId} className="px-4 pb-4 space-y-3">
+      <ModifiedTrackerContext.Provider value={tracker}>
+        <div id={bodyId} hidden={!open} className="px-4 pb-4 space-y-3">
           {children}
         </div>
-      )}
+      </ModifiedTrackerContext.Provider>
     </section>
   );
 };
 
+/** Inside Avancé, top-level groups fold on their own; groups nested in them stay plain headings. */
+const AdvancedTabContext = createContext<string | null>(null);
+
 /**
  * The collapsed home of a tab's expert settings, closed by default and remembered per tab.
- * Its body is grouped under `SubHeading`s rather than nested collapsible sections.
+ * Its direct `SubGroup`s fold one by one, so opening Avancé shows a short list of topics.
  */
 export const AdvancedSection: React.FC<{ tab: string; children: React.ReactNode }> = ({ tab, children }) => (
   <PanelSection title="Avancé" defaultOpen={false} persistKey={`advanced:${tab}`}>
-    <div className="space-y-5">{children}</div>
+    <AdvancedTabContext.Provider value={tab}>
+      <div className="-mx-4 -mb-4 -mt-1">{children}</div>
+    </AdvancedTabContext.Provider>
   </PanelSection>
 );
 
-/** A titled group of fields inside a section (used to organise the Avancé section). */
-export const SubGroup: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
-  <div className="space-y-3">
-    <h3 className="text-2xs font-medium text-ink-faint">{title}</h3>
-    {children}
-  </div>
-);
+const FoldingGroup: React.FC<{
+  title: string;
+  persistKey: string;
+  summary?: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ title, persistKey, summary, children }) => {
+  const [open, setOpen] = usePersistedOpen(persistKey, false);
+  const [modifiedCount, tracker] = useModifiedTracker();
+  const bodyId = useId();
+  return (
+    <div className="border-t border-line first:border-t-0">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-controls={bodyId}
+        className="flex w-full items-center gap-1 min-h-9 pl-5 pr-3 text-left text-xs text-ink-muted hover:text-ink"
+      >
+        <ChevronRight
+          aria-hidden
+          className={`w-3 h-3 shrink-0 text-ink-faint transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
+        />
+        <span className={`shrink-0 ${open ? 'text-ink font-medium' : ''}`}>{title}</span>
+        <span className="flex flex-1 min-w-0 items-center justify-end gap-2 pl-3">
+          {!open && summary && <span className="min-w-0 truncate text-2xs text-ink-faint">{summary}</span>}
+          {!open && <ModifiedCount count={modifiedCount} />}
+        </span>
+      </button>
+      <ModifiedTrackerContext.Provider value={tracker}>
+        <AdvancedTabContext.Provider value={null}>
+          <div id={bodyId} hidden={!open} className="px-4 pt-1 pb-4 space-y-3">
+            {children}
+          </div>
+        </AdvancedTabContext.Provider>
+      </ModifiedTrackerContext.Provider>
+    </div>
+  );
+};
 
-/** Label on the left, control on the right, on one 28px row. */
+/**
+ * A titled group of fields. Directly inside Avancé it folds on its own (closed by default,
+ * remembered per tab); anywhere else it is a plain heading over its fields.
+ */
+export const SubGroup: React.FC<{ title: string; summary?: React.ReactNode; children: React.ReactNode }> = ({
+  title,
+  summary,
+  children,
+}) => {
+  const advancedTab = useContext(AdvancedTabContext);
+  if (advancedTab !== null) {
+    return (
+      <FoldingGroup title={title} summary={summary} persistKey={`advanced:${advancedTab}:${title}`}>
+        {children}
+      </FoldingGroup>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <h3 className="text-2xs font-medium text-ink-faint">{title}</h3>
+      {children}
+    </div>
+  );
+};
+
+/**
+ * Label on the left, control on the right, on one 28px row. With `onReset`, the row is marked
+ * modified and the label's double-click (or the gutter dot) restores the model value.
+ */
 export const FieldRow: React.FC<{
   label: string;
   hint?: string;
+  /** Present while the value differs from the model: restores it. */
+  onReset?: () => void;
+  disabled?: boolean;
   children: React.ReactNode;
-}> = ({ label, hint, children }) => (
-  <div className="flex items-center justify-between gap-3 min-h-7">
-    <span className="min-w-0 text-xs leading-snug text-ink-muted" title={hint}>
-      {label}
-    </span>
-    <div className="flex items-center gap-2 shrink-0">{children}</div>
-  </div>
-);
+}> = ({ label, hint, onReset, disabled, children }) => {
+  useReportModified(onReset !== undefined);
+  return (
+    <div className="relative flex items-center justify-between gap-3 min-h-7">
+      {onReset && <ResetDot label={label} disabled={disabled} onReset={onReset} />}
+      <span
+        className="min-w-0 text-xs leading-snug text-ink-muted"
+        title={hint}
+        onDoubleClick={disabled ? undefined : onReset}
+      >
+        {label}
+      </span>
+      <div className="flex items-center gap-2 shrink-0">{children}</div>
+    </div>
+  );
+};
+
+/** `onReset` for a field whose model value is known: defined only while the value differs. */
+export function resetTo<T>(value: T, modelValue: T | undefined, apply: (value: T) => void) {
+  return modelValue === undefined || sameValue(value, modelValue) ? undefined : () => apply(modelValue);
+}
+
+/**
+ * Gives the modified mark to a control that has no label row of its own (picture gallery,
+ * option list, bare segmented control): the dot hangs in the gutter beside it.
+ */
+export function Resettable<T>({
+  label,
+  value,
+  defaultValue,
+  onChange,
+  disabled,
+  top,
+  children,
+}: {
+  label: string;
+  value: T;
+  defaultValue: T | undefined;
+  onChange: (value: T) => void;
+  disabled?: boolean;
+  /** Aligns the dot with the first row rather than the middle (tall lists). */
+  top?: boolean;
+  children: React.ReactNode;
+}) {
+  const onReset = resetTo(value, defaultValue, onChange);
+  useReportModified(onReset !== undefined);
+  return (
+    <div className="relative">
+      {onReset && <ResetDot label={label} disabled={disabled} onReset={onReset} top={top} />}
+      {children}
+    </div>
+  );
+}
 
 export const SliderField: React.FC<{
   label: string;
@@ -121,9 +336,13 @@ export const SliderField: React.FC<{
   scale?: number;
   hint?: string;
   disabled?: boolean;
+  /** The value in the stadium's starting model: marks the field while it differs. */
+  defaultValue?: number;
   onChange: (value: number) => void;
-}> = ({ label, value, min, max, step, display, scale = 1, hint, disabled, onChange }) => {
+}> = ({ label, value, min, max, step, display, scale = 1, hint, disabled, defaultValue, onChange }) => {
   const id = useId();
+  const onReset = resetTo(value, defaultValue, onChange);
+  useReportModified(onReset !== undefined);
   const fill = ((Math.min(max, Math.max(min, value)) - min) / (max - min)) * 100;
   // The value reads as formatted text and becomes an exact numeric entry while focused.
   const [draft, setDraft] = useState<string | null>(null);
@@ -136,8 +355,14 @@ export const SliderField: React.FC<{
   };
   return (
     <div className={disabled ? 'opacity-50' : undefined}>
-      <div className="flex items-baseline justify-between gap-3">
-        <label htmlFor={id} className="min-w-0 text-xs leading-snug text-ink-muted" title={hint}>
+      <div className="relative flex items-baseline justify-between gap-3">
+        {onReset && <ResetDot label={label} disabled={disabled} onReset={onReset} />}
+        <label
+          htmlFor={id}
+          className="min-w-0 text-xs leading-snug text-ink-muted"
+          title={hint}
+          onDoubleClick={disabled ? undefined : onReset}
+        >
           {label}
         </label>
         <input
@@ -209,9 +434,11 @@ export const ToggleField: React.FC<{
   checked: boolean;
   hint?: string;
   disabled?: boolean;
+  /** The value in the stadium's starting model: marks the field while it differs. */
+  defaultValue?: boolean;
   onChange: (checked: boolean) => void;
-}> = ({ label, checked, hint, disabled, onChange }) => (
-  <FieldRow label={label} hint={hint}>
+}> = ({ label, checked, hint, disabled, defaultValue, onChange }) => (
+  <FieldRow label={label} hint={hint} disabled={disabled} onReset={resetTo(checked, defaultValue, onChange)}>
     <Switch checked={checked} onChange={onChange} label={label} disabled={disabled} />
   </FieldRow>
 );
@@ -270,15 +497,18 @@ export function SelectField<T extends string>({
   options,
   onChange,
   disabled,
+  defaultValue,
 }: {
   label: string;
   value: T;
   options: { id: T; label: string }[];
   onChange: (id: T) => void;
   disabled?: boolean;
+  /** The value in the stadium's starting model: marks the field while it differs. */
+  defaultValue?: T;
 }) {
   return (
-    <FieldRow label={label}>
+    <FieldRow label={label} disabled={disabled} onReset={resetTo(value, defaultValue, onChange)}>
       <select
         aria-label={label}
         value={value}
@@ -311,6 +541,7 @@ export function OptionList<T extends string>({
   onChange,
   disabled,
   columns = 1,
+  defaultValue,
 }: {
   label: string;
   value: T;
@@ -318,8 +549,11 @@ export function OptionList<T extends string>({
   onChange: (id: T) => void;
   disabled?: boolean;
   columns?: 1 | 2;
+  /** The value in the stadium's starting model: marks the list while it differs. */
+  defaultValue?: T;
 }) {
   return (
+    <Resettable label={label} value={value} defaultValue={defaultValue} onChange={onChange} disabled={disabled} top>
     <div
       role="radiogroup"
       aria-label={label}
@@ -353,6 +587,7 @@ export function OptionList<T extends string>({
         );
       })}
     </div>
+    </Resettable>
   );
 }
 
@@ -504,6 +739,60 @@ export const NumberField: React.FC<{
   </label>
 );
 
+/**
+ * Number in a table cell: reads as formatted text, becomes an exact entry while focused (Enter
+ * commits, Escape cancels), and the up/down arrows step it (Shift for ten steps).
+ */
+export const CellNumber: React.FC<{
+  /** Accessible name, e.g. « Rangs, étage 2 ». */
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  display: string;
+  /** Multiplier between the stored value and the unit typed by the user. */
+  scale?: number;
+  disabled?: boolean;
+  onChange: (value: number) => void;
+}> = ({ label, value, min, max, step, display, scale = 1, disabled, onChange }) => {
+  const [draft, setDraft] = useState<string | null>(null);
+  const clamp = (v: number) => Math.min(max, Math.max(min, Math.round(v / step) * step));
+  const commit = () => {
+    if (draft === null) return;
+    const typed = parseFr(draft);
+    setDraft(null);
+    if (Number.isFinite(typed)) onChange(clamp(typed / scale));
+  };
+  return (
+    <input
+      aria-label={label}
+      inputMode="decimal"
+      disabled={disabled}
+      value={draft ?? display}
+      onFocus={(e) => {
+        setDraft(String(Number((value * scale).toFixed(2))).replace('.', ','));
+        requestAnimationFrame(() => e.target.select());
+      }}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        else if (e.key === 'Escape') {
+          setDraft(null);
+          e.currentTarget.blur();
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          e.preventDefault();
+          const next = clamp(value + (e.key === 'ArrowUp' ? 1 : -1) * step * (e.shiftKey ? 10 : 1));
+          onChange(next);
+          setDraft(String(Number((next * scale).toFixed(2))).replace('.', ','));
+        }
+      }}
+      className={`w-full h-7 px-1.5 text-right text-xs text-ink tabular-nums disabled:opacity-40 ${fieldClass}`}
+    />
+  );
+};
+
 export interface GalleryOption<T extends string> {
   id: T;
   label: string;
@@ -544,12 +833,15 @@ export function GalleryPicker<T extends string>({
   options,
   onChange,
   disabled,
+  defaultValue,
 }: {
   label: string;
   value: T;
   options: GalleryOption<T>[];
   onChange: (id: T) => void;
   disabled?: boolean;
+  /** The value in the stadium's starting model: marks the picker while it differs. */
+  defaultValue?: T;
 }) {
   const [open, setOpen] = useState(false);
   const [box, setBox] = useState<{ left: number; top: number; width: number; bottom: number } | null>(null);
@@ -603,7 +895,7 @@ export function GalleryPicker<T extends string>({
   const columns = box && box.width >= 600 ? 'grid-cols-3' : 'grid-cols-2';
 
   return (
-    <>
+    <Resettable label={label} value={value} defaultValue={defaultValue} onChange={onChange} disabled={disabled}>
       <button
         ref={triggerRef}
         type="button"
@@ -686,6 +978,6 @@ export function GalleryPicker<T extends string>({
           </div>,
           document.body
         )}
-    </>
+    </Resettable>
   );
 }
