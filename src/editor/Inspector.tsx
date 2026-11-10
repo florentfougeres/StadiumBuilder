@@ -2360,6 +2360,17 @@ const RoofPanel: React.FC = () => {
             scale={100}
             onChange={(v) => updateRoof({ coverageRatio: v })}
           />
+          <SliderField
+            label="Débord extérieur"
+            hint="Avance ou recule le bord extérieur du toit derrière les tribunes, sans jamais le faire rentrer en deçà de leur dos"
+            min={-4}
+            max={12}
+            step={0.5}
+            disabled={none}
+            value={roof.outerOverhang ?? 0}
+            display={(roof.outerOverhang ?? 0) === 0 ? 'Par défaut' : `${(roof.outerOverhang ?? 0) > 0 ? '+' : '−'}${fr1(Math.abs(roof.outerOverhang ?? 0))} m`}
+            onChange={(v) => updateRoof({ outerOverhang: v })}
+          />
         </SubGroup>
         <SubGroup title="Percées de lumière">
         <OptionList

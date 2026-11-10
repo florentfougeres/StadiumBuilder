@@ -49,6 +49,17 @@ function footprintLookup(
   };
 }
 
+/** Narrowest the outer eave may get past the back of the stand below it (m). */
+const MIN_EAVE_PAST_STAND = 0.3;
+
+/**
+ * Outer edge offset `eave` (m from the ring, or from the pitch-side front of a stand) moved by the
+ * user's `roof.outerOverhang`, never pulled back inside the stand whose back is at `standDepth`.
+ */
+export function withOuterOverhang(doc: StadiumDocument, standDepth: number, eave: number): number {
+  return Math.max(standDepth + MIN_EAVE_PAST_STAND, eave + (doc.roof.outerOverhang ?? 0));
+}
+
 export function computeStadiumRingBounds(doc: StadiumDocument) {
   const safePitch = clampPitchToTrack(doc.pitch);
   const trackOffsets = getTrackRadialOffset(doc);
@@ -148,19 +159,22 @@ export function computeStadiumRingBounds(doc: StadiumDocument) {
     nz: number,
     defaultExtra: number = 3.4
   ): number => {
-    if (!hasConcourse) {
-      const hit = footprintAt(nx, nz);
-      return (hit ? hit.reach : avgDepth) + defaultExtra;
-    }
     const d = standDepthAtNormal(nx, nz);
-    return overConcourse ? d + concourseWidth + 0.45 : d + 0.8;
+    if (hasConcourse) return withOuterOverhang(doc, d, overConcourse ? d + concourseWidth + 0.45 : d + 0.8);
+    // The stand's own depth there, not the deepest stand's, so a bowl with one tall side keeps the
+    // edge just past its lower stands; an open corner between separate stands has none, and takes
+    // the deepest one so whole-arena roofs still reach over it.
+    const reach = separate ? footprintAt(nx, nz)?.reach ?? avgDepth : d;
+    return withOuterOverhang(doc, reach, reach + defaultExtra);
   };
 
   const nominalOuterOffset = (defaultExtra: number = 3.4): number => {
-    if (!hasConcourse) {
-      return avgDepth + defaultExtra;
-    }
-    return overConcourse ? avgDepth + concourseWidth + 0.45 : avgDepth + 0.8;
+    const eave = !hasConcourse
+      ? avgDepth + defaultExtra
+      : overConcourse
+      ? avgDepth + concourseWidth + 0.45
+      : avgDepth + 0.8;
+    return withOuterOverhang(doc, avgDepth, eave);
   };
 
   const exteriorSupportMinOffsetAt = (nx: number, nz: number): number => {

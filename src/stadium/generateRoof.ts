@@ -7,7 +7,7 @@ import { getEffectiveSunkenDepth, isContinuousBowlShape, RoofStyle, StadiumDocum
 import { CANOPY_ROOF_BUILDERS } from './roofs/canopyRoofs';
 import { CLOSED_ROOF_BUILDERS } from './roofs/closedRoofs';
 import { buildForecourtCanopy } from './roofs/forecourtCanopy';
-import { computeStadiumRingBounds } from './roofs/ringBounds';
+import { computeStadiumRingBounds, withOuterOverhang } from './roofs/ringBounds';
 import { applyRoofRelief } from './roofs/roofRelief';
 import { RoofBuilder, addColumnDownpipes, addSlabDeckDetail, buildAnnularCanopyMesh, buildAnnularCatwalkFloodlights, buildCanopyMaterialBundle, createStrutBetween, hasRoofGantryLights } from './roofs/roofKit';
 import { SHELL_ROOF_BUILDERS } from './roofs/shellRoofs';
@@ -312,11 +312,11 @@ function buildRoofAssembly(
     const baseRearZ = standBackZ + 2.8;
     const frontZ =
       baseRearZ - Math.max(12, standBackZ * doc.roof.coverageRatio + 3.6);
-    const rearZ = !hasConcourse
-      ? baseRearZ
-      : overConcourse
-      ? standBackZ + concourseWidth + 0.45
-      : standBackZ + 0.8;
+    const rearZ = withOuterOverhang(
+      doc,
+      standBackZ,
+      !hasConcourse ? baseRearZ : overConcourse ? standBackZ + concourseWidth + 0.45 : standBackZ + 0.8
+    );
     const roofDepth = Math.max(8, rearZ - frontZ);
 
     standRoofBounds[side] = {

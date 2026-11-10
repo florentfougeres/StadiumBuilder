@@ -476,6 +476,11 @@ export interface RoofConfig {
    */
   followStands?: number;
   coverageRatio: number;
+  /**
+   * Metres added to the roof's outer edge past its default eave (every roof style), negative to
+   * pull it back toward the back of the stands; it never stops short of them. Default 0.
+   */
+  outerOverhang?: number;
   opacity: number;
   /** Legacy open/closed flag, superseded by `retractable.openRatio` when that is set. */
   retractableClosed?: boolean;
