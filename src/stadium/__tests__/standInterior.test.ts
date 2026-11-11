@@ -77,6 +77,35 @@ describe('terrace rules', () => {
   });
 });
 
+describe('expansion joints', () => {
+  /** Expansion joints drawn: each is a strip across every row, so count the distinct ones on one row. */
+  const coverCount = (group: THREE.Object3D) => {
+    let quads = 0;
+    group.traverse((o) => {
+      if (o.name === 'ExpansionJointCovers') quads += (o as THREE.Mesh).geometry.getAttribute('position').count / 6;
+    });
+    return quads;
+  };
+
+  it('cut a long bowl into blocks of about 65 m, across every row', () => {
+    const doc = docOf('modern_bowl');
+    const group = generateStandsGroup(doc);
+    expect(coverCount(group)).toBeGreaterThan(0);
+    let joints = 0;
+    group.traverse((o) => {
+      if (o.name === 'ExpansionJointGaps') joints++;
+    });
+    expect(joints).toBeGreaterThan(0);
+  });
+
+  it('leave a stand shorter than one block whole', () => {
+    const doc = docOf('four_stands');
+    for (const side of SIDES) doc.stands[side] = { ...doc.stands[side], enabled: side === 'east' };
+    const group = generateStandsGroup(doc);
+    expect(coverCount(group)).toBe(0);
+  });
+});
+
 describe('cross aisle', () => {
   it('sets the rows behind it back and up over a wall', () => {
     const stand = createPresetDocument('traditional_four_stands_42k').stands.south;

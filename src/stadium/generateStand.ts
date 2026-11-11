@@ -2209,50 +2209,16 @@ function buildCornerVirageQuadrant(
   // Stands laid out alike (same rows, tiers and balconies) are joined by their own sections, point
   // for point, so the corner meets each one flush and stays level between two identical stands.
   const exact = haveSameSectionLayout(profA, profB);
-  const nSteps = exact
-    ? profA.rowPositions.length
-    : Math.max(16, Math.min(76, Math.max(standA.rows, standB.rows)));
+  // Stands that differ are joined like the sides of a continuous bowl (see `bowlSection.ts`): every
+  // row keeps its own level, depth and riser, so the corner's treads run on from each stand's, and
+  // the rows one stand has in excess end one by one across the corner, upper tier first.
+  const model = exact ? null : buildBowlSectionModel(doc, isHollow);
+  const nSteps = exact ? profA.rowPositions.length : model!.tierRows.reduce((a, b) => a + b, 0);
   const maxTiers = Math.max(standA.tiers, standB.tiers) as 1 | 2 | 3 | 4 | 5;
-  // Tier changes follow the neighbouring stands' row split (averaged, as the corner morphs from
-  // one to the other); the automatic split fills in for a stand with fewer tiers.
-  const cumulativeShare = (tiers: ReturnType<typeof resolveStandTiers>, b: number) => {
-    if (tiers.length <= b) return undefined;
-    const total = tiers.reduce((acc, t) => acc + t.rows, 0) || 1;
-    return tiers.slice(0, b).reduce((acc, t) => acc + t.rows, 0) / total;
-  };
-  const autoBreaks = maxTiers >= 2 ? getTierStartRows(nSteps, maxTiers).slice(1) : [];
-  const exactBreaks = profA.rowPositions.flatMap((r, k) =>
-    k > 0 && r.tierIdx !== profA.rowPositions[k - 1].tierIdx ? [k] : []
-  );
-  const breakRows = exact ? exactBreaks : autoBreaks.map((auto, i) => {
-    const shares = [cumulativeShare(tiersA, i + 1), cumulativeShare(tiersB, i + 1)].filter(
-      (v): v is number => v !== undefined
-    );
-    if (shares.length === 0) return auto;
-    const k = Math.round((nSteps * shares.reduce((a, b) => a + b, 0)) / shares.length);
-    return Math.max(2 + i * 2, Math.min(nSteps - 2 * (autoBreaks.length - i), k));
-  });
-  for (let i = 1; i < breakRows.length; i++) {
-    breakRows[i] = Math.max(breakRows[i], breakRows[i - 1] + 2);
-  }
-  const breakRowSet = new Set(breakRows);
-
-  // Build exact canonical `isSeatSegmentMask` shared by all `segs + 1` slices
-  const isSeatMask: boolean[] = exact ? [...profA.isSeatSegmentMask] : [false, false, false];
-  for (let k = 0; k < (exact ? 0 : nSteps); k++) {
-    if (breakRowSet.has(k)) {
-      isSeatMask.push(false, false, false, false);
-    }
-    isSeatMask.push(true, false);
-  }
-  if (!exact) {
-    isSeatMask.push(false, false); // crest parapet & top deck
-    if (isHollow) {
-      isSeatMask.push(false, false, false);
-    } else {
-      isSeatMask.push(false);
-    }
-  }
+  const breakRows = exact
+    ? profA.rowPositions.flatMap((r, k) => (k > 0 && r.tierIdx !== profA.rowPositions[k - 1].tierIdx ? [k] : []))
+    : model!.tierRows.slice(0, -1).map((_, t) => model!.tierRows.slice(0, t + 1).reduce((a, b) => a + b, 0));
+  const isSeatMask: boolean[] = exact ? [...profA.isSeatSegmentMask] : [...model!.isSeatSegmentMask];
 
   interface CornerBalconySample {
     d: number;
@@ -2311,167 +2277,35 @@ function buildCornerVirageQuadrant(
   }
 
   for (let s = 0; s <= (exact ? -1 : segs); s++) {
-    const u = s / segs;
-    const w = u * u * (3 - 2 * u); // Hermite C1 smoothstep (`w(0)=0, w(1)=1, w'(0)=w'(1)=0`)
-
-    const elev = standA.elevationStart + (standB.elevationStart - standA.elevationStart) * w;
-    const targetOuterD = profA.totalDepth + (profB.totalDepth - profA.totalDepth) * w;
-    const targetTopH = profA.topHeight + (profB.topHeight - profA.topHeight) * w;
-
-    // Precompute active tier-break deltas at slice `s` so total depth & height hit exact targets at `u=0` and `u=1`
-    const slotConfigs = breakRows.map((rowK, bIdx) => {
-      const activeA = bIdx < standA.tiers - 1;
-      const activeB = bIdx < standB.tiers - 1;
-      const weight = (activeA ? 1 - w : 0) + (activeB ? w : 0);
-      const storeysA = activeA && standA.vipLoges !== false ? tiersA[bIdx + 1]?.vipStoreys ?? 1 : 0;
-      const storeysB = activeB && standB.vipLoges !== false ? tiersB[bIdx + 1]?.vipStoreys ?? 1 : 0;
-      const hasVip = storeysA > 0 || storeysB > 0;
-      const dims = tierBreakDims(hasVip, Math.max(storeysA, storeysB));
-      const recessAdd = weight * dims.recess;
-      const baseLoggiaH = weight * dims.loggiaH;
-      // Same projection as each neighbouring stand, blended across the corner.
-      const overhang =
-        (activeA ? (1 - w) * (tiersA[bIdx + 1]?.overhang ?? 0) : 0) +
-        (activeB ? w * (tiersB[bIdx + 1]?.overhang ?? 0) : 0);
-      const overhangDelta = -overhang;
-      const fasciaH = weight * dims.fasciaH;
+    const sample = bowlSectionAt(model!, { a: corner.sideA, b: corner.sideB, f: s / segs });
+    const pts = sample.pts;
+    const sliceRows: { d: number; y: number; stepD: number }[] = [];
+    for (const rows of model!.treadSeg) {
+      for (const seg of rows) {
+        // A row ended before this slice keeps its place with no depth.
+        sliceRows.push({ d: pts[seg][0], y: pts[seg][1], stepD: Math.max(0, pts[seg + 1][0] - pts[seg][0]) });
+      }
+    }
+    const sliceBals: CornerBalconySample[] = model!.breakStart.slice(1).map((i) => {
+      const [recD, floorY] = pts[i];
+      const soffitY = pts[i + 1][1];
+      const [frontD, topY] = pts[i + 3];
+      const loggiaH = soffitY - floorY;
       return {
-        rowK,
-        weight,
-        hasVip,
-        recessAdd,
-        loggiaH: baseLoggiaH,
-        overhangDelta,
-        fasciaH,
+        d: frontD,
+        y: (soffitY + topY) / 2,
+        loggiaD: recD - 0.14,
+        loggiaBottomY: floorY + 0.06,
+        loggiaTopY: soffitY - 0.06,
+        weight: topY - floorY > 0.01 ? 1 : 0,
+        hasVipGlass: sample.vip > 0.35 && loggiaH > 1.6,
       };
     });
-
-    // Raise each soffit that shelters rows so they keep standing headroom; the riser estimate
-    // uses the base budget, which is close enough for a clearance check.
-    {
-      const baseVertical = slotConfigs.reduce((acc, sc) => acc + sc.loggiaH + sc.fasciaH, 0);
-      const estRiser = Math.max(0.2, (targetTopH - 1.85 - elev - baseVertical) / nSteps);
-      for (const sc of slotConfigs) {
-        if (sc.overhangDelta < 0 && sc.weight > 0.001) {
-          sc.loggiaH = Math.max(sc.loggiaH, sc.weight * OVERHANG_HEADROOM_M - estRiser);
-        }
-      }
-    }
-
-    const netBalconyHorizontal = slotConfigs.reduce((acc, sc) => acc + sc.overhangDelta, 0);
-    const netBalconyVertical = slotConfigs.reduce(
-      (acc, sc) => acc + sc.loggiaH + sc.fasciaH,
-      0
-    );
-
-    const netTreadTotal = Math.max(5.5, targetOuterD - 2.8 - 0.34 - netBalconyHorizontal);
-    const netRiserTotal = Math.max(
-      2.5,
-      targetTopH - 1.85 - elev - netBalconyVertical
-    );
-
-    const stepD = netTreadTotal / nSteps;
-
-    // Progressive upper-tier steepness matching `buildStandProfilePoints` (see tierRiserHeight)
-    const rawWeights: number[] = [];
-    let wSum = 0;
-    let curTier = 0;
-    for (let k = 0; k < nSteps; k++) {
-      if (breakRowSet.has(k)) curTier++;
-      const rw = 1 + curTier * UPPER_TIER_STEEPENING;
-      rawWeights.push(rw);
-      wSum += rw;
-    }
-
-    const pts: [number, number][] = [];
-    const sliceRows: { d: number; y: number; stepD: number }[] = [];
-    const sliceBals: CornerBalconySample[] = [];
-
-    const parapetTop = elev + 0.58;
-    pts.push([0, 0]);
-    pts.push([0, parapetTop]);
-    pts.push([0.34, parapetTop]);
-    pts.push([0.34, elev]);
-
-    let curD = 0.34;
-    let curY = elev;
-    let maxD = curD;
-    let slotCursor = 0;
-
-    for (let k = 0; k < nSteps; k++) {
-      if (slotCursor < slotConfigs.length && slotConfigs[slotCursor].rowK === k) {
-        const sc = slotConfigs[slotCursor++];
-        if (sc.weight > 0.001) {
-          const overD = Math.max(1.8, curD + sc.overhangDelta);
-          const recD = loggiaRecessD(curD, sc.recessAdd, overD);
-          pts.push([recD, curY]);
-          pts.push([recD, curY + sc.loggiaH]);
-          pts.push([overD, curY + sc.loggiaH]);
-          pts.push([overD, curY + sc.loggiaH + sc.fasciaH]);
-
-          sliceBals.push({
-            d: overD,
-            y: curY + sc.loggiaH + sc.fasciaH * 0.5,
-            loggiaD: recD - 0.14,
-            loggiaBottomY: curY + 0.06,
-            loggiaTopY: curY + sc.loggiaH - 0.06,
-            weight: sc.weight,
-            hasVipGlass: sc.hasVip && sc.weight > 0.35,
-          });
-
-          maxD = Math.max(maxD, recD);
-          curD = overD;
-          curY += sc.loggiaH + sc.fasciaH;
-        } else {
-          pts.push([curD, curY]);
-          pts.push([curD, curY]);
-          pts.push([curD, curY]);
-          pts.push([curD, curY]);
-          sliceBals.push({
-            d: curD,
-            y: curY,
-            loggiaD: curD,
-            loggiaBottomY: curY,
-            loggiaTopY: curY,
-            weight: 0,
-            hasVipGlass: false,
-          });
-        }
-      }
-
-      const thisRiser = (netRiserTotal * rawWeights[k]) / Math.max(1e-5, wSum);
-      sliceRows.push({
-        d: curD + stepD * 0.52,
-        y: curY,
-        stepD,
-      });
-
-      curD += stepD;
-      maxD = Math.max(maxD, curD);
-      pts.push([curD, curY]);
-
-      curY += thisRiser;
-      pts.push([curD, curY]);
-    }
-
-    const outerWallD = Math.max(curD + 2.8, targetOuterD);
-    const crestY = curY + 1.85;
-    pts.push([curD, crestY]);
-    pts.push([outerWallD, crestY]);
-
-    if (isHollow && crestY > 5.0) {
-      pts.push([outerWallD, Math.max(2.2, crestY - 2.35)]);
-      pts.push([Math.max(3.6, outerWallD * 0.5), Math.max(1.4, crestY * 0.44 - 1.4)]);
-      pts.push([2.4, 0]);
-    } else {
-      pts.push([outerWallD, 0]);
-    }
-
-    const gradeY = facadeGradeY(sunkenDepth, crestY);
+    const elev = pts[3][1];
     profilePtsPerSlice.push(pts);
     rowSamplesPerSlice.push(sliceRows);
     balconiesPerSlice.push(sliceBals);
-    crestPerSlice.push({ outerD: outerWallD, topH: crestY, elev, gradeY });
+    crestPerSlice.push({ outerD: sample.outerD, topH: sample.topHeight, elev, gradeY: facadeGradeY(sunkenDepth, sample.topHeight) });
   }
 
   // Vehicle access: a tunnel carved under the corner's lower rows.
@@ -2615,7 +2449,7 @@ function buildCornerVirageQuadrant(
       for (const k of sampledRowIndices) {
         const r0 = rowSamplesPerSlice[s][k];
         const r1 = rowSamplesPerSlice[s + 1][k];
-        if (overTunnel(s, r0.y)) continue;
+        if (overTunnel(s, r0.y) || Math.min(r0.stepD, r1.stepD) < 0.3) continue;
         const p0 = sampleCornerQuadrantPoint(corner, u0, r0.d + r0.stepD * 0.24);
         const p1 = sampleCornerQuadrantPoint(corner, u1, r1.d + r1.stepD * 0.24);
         const chordLen = Math.max(0.2, Math.hypot(p1.x - p0.x, p1.z - p0.z));

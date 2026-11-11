@@ -10,7 +10,9 @@ import { ignoreRaycasts } from './meshKit';
  * - aisle stairs: intermediate steps in every radial aisle, so each row is climbed in goings of
  *   under 20 cm, with contrasting nosings on every step edge;
  * - glazed balustrades along the front edge of every upper tier;
- * - the joints between the precast terrace units, across tread and riser;
+ * - the joints between the precast terrace units, across tread and riser, on one radial grid for
+ *   every row (the units sit on the same raker beams), and the expansion joints that cut the whole
+ *   stand every 60-70 m, with their steel cover plates, through the balustrades and soffits;
  * - the underside of every cantilevered tier: downstand beams and recessed light fittings.
  *
  * Profile conventions (see `buildStandProfilePoints`): `d` grows away from the pitch, `y` up; a
@@ -36,6 +38,14 @@ export interface StandSweep {
 const MAX_STEP_RISE = 0.2;
 /** Length of one precast terrace unit along the stand (m). */
 const PRECAST_UNIT_M = 7.2;
+/**
+ * Longest run of a concrete stand between two expansion joints (m): beyond it, shrinkage and
+ * temperature would crack it, so a long stand or a bowl ring is cut into blocks of 60-70 m.
+ */
+const EXPANSION_BLOCK_M = 65;
+/** Width of an expansion joint and of the steel plate that covers it on the terraces (m). */
+const EXPANSION_GAP_M = 0.05;
+const EXPANSION_COVER_M = 0.22;
 /** Height of the glazed balustrade over an upper tier's front edge (m). */
 const BALUSTRADE_H = 0.95;
 /** Spacing of the downstand beams under a cantilevered tier (m). */
@@ -204,6 +214,7 @@ type DetailMaterials = {
   step: THREE.MeshStandardMaterial;
   nosing: THREE.MeshStandardMaterial;
   joint: THREE.MeshStandardMaterial;
+  gap: THREE.MeshStandardMaterial;
   glass: THREE.MeshStandardMaterial;
   steel: THREE.MeshStandardMaterial;
   beam: THREE.MeshStandardMaterial;
@@ -218,6 +229,7 @@ function materials(): DetailMaterials {
     // Lifted a few millimetres off the concrete rather than polygon-offset (negative offsets bleed
     // over the turf, see the pitch tests).
     joint: new THREE.MeshStandardMaterial({ color: 0x55554f, roughness: 1, side: THREE.DoubleSide }),
+    gap: new THREE.MeshStandardMaterial({ color: 0x1d1d1b, roughness: 1, side: THREE.DoubleSide }),
     glass: new THREE.MeshStandardMaterial({
       color: 0xcfe2e6,
       roughness: 0.06,
@@ -274,7 +286,7 @@ function buildAisleStairs(sw: StandSweep, frame: SweepFrame, treads: Tread[], ma
 }
 
 /** A2: glazed balustrade with a steel handrail and posts along the front of every upper tier. */
-function buildTierFrontBalustrades(sw: StandSweep, frame: SweepFrame, treads: Tread[], mats: DetailMaterials): THREE.Object3D[] {
+function buildTierFrontBalustrades(sw: StandSweep, frame: SweepFrame, treads: Tread[], grid: ConstructionGrid, mats: DetailMaterials): THREE.Object3D[] {
   const pts0 = sw.profilePtsPerSlice[0];
   const glass = new QuadBatch();
   const rail = new QuadBatch();
@@ -315,6 +327,15 @@ function buildTierFrontBalustrades(sw: StandSweep, frame: SweepFrame, treads: Tr
       const { x, z } = frame.axes(at, tr.seg, 0);
       posts.add(frame.point(at, tr.seg, 0, BALUSTRADE_H / 2, 0.08), x, z, 0.05, BALUSTRADE_H, 0.05);
     }
+    // Each block of the stand ends its balustrade on a post of its own, a gap between the two.
+    for (const at of grid.expansionJoints) {
+      if (frame.hole(at, tr.seg)) continue;
+      const { x, z } = frame.axes(at, tr.seg, 0);
+      for (const side of [-1, 1]) {
+        const c = frame.point(at, tr.seg, 0, BALUSTRADE_H / 2, 0.08).addScaledVector(x, side * (EXPANSION_GAP_M / 2 + 0.04));
+        posts.add(c, x, z, 0.07, BALUSTRADE_H + 0.02, 0.07);
+      }
+    }
   }
   const out: THREE.Object3D[] = [];
   const g = glass.build('TierFrontGlass', mats.glass);
@@ -329,34 +350,99 @@ function buildTierFrontBalustrades(sw: StandSweep, frame: SweepFrame, treads: Tr
   return out;
 }
 
-/** A4: joints between the precast units, across each tread and up its riser. */
-function buildPrecastJoints(sw: StandSweep, frame: SweepFrame, treads: Tread[], mats: DetailMaterials): THREE.Object3D[] {
-  const quads = new QuadBatch();
-  const half = 0.012;
+/**
+ * The stand's construction grid: where its precast units meet, and which of those joints are
+ * expansion joints. Laid out once along a middle row and shared by every row as the same slice
+ * positions, so joints run radially across a curved bowl instead of drifting row by row.
+ */
+interface ConstructionGrid {
+  unitJoints: SweepPoint[];
+  expansionJoints: SweepPoint[];
+}
+
+function constructionGrid(sw: StandSweep, frame: SweepFrame, treads: Tread[]): ConstructionGrid {
+  const empty = { unitJoints: [], expansionJoints: [] };
+  if (treads.length === 0) return empty;
+  const line = frame.line(treads[Math.floor(treads.length / 2)].seg, 0.5);
+  if (line.total < PRECAST_UNIT_M) return empty;
+  // Expansion blocks of equal length; a ring closes on itself, an open stand keeps its two ends.
+  const blocks = Math.max(1, Math.round(line.total / EXPANSION_BLOCK_M));
+  const blockLen = line.total / blocks;
+  const unitsPerBlock = Math.max(1, Math.round(blockLen / PRECAST_UNIT_M));
+  const unitJoints: SweepPoint[] = [];
+  const expansionJoints: SweepPoint[] = [];
+  for (let b = 0; b < blocks; b++) {
+    const start = b * blockLen;
+    if (b > 0 || sw.closed) expansionJoints.push(line.at(start));
+    for (let u = 1; u < unitsPerBlock; u++) unitJoints.push(line.at(start + (u / unitsPerBlock) * blockLen));
+  }
+  return { unitJoints, expansionJoints };
+}
+
+/** Whether a slice position falls in one of the stand's radial aisles (`half`: share of the stand). */
+function inAisle(sw: StandSweep, at: SweepPoint, half: number): boolean {
+  if (sw.aisleCount <= 0) return false;
+  const u = (at.s + at.f) / Math.max(1, sw.activeSegments);
+  return Array.from({ length: sw.aisleCount }, (_, k) => (k + 0.5) / sw.aisleCount).some((a) => Math.abs(a - u) < half);
+}
+
+/** Rough length of the stand along its middle (m), to turn an aisle width into a share of it. */
+function frameLengthHint(sw: StandSweep): number {
+  const mid = Math.floor(sw.profilePtsPerSlice[0].length / 2);
+  let total = 0;
+  for (let s = 0; s < sw.activeSegments; s++) {
+    const n = sw.closed ? (s + 1) % sw.ringCount : s + 1;
+    const [d0, y0] = sw.profilePtsPerSlice[s][mid];
+    const [d1, y1] = sw.profilePtsPerSlice[n][mid];
+    total += new THREE.Vector3(...sw.sampleWorldPoint(s, d0, y0)).distanceTo(new THREE.Vector3(...sw.sampleWorldPoint(n, d1, y1)));
+  }
+  return total;
+}
+
+/**
+ * A4: joints between the precast units, across each tread and up its riser, and the expansion
+ * joints: a wider gap under a steel cover plate, across every row of the stand.
+ */
+function buildPrecastJoints(sw: StandSweep, frame: SweepFrame, treads: Tread[], grid: ConstructionGrid, mats: DetailMaterials): THREE.Object3D[] {
+  const joints = new QuadBatch();
+  const gaps = new QuadBatch();
+  const covers = new QuadBatch();
+  const strip = (batch: QuadBatch, tr: Tread, at: SweepPoint, half: number, lift: number) => {
+    const { x, z } = frame.axes(at, tr.seg, 0.5);
+    const w = x.multiplyScalar(half);
+    const front = frame.point(at, tr.seg, 0, lift);
+    const rear = frame.point(at, tr.seg, 1, lift);
+    batch.add(front.clone().sub(w), front.clone().add(w), rear.clone().add(w), rear.clone().sub(w), UP);
+    const foot = frame.point(at, tr.seg, 1, 0, -lift);
+    const head = foot.clone().setY(foot.y + riseOf(sw, at, tr.riserSeg));
+    batch.add(foot.clone().sub(w), foot.clone().add(w), head.clone().add(w), head.clone().sub(w), z.negate());
+  };
+  const aisleHalf = (sw.aisleWidth * 0.6) / Math.max(1, frameLengthHint(sw));
+  const units = grid.unitJoints.filter((at) => !inAisle(sw, at, aisleHalf));
   for (const tr of treads) {
     if (tr.riserSeg < 0) continue;
-    const line = frame.line(tr.seg, 0.5);
-    const aisles = Array.from({ length: Math.max(0, sw.aisleCount) }, (_, k) => ((k + 0.5) / sw.aisleCount) * line.total);
-    for (let along = PRECAST_UNIT_M / 2; along < line.total; along += PRECAST_UNIT_M) {
-      if (aisles.some((a) => Math.abs(a - along) < sw.aisleWidth * 0.6)) continue;
-      const at = line.at(along);
+    for (const at of units) {
       if (frame.hole(at, tr.seg)) continue;
-      const { x, z } = frame.axes(at, tr.seg, 0.5);
-      const w = x.multiplyScalar(half);
-      const front = frame.point(at, tr.seg, 0, 0.008);
-      const rear = frame.point(at, tr.seg, 1, 0.008);
-      quads.add(front.clone().sub(w), front.clone().add(w), rear.clone().add(w), rear.clone().sub(w), UP);
-      const foot = frame.point(at, tr.seg, 1, 0, -0.008);
-      const head = foot.clone().setY(foot.y + riseOf(sw, at, tr.riserSeg));
-      quads.add(foot.clone().sub(w), foot.clone().add(w), head.clone().add(w), head.clone().sub(w), z.negate());
+      strip(joints, tr, at, 0.012, 0.008);
+    }
+    for (const at of grid.expansionJoints) {
+      if (frame.hole(at, tr.seg)) continue;
+      strip(gaps, tr, at, EXPANSION_GAP_M / 2, 0.008);
+      strip(covers, tr, at, EXPANSION_COVER_M / 2, 0.014);
     }
   }
-  const mesh = quads.build('PrecastJoints', mats.joint);
-  return mesh ? [mesh] : [];
+  const out: THREE.Object3D[] = [];
+  const j = joints.build('PrecastJoints', mats.joint);
+  if (j) out.push(j);
+  const g = gaps.build('ExpansionJointGaps', mats.gap);
+  if (g) out.push(g);
+  const c = covers.build('ExpansionJointCovers', mats.steel);
+  if (c) out.push(c);
+  return out;
 }
 
 /** B5: downstand beams and recessed lights under every cantilevered tier. */
-function buildSoffits(sw: StandSweep, frame: SweepFrame, mats: DetailMaterials): THREE.Object3D[] {
+function buildSoffits(sw: StandSweep, frame: SweepFrame, grid: ConstructionGrid, mats: DetailMaterials): THREE.Object3D[] {
   const pts0 = sw.profilePtsPerSlice[0];
   const beams = new BoxBatch();
   const lights = new BoxBatch();
@@ -385,6 +471,14 @@ function buildSoffits(sw: StandSweep, frame: SweepFrame, mats: DetailMaterials):
         }
       }
     }
+    // Two blocks meet at an expansion joint: each ends on a beam of its own.
+    for (const at of grid.expansionJoints) {
+      const { x, z } = frame.axes(at, seg, 0.5);
+      for (const side of [-1, 1]) {
+        const c = frame.point(at, seg, 0.52, -beamH / 2).addScaledVector(x, side * (EXPANSION_GAP_M / 2 + 0.2));
+        beams.add(c, x, z, 0.32, beamH, span * 0.92);
+      }
+    }
   }
   const out: THREE.Object3D[] = [];
   const b = beams.build('SoffitBeams', mats.beam, true);
@@ -399,11 +493,12 @@ export function buildStandDetails(sw: StandSweep): THREE.Group | null {
   const frame = new SweepFrame(sw);
   const treads = listTreads(sw);
   const mats = materials();
+  const grid = constructionGrid(sw, frame, treads);
   const parts = [
     ...buildAisleStairs(sw, frame, treads, mats),
-    ...buildTierFrontBalustrades(sw, frame, treads, mats),
-    ...buildPrecastJoints(sw, frame, treads, mats),
-    ...buildSoffits(sw, frame, mats),
+    ...buildTierFrontBalustrades(sw, frame, treads, grid, mats),
+    ...buildPrecastJoints(sw, frame, treads, grid, mats),
+    ...buildSoffits(sw, frame, grid, mats),
   ];
   if (parts.length === 0) return null;
   const group = new THREE.Group();

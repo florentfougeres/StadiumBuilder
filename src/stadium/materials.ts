@@ -2472,8 +2472,31 @@ export function createRoofPbrMaterial(
     opacity: effectiveOpacity,
     side: THREE.DoubleSide,
     depthWrite: !isTranslucent,
+    // Read by `calibrateRoofTextures`: a skylight pattern is laid out on the surface's own UVs.
+    userData: { roofTileM: ROOF_TILE_M[roofId], roofSkylight: hasSkylight },
   });
 }
+
+/**
+ * Real size (m) of one tile of each roof cladding texture, from what it draws: standing seams every
+ * 50 cm, ETFE cushions about 3.5 m across, PV modules 1 x 1.7 m, steel deck ribs every 30 cm...
+ * `calibrateRoofTextures` repeats the texture so that a tile covers that much roof.
+ */
+export const ROOF_TILE_M: Record<RoofMaterialId, number> = {
+  ptfe_membrane: 36, // 12 fabric panels of 3 m
+  etfe_cushions: 20, // 6 diamond cushions of ~3.4 m
+  polycarbonate_glass: 30, // rafters every 1.5 m, purlins every 5 m
+  standing_seam_zinc: 16, // 32 seams at 50 cm, sheets 4 m long
+  titanium_scales: 8, // 16 shingles of 50 cm
+  glulam_acoustic_deck: 24, // glulam beams every 1.5 m
+  anthracite_pvc_membrane: 24, // 12 membrane widths of 2 m
+  copper_verdigris: 14, // 28 seams at 50 cm
+  red_steel_deck: 12, // 40 trapezoidal ribs at 30 cm
+  blue_steel_deck: 12,
+  solar_pv_panels: 10, // 10 x 6 modules of 1 x 1.7 m
+  perforated_aluminium: 10, // 96 perforations at ~10 cm
+  green_roof: 32, // maintenance walkway every 4 m, trays every 2 m
+};
 
 // ============================================================================
 // 4. STRUCTURAL FRAME PBR MATERIALS (5 ARCHITECTURAL MATERIALS)

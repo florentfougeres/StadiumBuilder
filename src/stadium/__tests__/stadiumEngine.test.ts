@@ -591,9 +591,14 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
         expect(seatGroup!.count).toBeGreaterThan(60);
 
         // Verify seat-group triangles face UPWARD (+Y > 0.35) and TOWARD THE PITCH, never inverted (-Y)
+        // Weighted by area: rows that end across the corner leave zero-width treads, never drawn.
         let avgSeatNormalY = 0;
+        let areaSum = 0;
         let inwardDotSum = 0;
         const triCount = seatGroup!.count / 3;
+        const va = new THREE.Vector3();
+        const vb = new THREE.Vector3();
+        const vc = new THREE.Vector3();
         for (let t = 0; t < triCount; t++) {
           const ia = idx.getX(seatGroup!.start + t * 3);
           const ib = idx.getX(seatGroup!.start + t * 3 + 1);
@@ -605,14 +610,19 @@ describe('StadiumForge 11 Morphologies, 15 Roofs, 4 Envelopes & Full-Height Kop 
           const cx = (pos.getX(ia) + pos.getX(ib) + pos.getX(ic)) / 3;
           const cz = (pos.getZ(ia) + pos.getZ(ib) + pos.getZ(ic)) / 3;
 
-          avgSeatNormalY += ny;
+          va.fromBufferAttribute(pos, ia);
+          vb.fromBufferAttribute(pos, ib);
+          vc.fromBufferAttribute(pos, ic);
+          const area = vb.clone().sub(va).cross(vc.clone().sub(va)).length() / 2;
+          avgSeatNormalY += ny * area;
+          areaSum += area;
           // Vector from corner vertex toward pitch center (0,0) has sign (-cx, -cz)
           inwardDotSum += nx * -cx + nz * -cz;
 
           // Zero intrusion onto the 105x68m playing field
           expect(Math.abs(cx) < 52.0 && Math.abs(cz) < 33.5).toBe(false);
         }
-        avgSeatNormalY /= triCount;
+        avgSeatNormalY /= Math.max(1e-9, areaSum);
         expect(avgSeatNormalY).toBeGreaterThan(0.45);
         expect(inwardDotSum).toBeGreaterThan(0);
       }

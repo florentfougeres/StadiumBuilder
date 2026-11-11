@@ -9,6 +9,7 @@ import { CLOSED_ROOF_BUILDERS } from './roofs/closedRoofs';
 import { buildForecourtCanopy } from './roofs/forecourtCanopy';
 import { computeStadiumRingBounds, withOuterOverhang } from './roofs/ringBounds';
 import { applyRoofRelief } from './roofs/roofRelief';
+import { calibrateRoofTextures } from './roofs/roofTextureScale';
 import { RoofBuilder, addColumnDownpipes, addSlabDeckDetail, buildAnnularCanopyMesh, buildAnnularCatwalkFloodlights, buildCanopyMaterialBundle, createStrutBetween, hasRoofGantryLights } from './roofs/roofKit';
 import { SHELL_ROOF_BUILDERS } from './roofs/shellRoofs';
 import { buildContinuousColumnOrGoalpostRoof, buildSingleStandRoofGroup } from './roofs/standRoofs';
@@ -94,6 +95,7 @@ export function generateRoofGroup(
   const forecourt = buildForecourtCanopy(doc, roof, maxAnisotropy);
   if (forecourt) roof.add(forecourt);
   addColumnDownpipes(roof);
+  calibrateRoofTextures(roof);
   return roof;
 }
 
