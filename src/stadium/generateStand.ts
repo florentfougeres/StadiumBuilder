@@ -87,6 +87,7 @@ import {
   computeStandSection,
   StandSection,
   getTierStartRows,
+  loggiaRecessD,
   OVERHANG_HEADROOM_M,
   resolveStandTiers,
   tierBreakDims,
@@ -2401,8 +2402,8 @@ function buildCornerVirageQuadrant(
       if (slotCursor < slotConfigs.length && slotConfigs[slotCursor].rowK === k) {
         const sc = slotConfigs[slotCursor++];
         if (sc.weight > 0.001) {
-          const recD = curD + sc.recessAdd;
           const overD = Math.max(1.8, curD + sc.overhangDelta);
+          const recD = loggiaRecessD(curD, sc.recessAdd, overD);
           pts.push([recD, curY]);
           pts.push([recD, curY + sc.loggiaH]);
           pts.push([overD, curY + sc.loggiaH]);
@@ -3416,8 +3417,8 @@ function buildModernBowlSweep(
         if (activeBreakSlots.includes(k)) {
           const overhang = tierBlend.overhang[tierOfStep(k)];
           const { recess: recOffset, loggiaH: baseLoggiaH, fasciaH } = breakDimsOfTier(tierOfStep(k));
-          const recD = curD + recOffset;
           const overD = Math.max(2.0, curD - overhang);
+          const recD = loggiaRecessD(curD, recOffset, overD);
           // The last tread sits one riser below `curY`; keep standing headroom above it.
           const soffitY =
             overhang > 0

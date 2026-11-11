@@ -77,6 +77,18 @@ export function tierBreakDims(hasVip: boolean, vipStoreys: number = 1): { recess
  * the 3D profile, the capacity heights and the sightline engine so all three agree.
  */
 export const UPPER_TIER_STEEPENING = 0.12;
+
+/**
+ * Steepest rake a seated tier may have (degrees). Beyond about 35° a stand is no longer safe to
+ * walk down (codes such as the Green Guide stop at 34-35°): every riser is held under it.
+ */
+export const MAX_RAKE_DEG = 35;
+const MAX_RAKE_TAN = Math.tan((MAX_RAKE_DEG * Math.PI) / 180);
+
+/** `riser` held under the steepest rake for rows `rowDepth` deep. */
+function cappedRiser(riser: number, rowDepth: number): number {
+  return Math.min(riser, Number((MAX_RAKE_TAN * rowDepth).toFixed(3)));
+}
 export function tierRiserHeight(baseRiser: number, tierIdx: number): number {
   return baseRiser * (1 + Math.max(0, tierIdx) * UPPER_TIER_STEEPENING);
 }
@@ -114,10 +126,68 @@ export function getTierStartRows(totalRows: number, tiers: number): number[] {
  * for a stand, supporting both symmetric stands and asymmetric per-tier `stand.tierConfigs`.
  */
 export function resolveStandTiers(stand: StandConfig): ResolvedTierSpec[] {
-  return resolveTierShapes(stand).map((tier) => ({
+  const key = JSON.stringify(stand);
+  const cached = resolvedTierCache.get(key);
+  if (cached) return cached.map((t) => ({ ...t }));
+  const tiers = resolveTierShapes(stand).map((tier) => ({
     ...tier,
     vipStoreys: tier.tierIndex === 0 ? 0 : vipStoreysAtBreak(stand, tier.tierIndex - 1),
   }));
+  for (let t = 1; t < tiers.length; t++) tiers[t].overhang = sightlineOverhang(stand, tiers, t);
+  if (resolvedTierCache.size >= 256) resolvedTierCache.clear();
+  resolvedTierCache.set(key, tiers);
+  return tiers.map((tier) => ({ ...tier }));
+}
+
+/** Overhang asked for each tier (index 0 is always 0), before sightlines hold it back. */
+export function requestedTierOverhangs(stand: StandConfig): number[] {
+  return resolveTierShapes(stand).map((tier) => tier.overhang);
+}
+
+/** Tiers resolved per stand settings: every builder resolves the same stands many times. */
+const resolvedTierCache = new Map<string, ResolvedTierSpec[]>();
+
+/** Lowest C-value an upper tier is set back for (m): the Green Guide's acceptable minimum. */
+const MIN_C_M = 0.06;
+/** Rows of the deepest balcony still read as boxes, kept where it is asked to be. */
+const MAX_BOX_BALCONY_ROWS = 2;
+/** Furthest an upper tier is set back behind the tier below (m). */
+const MAX_SETBACK_M = 24;
+
+/**
+ * Overhang of tier `t` (the tiers below it already placed): the one asked for, or less, down to a
+ * set-back (negative overhang), so that every row of the tier keeps a C-value of `MIN_C_M` over
+ * the touchline. A balcony pushed too far forward and too high looks down at the touchline more
+ * steeply than the steepest rake, and no riser can then give its rows a view over the row in
+ * front: real upper tiers sit back as far as that takes.
+ */
+function sightlineOverhang(stand: StandConfig, tiers: ResolvedTierSpec[], t: number): number {
+  const wanted = tiers[t].overhang;
+  // A balcony of one or two rows is a row of boxes (La Bombonera's palcos), not a terrace.
+  if (tiers[t].rows <= MAX_BOX_BALCONY_ROWS) return wanted;
+  const minC = (overhang: number) => {
+    const trial = tiers.slice(0, t + 1).map((tier, i) => (i === t ? { ...tier, overhang } : tier));
+    const rows = layoutSection(stand, trial).rows.filter((r) => r.tierIdx === t);
+    let worst = Infinity;
+    for (let i = 1; i < rows.length; i++) {
+      const front = rows[i - 1];
+      const dist = Math.max(2, stand.distanceToPitch + front.d - FRONT_WALL_D);
+      const c = computeRowCValueMm(dist, front.y + SEATED_EYE_M, rows[i].y - front.y, rows[i].d - front.d);
+      worst = Math.min(worst, c);
+    }
+    return worst;
+  };
+  if (minC(wanted) >= MIN_C_M * 1000) return wanted;
+  let lo = -MAX_SETBACK_M;
+  if (minC(lo) < MIN_C_M * 1000) return lo;
+  let hi = wanted;
+  for (let k = 0; k < 14; k++) {
+    const mid = (lo + hi) / 2;
+    if (minC(mid) >= MIN_C_M * 1000) lo = mid;
+    else hi = mid;
+  }
+  // Rounded toward the set-back, which keeps the C-value found.
+  return Math.floor(lo * 100) / 100;
 }
 
 /**
@@ -145,7 +215,7 @@ function resolveTierShapes(stand: StandConfig): Omit<ResolvedTierSpec, 'vipStore
       if (cfg) {
         const rows = Math.max(2, Math.min(90, Math.round(cfg.rows)));
         const slopeAngleDeg = Number(
-          Math.max(15, Math.min(42, cfg.slopeAngleDeg)).toFixed(1)
+          Math.max(15, Math.min(MAX_RAKE_DEG, cfg.slopeAngleDeg)).toFixed(1)
         );
         const riserHeight = riserFromSlopeDeg(slopeAngleDeg, stand.rowDepth);
         const overhang =
@@ -170,7 +240,7 @@ function resolveTierShapes(stand: StandConfig): Omit<ResolvedTierSpec, 'vipStore
         const endRow =
           t < defaultStarts.length - 1 ? defaultStarts[t + 1] : stand.rows;
         const rows = Math.max(3, endRow - startRow);
-        const riserHeight = tierRiserHeight(stand.riserHeight, t);
+        const riserHeight = cappedRiser(tierRiserHeight(stand.riserHeight, t), stand.rowDepth);
         const slopeAngleDeg = slopeDegFromRiser(riserHeight, stand.rowDepth);
         resolved.push({
           tierIndex: t,
@@ -188,7 +258,7 @@ function resolveTierShapes(stand: StandConfig): Omit<ResolvedTierSpec, 'vipStore
   return starts.map((startRow, t) => {
     const endRow = t === starts.length - 1 ? stand.rows : starts[t + 1];
     const rows = Math.max(1, endRow - startRow);
-    const riserHeight = tierRiserHeight(stand.riserHeight, t);
+    const riserHeight = cappedRiser(tierRiserHeight(stand.riserHeight, t), stand.rowDepth);
     const slopeAngleDeg = slopeDegFromRiser(riserHeight, stand.rowDepth);
     return {
       tierIndex: t,
@@ -243,13 +313,21 @@ export interface StandSection {
   topHeight: number;
 }
 
-/** C-value a progressive rake is drawn for (m): the "good" grade of the Green Guide. */
-const PROGRESSIVE_RAKE_C_M = 0.09;
+/** C-value every row is drawn for (m): the "good" grade of the Green Guide. */
+const TARGET_C_M = 0.09;
+/** Eye height of a seated spectator above their tread (m). */
+const SEATED_EYE_M = 1.15;
+/** Pitch-side face of the front wall, from which row positions `d` are measured (m). */
+const FRONT_WALL_D = 0.34;
 
 /**
  * Risers of a tier's rows. `constant` repeats the tier's riser; `progressive` follows the riser
  * each row needs to keep the same C-value over the row in front (larger as rows get higher and
  * further back, the parabolic rake), scaled so the tier keeps its height.
+ *
+ * Either way, as a stand is built: no riser is lower than the one that gives the row behind it a
+ * C-value of `TARGET_C_M` over the touchline, and none is steeper than `MAX_RAKE_DEG`. Where the
+ * two meet (rows very high above the pitch), the rake stops at the limit and the C-value drops.
  */
 export function tierRowRisers(
   stand: StandConfig,
@@ -257,27 +335,44 @@ export function tierRowRisers(
   startD: number,
   startY: number
 ): number[] {
-  const flat = Array<number>(tier.rows).fill(tier.riserHeight);
-  if (stand.rakeProfile !== 'progressive' || tier.rows < 4) return flat;
-  const eye = 1.15;
   const t = stand.rowDepth;
-  const ideal: number[] = [];
+  const maxRiser = MAX_RAKE_TAN * t;
+  /** Riser a row at (`d`, `y`) needs for the row behind it to see the touchline over it. */
+  const neededRiser = (d: number, y: number): number => {
+    const dist = Math.max(2, stand.distanceToPitch + d - FRONT_WALL_D);
+    const h = y + SEATED_EYE_M;
+    return ((TARGET_C_M + h) * (dist + t)) / dist - h;
+  };
+
+  let base = Array<number>(tier.rows).fill(tier.riserHeight);
+  if (stand.rakeProfile === 'progressive' && tier.rows >= 4) {
+    const ideal: number[] = [];
+    let d = startD;
+    let y = startY;
+    for (let r = 0; r < tier.rows; r++) {
+      ideal.push(neededRiser(d, y));
+      d += t;
+      y += tier.riserHeight;
+    }
+    // Keep the tier's height, with no row flatter than half or steeper than twice the mean.
+    const mean = tier.riserHeight;
+    const scale = (mean * tier.rows) / Math.max(1e-6, ideal.reduce((a, b) => a + b, 0));
+    const clamped = ideal.map((n) => Math.max(mean * 0.5, Math.min(mean * 2, n * scale)));
+    const rescale = (mean * tier.rows) / clamped.reduce((a, b) => a + b, 0);
+    base = clamped.map((n) => n * rescale);
+  }
+
+  // Built row by row, as each row's position depends on the risers below it.
+  const risers: number[] = [];
   let d = startD;
   let y = startY;
   for (let r = 0; r < tier.rows; r++) {
-    const dist = Math.max(2, stand.distanceToPitch + d);
-    const h = y + eye;
-    const n = ((PROGRESSIVE_RAKE_C_M + h) * (dist + t)) / dist - h;
-    ideal.push(n);
+    const n = Math.min(maxRiser, Math.max(base[r], neededRiser(d, y)));
+    risers.push(n);
     d += t;
-    y += tier.riserHeight;
+    y += n;
   }
-  // Keep the tier's height, with no row flatter than half or steeper than twice the mean.
-  const mean = tier.riserHeight;
-  const scale = (mean * tier.rows) / Math.max(1e-6, ideal.reduce((a, b) => a + b, 0));
-  const clamped = ideal.map((n) => Math.max(mean * 0.5, Math.min(mean * 2, n * scale)));
-  const rescale = (mean * tier.rows) / clamped.reduce((a, b) => a + b, 0);
-  return clamped.map((n) => n * rescale);
+  return risers;
 }
 
 /**
@@ -287,9 +382,23 @@ export function tierRowRisers(
  * balcony soffit is raised as needed so the sheltered rows keep OVERHANG_HEADROOM_M of clearance.
  */
 export function computeStandSection(stand: StandConfig): StandSection {
-  const tiers = resolveStandTiers(stand);
+  return layoutSection(stand, resolveStandTiers(stand));
+}
+
+/** Smallest depth of balcony soffit left in front of a loggia, set back or not (m). */
+export const MIN_BALCONY_SOFFIT_M = 0.6;
+
+/**
+ * Loggia back wall at a tier break: `recess` behind the last row below, and never in front of
+ * the upper tier's balcony, which may be set back behind the tier below (negative overhang).
+ */
+export function loggiaRecessD(curD: number, recess: number, frontD: number): number {
+  return Math.max(curD + recess, frontD + MIN_BALCONY_SOFFIT_M);
+}
+
+function layoutSection(stand: StandConfig, tiers: ResolvedTierSpec[]): StandSection {
   const hasVip = tiers.length >= 2 && stand.vipLoges !== false;
-  const frontWallD = 0.34;
+  const frontWallD = FRONT_WALL_D;
 
   const rows: StandSectionRow[] = [];
   const breaks: StandSectionBreak[] = [];
@@ -304,7 +413,7 @@ export function computeStandSection(stand: StandConfig): StandSection {
       const sheltered = rows.filter((r) => r.d + stand.rowDepth > frontD);
       const highestShelteredTread = sheltered.reduce((m, r) => Math.max(m, r.y), -Infinity);
       const soffitY = Math.max(curY + baseLoggiaH, highestShelteredTread + OVERHANG_HEADROOM_M);
-      const recessD = curD + recess;
+      const recessD = loggiaRecessD(curD, recess, frontD);
       breaks.push({
         tierIdx: tier.tierIndex,
         fromD: curD,
@@ -368,8 +477,8 @@ export function standTreadHeightAt(stand: StandConfig, d: number): number {
 /**
  * Green Guide / FIFA standard C-value formula:
  * C = D * (N + R) / (D + T) - R
- * with D the horizontal eye-to-focal-point distance, N the riser height, R the eye height above
- * the focal point and T the row depth.
+ * with D the horizontal distance and R the height from the focal point to the eye of the spectator
+ * in front, N the riser and T the row depth between the two rows.
  */
 export function computeRowCValueMm(
   distanceHorizontalM: number,
@@ -439,11 +548,14 @@ export function computeStandSightlines(
     const tierEyeOffset = isStandingKop && row.tierIdx === 0 ? 1.52 : eyeOffsetBase;
     const eyeHeight = row.y + tierEyeOffset;
 
-    // Rise and depth over the row in front: a cross aisle sets the row back and raises it.
+    // Green Guide: the sightline grazes the head of the spectator in front, so D and R are that
+    // spectator's; a cross aisle sets this row back and raises it (larger T and N).
     const front = section.rows[globalRow - 1];
+    const frontEye =
+      front && front.y + (isStandingKop && front.tierIdx === 0 ? 1.52 : eyeOffsetBase);
     const rawCVal = isTierFirstRow
       ? 145
-      : computeRowCValueMm(curD, eyeHeight, row.y - front.y, row.d - front.d);
+      : computeRowCValueMm(baseDist + front.d - 0.34, frontEye, row.y - front.y, row.d - front.d);
 
     // Roof columns planted in upper third of stands obstruct rear rows
     const colPenalty =

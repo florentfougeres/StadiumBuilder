@@ -20,6 +20,7 @@ import {
   vomitoryLevelsOfTier,
   RoofStyle,
   SeatingType,
+  riserFromSlopeDeg,
   slopeDegFromRiser,
   StadiumDocument,
   StadiumMetrics,
@@ -30,7 +31,7 @@ import {
 import { ENVELOPE_STYLE_CATALOG } from './materials';
 import { roofCostPerSeat, roofPeakHeight } from './roofCatalog';
 import { shapeDefinition } from './shapeCatalog';
-import { computeStandSection, computeStandSightlines, resolveStandTiers } from './sightlines';
+import { MAX_RAKE_DEG, computeStandSection, computeStandSightlines, resolveStandTiers } from './sightlines';
 
 const STAND_SIDES: StandSide[] = ['north', 'south', 'east', 'west'];
 
@@ -165,24 +166,19 @@ export function computeKopWallStandPatch(
       ? Math.max(...otherHeights)
       : Math.max(28, currentMetrics.maxHeight);
 
-  const cauldronBoost = doc.shape === 'steep_cauldron' ? 1.05 : 1.0;
+  // As steep as a terrace may be; each row's riser then grows where the C-value needs it (see
+  // `tierRowRisers`), so the row count is found by building the section, not by division.
   const rowDepth = 0.75;
-  const requiredRise = Math.max(8, targetHeight - stand.elevationStart - 1.85);
-
-  // Target steep Kop inclination ~36°
-  const preferredRiser = Math.tan((36 * Math.PI) / 180) * rowDepth;
-  const rows = Math.max(
-    14,
-    Math.min(108, Math.round(requiredRise / (preferredRiser * cauldronBoost)))
-  );
-
-  const rawRiser = requiredRise / (rows * cauldronBoost);
-  const minRiser = Math.tan((22 * Math.PI) / 180) * rowDepth;
-  const maxRiser = Math.tan((38.5 * Math.PI) / 180) * rowDepth;
-  const riserHeight = Number(
-    Math.max(minRiser, Math.min(maxRiser, rawRiser)).toFixed(4)
-  );
+  const riserHeight = riserFromSlopeDeg(MAX_RAKE_DEG, rowDepth);
   const slopeAngleDeg = slopeDegFromRiser(riserHeight, rowDepth);
+  const heightWith = (n: number) =>
+    calculateStandMetrics(
+      { ...doc, stands: { ...doc.stands, [side]: { ...stand, tiers: 1, rows: n, rowDepth, riserHeight, slopeAngleDeg, tierConfigs: undefined, seatingType, vipLoges: false } } },
+      side
+    ).maxHeight;
+  let rows = 14;
+  while (rows < 108 && heightWith(rows + 1) <= targetHeight) rows++;
+  if (rows < 108 && targetHeight - heightWith(rows) > heightWith(rows + 1) - targetHeight) rows++;
 
   return {
     tiers: 1,

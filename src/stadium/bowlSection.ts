@@ -5,7 +5,7 @@ import {
   ringSegmentStarts,
 } from './bowlRing';
 import { CornerId, StadiumDocument, StandConfig, StandSide, isContinuousBowlShape } from './schema';
-import { OVERHANG_HEADROOM_M, computeStandSection, tierBreakDims } from './sightlines';
+import { OVERHANG_HEADROOM_M, computeStandSection, loggiaRecessD, tierBreakDims } from './sightlines';
 
 /**
  * Cross-section of a continuous bowl anywhere on its ring.
@@ -372,9 +372,9 @@ export function bowlSectionAt(model: BowlSectionModel, mix: BowlMix): BowlSectio
           curY + tierParam(t, 'loggiaH'),
           Number.isFinite(highest) ? highest + OVERHANG_HEADROOM_M : -Infinity
         );
-        const recessD = curD + tierParam(t, 'recess') * b;
         const soffitY = curY + (soffitFull - curY) * b;
         const frontD = curD - (curD - frontFull) * b;
+        const recessD = curD + (loggiaRecessD(curD, tierParam(t, 'recess'), frontFull) - curD) * b;
         const topY = soffitY + tierParam(t, 'fasciaH') * b;
         pts.push([recessD, curY], [recessD, soffitY], [frontD, soffitY], [frontD, topY]);
         maxD = Math.max(maxD, recessD);

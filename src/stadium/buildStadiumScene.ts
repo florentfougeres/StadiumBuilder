@@ -14,6 +14,7 @@ import {
 } from './bowlRing';
 import { generateConcourseGroup } from './generateConcourse';
 import { generateEnvelopeSkirt } from './generateEnvelopeSkirt';
+import { generateStairCores } from './generateStairCores';
 import {
   buildLedLoopBand,
   SCREEN_TOP,
@@ -381,6 +382,8 @@ export function buildStadiumSceneGraph(
   }
 
   const concourseGroup = generateConcourseGroup(doc, Boolean(options.crossSectionClip), aniso);
+  const stairCores = generateStairCores(doc, Boolean(options.crossSectionClip), aniso);
+  if (stairCores.children.length > 0) concourseGroup.add(stairCores);
   const floodlightRigGroup = generateFloodlightRigGroup(
     doc,
     Boolean(options.crossSectionClip),

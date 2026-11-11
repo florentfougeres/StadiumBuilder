@@ -845,6 +845,8 @@ export interface ConcourseConfig {
   width: number;
   /** Ring height as a share of the adjacent stand height (0.15–1). */
   heightRatio: number;
+  /** Stair and lift cores against the outer facade (0, 4, 8 or 12); absent means none. */
+  stairCores?: number;
 }
 
 /** Character of the land around the stadium (see generateSite). */
@@ -1149,7 +1151,7 @@ export const STADIUM_SHAPE_LABELS: Record<StadiumShape, string> = {
 };
 
 export function riserFromSlopeDeg(slopeDeg: number, rowDepth: number): number {
-  const clamped = Math.max(15, Math.min(42, slopeDeg));
+  const clamped = Math.max(15, Math.min(35, slopeDeg));
   return Number((Math.tan((clamped * Math.PI) / 180) * rowDepth).toFixed(3));
 }
 

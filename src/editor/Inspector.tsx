@@ -81,10 +81,13 @@ import { ResolvedSeatTierStyle, resolveSeatTierStyle, SeatStyleScope, seatStyleA
 import {
   computeStandSightlines,
   DEFAULT_TIER_OVERHANG_M,
+  MAX_RAKE_DEG,
+  requestedTierOverhangs,
   resolveStandTiers,
   verticalBoxStandPatch,
 } from '../stadium/sightlines';
 import { FORECOURT_CANOPY_MAX_DEPTH } from '../stadium/roofs/forecourtCanopy';
+import { STAIR_CORE_COUNTS } from '../stadium/generateStairCores';
 import { StandTarget, useStadiumStore } from '../state/useStadiumStore';
 import { ObjectList } from './ObjectList';
 import { Plus, X } from 'lucide-react';
@@ -1240,6 +1243,15 @@ const ShapePanel: React.FC = () => {
             display={concourseHeight >= 0.98 ? 'Jusqu’en haut des tribunes' : `${Math.round(concourseHeight * 100)} %`}
             onChange={(v) => updateConcourse({ heightRatio: v })}
           />
+          <FieldRow label="Cages d’escaliers">
+            <Segmented
+              label="Cages d’escaliers"
+              size="sm"
+              value={doc.concourse?.stairCores ?? 0}
+              onChange={(n) => updateConcourse({ stairCores: n })}
+              options={STAIR_CORE_COUNTS.map((n) => ({ id: n, label: n === 0 ? 'Aucune' : String(n) }))}
+            />
+          </FieldRow>
         </SubGroup>
       </AdvancedSection>
     </>
@@ -1510,9 +1522,11 @@ type ResolvedTier = ReturnType<typeof resolveStandTiers>[number];
  */
 const TierTable: React.FC<{
   tiers: ResolvedTier[];
+  /** Overhang asked for each tier, before sightlines hold it back. */
+  asked: number[];
   disabled: boolean;
   onChange: (tierIndex: number, patch: { rows?: number; slopeAngleDeg?: number; overhang?: number }) => void;
-}> = ({ tiers, disabled, onChange }) => (
+}> = ({ tiers, asked, disabled, onChange }) => (
   <table className="w-full table-fixed text-xs">
     <thead>
       <tr className="text-2xs text-ink-faint">
@@ -1553,7 +1567,7 @@ const TierTable: React.FC<{
               <CellNumber
                 label={`Pente, étage ${n}`}
                 min={16}
-                max={42}
+                max={MAX_RAKE_DEG}
                 step={0.5}
                 disabled={disabled}
                 value={t.slopeAngleDeg}
@@ -1569,8 +1583,8 @@ const TierTable: React.FC<{
                   max={7.5}
                   step={0.25}
                   disabled={disabled}
-                  value={t.overhang}
-                  display={`${fr1(t.overhang)} m`}
+                  value={asked[t.tierIndex] ?? t.overhang}
+                  display={`${fr1(asked[t.tierIndex] ?? t.overhang)} m`}
                   onChange={(overhang) => onChange(t.tierIndex, { overhang })}
                 />
               ) : (
@@ -1632,6 +1646,9 @@ const StandsPanel: React.FC = () => {
   const slope = stand.slopeAngleDeg ?? slopeDegFromRiser(stand.riserHeight, stand.rowDepth);
   const off = !stand.enabled;
   const resolvedTiers = useMemo(() => resolveStandTiers(stand), [stand]);
+  const askedOverhangs = useMemo(() => requestedTierOverhangs(stand), [stand]);
+  /** Upper tiers set back from the overhang asked for, so their rows keep a view of the touchline. */
+  const heldBack = resolvedTiers.filter((t) => t.tierIndex > 0 && t.overhang < (askedOverhangs[t.tierIndex] ?? 0) - 0.05);
   const vomSpec = useMemo(() => resolveStandVomitories(stand), [stand]);
   const crossAisles = useMemo(() => resolveCrossAisles(stand), [stand]);
   const tierOverhang = stand.tierOverhang ?? DEFAULT_TIER_OVERHANG_M;
@@ -1735,9 +1752,9 @@ const StandsPanel: React.FC = () => {
         />
         <SliderField
           label="Pente"
-          hint="28° est la norme courante ; au-delà de 35° la tribune devient un mur"
+          hint="28° est la norme courante ; 35° est le maximum autorisé. Chaque rang monte au besoin pour voir la ligne de touche (valeur C de 90 mm)"
           min={16}
-          max={42}
+          max={MAX_RAKE_DEG}
           step={0.5}
           disabled={off}
           value={slope}
@@ -2051,8 +2068,21 @@ const StandsPanel: React.FC = () => {
               display={tierOverhang > 0 ? `+${fr1(tierOverhang)} m` : 'Aligné'}
               onChange={(v) => updateStand(target, { tierOverhang: v })}
             />
+            {heldBack.length > 0 && (
+              <p className="text-2xs text-ink-muted" role="note">
+                {heldBack
+                  .map((t) =>
+                    t.overhang < 0
+                      ? `Étage ${t.tierIndex + 1} reculé de ${fr1(-t.overhang)} m`
+                      : `Étage ${t.tierIndex + 1} avancé de ${fr1(t.overhang)} m seulement`
+                  )
+                  .join(' · ')}{' '}
+                pour que ses rangs voient la ligne de touche (valeur C ≥ 60 mm).
+              </p>
+            )}
             <TierTable
               tiers={resolvedTiers}
+              asked={askedOverhangs}
               disabled={off}
               onChange={(tierIndex, patch) => updateStandTier(target, tierIndex, patch)}
             />

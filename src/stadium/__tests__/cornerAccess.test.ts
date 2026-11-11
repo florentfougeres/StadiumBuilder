@@ -79,7 +79,8 @@ describe('first row height', () => {
     const low = computeStandSection(doc.stands.south);
     const high = computeStandSection({ ...doc.stands.south, elevationStart: 4 });
     expect(high.rows[0].y).toBeCloseTo(4);
-    expect(high.topHeight - low.topHeight).toBeCloseTo(4 - doc.stands.south.elevationStart);
+    // Every row is lifted, and rows set higher need taller risers to see over the row in front.
+    expect(high.topHeight - low.topHeight).toBeGreaterThanOrEqual(4 - doc.stands.south.elevationStart - 1e-6);
   });
 
   it.each<StadiumShape>(['modern_bowl', 'saddle_bowl', 'four_stands'])(

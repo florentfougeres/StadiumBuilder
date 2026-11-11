@@ -44,7 +44,7 @@ import {
 } from '../stadium/schema';
 import { isIntegralShell, isMovableRoof } from '../stadium/roofCatalog';
 import { paintSeatStyle, SeatStyleScope, stripSeatStyles } from '../stadium/seatPattern';
-import { resolveStandTiers } from '../stadium/sightlines';
+import { MAX_RAKE_DEG, resolveStandTiers } from '../stadium/sightlines';
 import { defaultHaloHeight } from '../stadium/buildStadiumScene';
 import {
   deleteProjectFromDb,
@@ -474,7 +474,7 @@ function applyStandPatch(d: StadiumDocument, side: StandSide, patch: Partial<Sta
           const idx = resized.length;
           resized.push({
             rows: 14,
-            slopeAngleDeg: Math.min(40, (prev.slopeAngleDeg ?? 28) + idx * 1.8),
+            slopeAngleDeg: Math.min(MAX_RAKE_DEG, (prev.slopeAngleDeg ?? 28) + idx * 1.8),
           });
         }
         next.tierConfigs = resized;
@@ -500,7 +500,7 @@ function applyStandPatch(d: StadiumDocument, side: StandSide, patch: Partial<Sta
       next.tierConfigs = (next.tierConfigs ?? prev.tierConfigs).map((tc) => ({
         ...tc,
         slopeAngleDeg: Number(
-          Math.max(15, Math.min(42, tc.slopeAngleDeg + deltaSlope)).toFixed(1)
+          Math.max(15, Math.min(MAX_RAKE_DEG, tc.slopeAngleDeg + deltaSlope)).toFixed(1)
         ),
       }));
     }
@@ -534,7 +534,7 @@ function applyStandTierPatch(
   const target = { ...configs[tierIndex], ...patch };
   target.rows = Math.max(3, Math.min(72, Math.round(target.rows)));
   target.slopeAngleDeg = Number(
-    Math.max(15, Math.min(42, target.slopeAngleDeg)).toFixed(1)
+    Math.max(15, Math.min(MAX_RAKE_DEG, target.slopeAngleDeg)).toFixed(1)
   );
   if (target.overhang !== undefined) {
     target.overhang = Number(Math.max(0, Math.min(8, target.overhang)).toFixed(2));

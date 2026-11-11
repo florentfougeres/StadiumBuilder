@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { calculateStadiumMetrics } from '../capacity';
 import { generateStandsGroup } from '../generateStand';
-import { computeStandSection, computeStandSightlines } from '../sightlines';
-import { createPresetDocument } from '../presets';
+import { MAX_RAKE_DEG, computeStandSection, computeStandSightlines } from '../sightlines';
+import { STADIUM_PRESETS, createPresetDocument } from '../presets';
 import { pressRowRange } from '../generateStandFittings';
 import { StadiumDocument, StadiumShape, StandSide } from '../schema';
 
@@ -42,11 +42,9 @@ function docOf(shape: StadiumShape): StadiumDocument {
 }
 
 describe('progressive rake', () => {
-  it('keeps the tier height, flatter at the front and steeper at the back', () => {
+  it('is flatter at the front and steeper at the back', () => {
     const stand = createPresetDocument('traditional_four_stands_42k').stands.south;
-    const flat = computeStandSection({ ...stand, tiers: 1, tierConfigs: undefined });
     const prog = computeStandSection({ ...stand, tiers: 1, tierConfigs: undefined, rakeProfile: 'progressive' });
-    expect(prog.endY).toBeCloseTo(flat.endY, 3);
     expect(prog.rows[0].riser).toBeLessThan(prog.rows[prog.rows.length - 2].riser);
   });
 
@@ -56,6 +54,26 @@ describe('progressive rake', () => {
     const prog = computeStandSightlines({ ...stand, rakeProfile: 'progressive' });
     const spread = (p: typeof flat.points) => Math.max(...p.slice(1).map((x) => x.cValueMm)) - Math.min(...p.slice(1).map((x) => x.cValueMm));
     expect(spread(prog.points)).toBeLessThan(spread(flat.points));
+  });
+});
+
+describe('terrace rules', () => {
+  const MAX_RISER = (rowDepth: number) => Math.tan((MAX_RAKE_DEG * Math.PI) / 180) * rowDepth + 1e-6;
+
+  it.each(STADIUM_PRESETS.map((p) => p.id))('%s: no riser over 35°, C ≥ 90 mm wherever the rake allows', (id) => {
+    const doc = createPresetDocument(id);
+    for (const stand of Object.values(doc.stands)) {
+      if (!stand.enabled) continue;
+      const section = computeStandSection(stand);
+      const sight = computeStandSightlines(stand);
+      section.rows.forEach((row, i) => {
+        expect(row.riser).toBeLessThanOrEqual(MAX_RISER(stand.rowDepth));
+        if (i === 0 || section.rows[i - 1].tierIdx !== row.tierIdx) return;
+        const front = section.rows[i - 1];
+        // Below the target only where the row in front is already at the steepest rake.
+        if (sight.points[i].cValueMm < 89) expect(front.riser).toBeGreaterThan(MAX_RISER(stand.rowDepth) - 1e-3);
+      });
+    }
   });
 });
 

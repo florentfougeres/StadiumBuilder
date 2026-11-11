@@ -93,8 +93,15 @@ describe('continuous bowl sections', () => {
       const f = 1 - i / 40;
       const sample = bowlSectionAt(model, { a: 'east', b: 'south', f });
       const levels = treadLevels(model, sample.pts);
-      // Lower tier rows sit at the main stand's levels (both stands share that rake).
-      levels[0].forEach((y, r) => expect(y).toBeCloseTo(main.rows[r].y, 6));
+      // Lower tier rows sit between the two stands' levels (their rakes differ only by the risers
+      // each one's C-value needs), never stretched beyond them.
+      levels[0].forEach((y, r) => {
+        const endRow = end.rows.filter((row) => row.tierIdx === 0)[r];
+        if (endRow) {
+          expect(y).toBeGreaterThanOrEqual(Math.min(main.rows[r].y, endRow.y) - 1e-6);
+          expect(y).toBeLessThanOrEqual(Math.max(main.rows[r].y, endRow.y) + 1e-6);
+        }
+      });
       // The crest only ever comes down toward the low end, never ripples.
       expect(sample.topHeight).toBeLessThanOrEqual(prevTop + 1e-6);
       prevTop = sample.topHeight;
