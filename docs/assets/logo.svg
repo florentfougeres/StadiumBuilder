@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="t">
+  <title id="t">StadiumForge</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e3ebf4"/>
+    </linearGradient>
+    <mask id="gate">
+      <rect width="512" height="512" fill="#fff"/>
+      <path d="M240 400 V352 a16 16 0 0 1 32 0 V400 Z" fill="#000"/>
+    </mask>
+    <clipPath id="inside">
+      <ellipse cx="256" cy="240" rx="128" ry="47"/>
+    </clipPath>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#tile)"/>
+  <rect x="1.5" y="1.5" width="509" height="509" rx="110.5" fill="none" stroke="#1f5a96" stroke-opacity=".08" stroke-width="3"/>
+
+  <!-- Ombre portée -->
+  <ellipse cx="256" cy="404" rx="140" ry="16" fill="#1f5a96" opacity=".08"/>
+
+  <!-- Repère orange (poignée paramétrique) -->
+  <line x1="256" y1="126" x2="256" y2="182" stroke="#f2a14c" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="256" cy="112" r="15" fill="#fff" stroke="#f2a14c" stroke-width="8"/>
+
+  <!-- Enceinte -->
+  <path d="M106 236 A150 62 0 0 1 406 236 V332 A150 62 0 0 1 106 332 Z" fill="#1f5a96" mask="url(#gate)"/>
+
+  <!-- Liseré intérieur -->
+  <ellipse cx="256" cy="238" rx="136" ry="52" fill="none" stroke="#ffffff" stroke-width="5"/>
+
+  <!-- Terrain, vu dans la cuvette -->
+  <g clip-path="url(#inside)">
+    <rect x="100" y="180" width="312" height="120" fill="#174a7d"/>
+    <ellipse cx="256" cy="252" rx="128" ry="38" fill="#8cc4ea"/>
+    <g fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round">
+      <line x1="256" y1="214" x2="256" y2="292"/>
+      <ellipse cx="256" cy="252" rx="20" ry="11"/>
+      <path d="M134 236 L170 240 L170 264 L134 268" fill="#b3d9f3"/>
+      <path d="M378 236 L342 240 L342 264 L378 268" fill="#b3d9f3"/>
+    </g>
+  </g>
+</svg>
