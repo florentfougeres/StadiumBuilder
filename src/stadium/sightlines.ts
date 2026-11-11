@@ -147,47 +147,12 @@ export function requestedTierOverhangs(stand: StandConfig): number[] {
 /** Tiers resolved per stand settings: every builder resolves the same stands many times. */
 const resolvedTierCache = new Map<string, ResolvedTierSpec[]>();
 
-/** Lowest C-value an upper tier is set back for (m): the Green Guide's acceptable minimum. */
-const MIN_C_M = 0.06;
-/** Rows of the deepest balcony still read as boxes, kept where it is asked to be. */
-const MAX_BOX_BALCONY_ROWS = 2;
-/** Furthest an upper tier is set back behind the tier below (m). */
-const MAX_SETBACK_M = 24;
-
 /**
- * Overhang of tier `t` (the tiers below it already placed): the one asked for, or less, down to a
- * set-back (negative overhang), so that every row of the tier keeps a C-value of `MIN_C_M` over
- * the touchline. A balcony pushed too far forward and too high looks down at the touchline more
- * steeply than the steepest rake, and no riser can then give its rows a view over the row in
- * front: real upper tiers sit back as far as that takes.
+ * Overhang of tier `t`: always the one asked for. Sightlines no longer set an upper tier back
+ * on their own, so a tier set to overhang the one below always does.
  */
-function sightlineOverhang(stand: StandConfig, tiers: ResolvedTierSpec[], t: number): number {
-  const wanted = tiers[t].overhang;
-  // A balcony of one or two rows is a row of boxes (La Bombonera's palcos), not a terrace.
-  if (tiers[t].rows <= MAX_BOX_BALCONY_ROWS) return wanted;
-  const minC = (overhang: number) => {
-    const trial = tiers.slice(0, t + 1).map((tier, i) => (i === t ? { ...tier, overhang } : tier));
-    const rows = layoutSection(stand, trial).rows.filter((r) => r.tierIdx === t);
-    let worst = Infinity;
-    for (let i = 1; i < rows.length; i++) {
-      const front = rows[i - 1];
-      const dist = Math.max(2, stand.distanceToPitch + front.d - FRONT_WALL_D);
-      const c = computeRowCValueMm(dist, front.y + SEATED_EYE_M, rows[i].y - front.y, rows[i].d - front.d);
-      worst = Math.min(worst, c);
-    }
-    return worst;
-  };
-  if (minC(wanted) >= MIN_C_M * 1000) return wanted;
-  let lo = -MAX_SETBACK_M;
-  if (minC(lo) < MIN_C_M * 1000) return lo;
-  let hi = wanted;
-  for (let k = 0; k < 14; k++) {
-    const mid = (lo + hi) / 2;
-    if (minC(mid) >= MIN_C_M * 1000) lo = mid;
-    else hi = mid;
-  }
-  // Rounded toward the set-back, which keeps the C-value found.
-  return Math.floor(lo * 100) / 100;
+function sightlineOverhang(_stand: StandConfig, tiers: ResolvedTierSpec[], t: number): number {
+  return tiers[t].overhang;
 }
 
 /**
