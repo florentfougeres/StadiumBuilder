@@ -5,6 +5,7 @@ import { RoofStyle, StadiumDocument, StandConfig } from '../schema';
 import { standTreadHeightAt } from '../sightlines';
 import { beamGeometry, gridSurfaceGeometry, mergedMesh } from './roofBeams';
 import { computeStadiumRingBounds } from './ringBounds';
+import { cantileverMastRise, trussDepthFor } from './structuralSizing';
 import { buildAnnularCanopyMesh, buildAnnularCatwalkFloodlights, buildCanopyMaterialBundle, buildStraightCatwalkFloodlights, createOrientedRoofBoxGeometry, createStrutBetween, hasRoofGantryLights, treadHeightAtNormal } from './roofKit';
 
 /**
@@ -113,8 +114,11 @@ export function buildContinuousColumnOrGoalpostRoof(
     // `goalpost_truss`: 4 corner steel lattice pylons carrying monumental full-length box-girders!
     const cornerX = innerHalfX + avgDepth * 0.55;
     const cornerZ = innerHalfZ + innerOff + 2.5;
-    const girderTopY = roofY + 7.5;
+    // The girder is as deep as its span asks: about a fourteenth of it.
+    const girderDepth = trussDepthFor(cornerX * 2, 4, 14);
     const girderBotY = roofY + 3.8;
+    const girderTopY = girderBotY + girderDepth;
+    const webR = Math.max(0.16, girderDepth * 0.025);
 
     const zList = crossSectionClip ? [-cornerZ] : [-cornerZ, cornerZ];
     for (const gz of zList) {
@@ -137,7 +141,7 @@ export function buildContinuousColumnOrGoalpostRoof(
         chord.castShadow = true;
         group.add(chord);
       }
-      const bays = 16;
+      const bays = Math.max(8, Math.round((cornerX * 2) / Math.max(7, girderDepth * 1.2)));
       const bw = (cornerX * 2) / bays;
       for (let b = 0; b < bays; b++) {
         const x0 = -cornerX + b * bw;
@@ -147,16 +151,16 @@ export function buildContinuousColumnOrGoalpostRoof(
           createStrutBetween(
             new THREE.Vector3(x0, girderBotY, gz),
             new THREE.Vector3(x1, girderTopY, gz),
-            0.16,
-            0.16,
+            webR,
+            webR,
             primaryStructMat,
             5
           ),
           createStrutBetween(
             new THREE.Vector3(x1, girderBotY, gz),
             new THREE.Vector3(x0, girderTopY, gz),
-            0.16,
-            0.16,
+            webR,
+            webR,
             primaryStructMat,
             5
           ),
@@ -758,8 +762,10 @@ export function buildSingleStandRoofGroup(
     );
 
     const pylonX = roofSpan / 2 + 1.8;
+    const girderDepth = trussDepthFor(pylonX * 2, 4, 12);
     const girderBotY = roofHeight + 3.6;
-    const girderTopY = roofHeight + 7.6;
+    const girderTopY = girderBotY + girderDepth;
+    const webR = Math.max(0.14, girderDepth * 0.025);
     const girderZ = frontZ + Math.min(4.2, roofDepth * 0.24);
 
     // 2 Corner Mega-Pylons: planted at front girder ONLY on open ends; shifted behind rear wall on closed corners!
@@ -804,7 +810,7 @@ export function buildSingleStandRoofGroup(
       }
     }
 
-    const bayCount = Math.max(10, Math.floor((pylonX * 2) / 7.5));
+    const bayCount = Math.max(6, Math.round((pylonX * 2) / Math.max(7.5, girderDepth * 1.2)));
     const bayW = (pylonX * 2) / bayCount;
     for (let b = 0; b < bayCount; b++) {
       const x0 = -pylonX + b * bayW;
@@ -814,16 +820,16 @@ export function buildSingleStandRoofGroup(
         createStrutBetween(
           new THREE.Vector3(x0, girderBotY, girderZ - 1.1),
           new THREE.Vector3(x1, girderTopY, girderZ - 1.1),
-          0.14,
-          0.14,
+          webR,
+          webR,
           primaryStructMat,
           5
         ),
         createStrutBetween(
           new THREE.Vector3(x1, girderBotY, girderZ + 1.1),
           new THREE.Vector3(x0, girderTopY, girderZ + 1.1),
-          0.14,
-          0.14,
+          webR,
+          webR,
           primaryStructMat,
           5
         ),
@@ -908,7 +914,9 @@ export function buildSingleStandRoofGroup(
       side: THREE.DoubleSide,
     });
 
-    const girderH = 2.8;
+    const girderH = trussDepthFor(roofSpan, 2.8, 9);
+    const chord = Math.max(0.34, girderH * 0.085);
+    const webR = Math.max(0.1, girderH * 0.028);
     for (const sSign of [-1, 1] as const) {
       const isOpenEnd = sSign === -1 ? openNegEnd : openPosEnd;
       if (!isOpenEnd) continue;
@@ -944,15 +952,16 @@ export function buildSingleStandRoofGroup(
     }
 
     for (const yOff of [0.25, girderH]) {
-      const chord = new THREE.Mesh(
-        new THREE.BoxGeometry(roofSpan, 0.34, 0.42),
+      const chordMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(roofSpan, chord, chord * 1.25),
         primaryStructMat
       );
-      chord.position.set(0, roofHeight + yOff, frontZ + 0.6);
-      standRoofGroup.add(chord);
+      chordMesh.position.set(0, roofHeight + yOff, frontZ + 0.6);
+      chordMesh.castShadow = true;
+      standRoofGroup.add(chordMesh);
     }
 
-    const bayCount = Math.max(10, Math.floor(roofSpan / 6));
+    const bayCount = Math.max(6, Math.round(roofSpan / Math.max(6, girderH * 1.3)));
     const bayW = roofSpan / bayCount;
     for (let b = 0; b < bayCount; b++) {
       const x0 = -roofSpan / 2 + b * bayW;
@@ -961,16 +970,16 @@ export function buildSingleStandRoofGroup(
         createStrutBetween(
           new THREE.Vector3(x0, roofHeight + 0.25, frontZ + 0.6),
           new THREE.Vector3(x1, roofHeight + girderH, frontZ + 0.6),
-          0.1,
-          0.1,
+          webR,
+          webR,
           primaryStructMat,
           5
         ),
         createStrutBetween(
           new THREE.Vector3(x1, roofHeight + 0.25, frontZ + 0.6),
           new THREE.Vector3(x0, roofHeight + girderH, frontZ + 0.6),
-          0.1,
-          0.1,
+          webR,
+          webR,
           primaryStructMat,
           5
         )
@@ -999,6 +1008,8 @@ export function buildSingleStandRoofGroup(
   );
 
   const anchorOnStandCrest = concourseWidth > 0.5 && doc.roof.overConcourse === false;
+  // The tie mast rises with the reach it holds back: about a sixth of the cantilever.
+  const mastRise = cantileverMastRise(roofDepth, 3.4, 8);
   const frameCount = Math.max(7, Math.floor(roofSpan / 11));
   for (let i = 0; i < frameCount; i++) {
     const rx = -roofSpan / 2 + 2.5 + (i * (roofSpan - 5)) / Math.max(1, frameCount - 1);
@@ -1008,7 +1019,7 @@ export function buildSingleStandRoofGroup(
     standRoofGroup.add(
       createStrutBetween(
         new THREE.Vector3(rx, rearPostFootY, rearPostFootZ),
-        new THREE.Vector3(rx, roofHeight + 3.4, rearZ - 0.2),
+        new THREE.Vector3(rx, roofHeight + mastRise, rearZ - 0.2),
         0.34,
         0.46,
         primaryStructMat,
@@ -1023,7 +1034,7 @@ export function buildSingleStandRoofGroup(
         6
       ),
       createStrutBetween(
-        new THREE.Vector3(rx, roofHeight + 3.3, rearZ - 0.2),
+        new THREE.Vector3(rx, roofHeight + mastRise - 0.1, rearZ - 0.2),
         new THREE.Vector3(rx, roofHeight + 1.25, frontZ + 2.5),
         0.18,
         0.34,
@@ -1031,7 +1042,7 @@ export function buildSingleStandRoofGroup(
         6
       ),
       createStrutBetween(
-        new THREE.Vector3(rx, roofHeight + 2.3, midZ),
+        new THREE.Vector3(rx, roofHeight + (mastRise + 1.15) / 2, midZ),
         new THREE.Vector3(rx, roofHeight + 0.55, midZ),
         0.12,
         0.12,

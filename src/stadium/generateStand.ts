@@ -79,6 +79,7 @@ import {
 } from './schema';
 import { createStandSeatPainter, SeatPainter } from './seatPattern';
 import { buildStandEnvelope, facadeGradeY, hasOwnFacade, isHollowStand, resolveStandFacade } from './envelopes';
+import { buildGableEnvelope, buildGableFrame } from './envelopes/gable';
 import { splitRail } from './envelopes/rail';
 import { CORNER_STRUCTURES } from './corners';
 import { createStrut, ignoreRaycasts, setFarDetail } from './meshKit';
@@ -956,6 +957,25 @@ function buildStraightStandMesh(
       capMesh.castShadow = true;
       capMesh.receiveShadow = true;
       group.add(capMesh);
+
+      // A solid stand's gable is finished like its facade; a hollow one shows its frame instead.
+      if (!isHollow && !stand.embankment) {
+        const gable = buildGableEnvelope({
+          profilePts,
+          totalDepth,
+          gradeY,
+          lx: endSpec.lx,
+          facade: resolveStandFacade(doc, stand).facade,
+          facadeMat,
+          structureMat,
+          concreteMat,
+          night: isNight,
+        });
+        if (gable) group.add(gable);
+      } else if (isHollow) {
+        const frame = buildGableFrame({ totalDepth, topHeight, gradeY, lx: endSpec.lx, structureMat, concreteMat });
+        if (frame) group.add(frame);
+      }
 
       for (const band of railBands) {
         const pStart = new THREE.Vector3(

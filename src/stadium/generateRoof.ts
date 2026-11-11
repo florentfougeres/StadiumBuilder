@@ -14,6 +14,7 @@ import { RoofBuilder, addColumnDownpipes, addSlabDeckDetail, buildAnnularCanopyM
 import { SHELL_ROOF_BUILDERS } from './roofs/shellRoofs';
 import { buildContinuousColumnOrGoalpostRoof, buildSingleStandRoofGroup } from './roofs/standRoofs';
 import { STRUCTURE_ROOF_BUILDERS } from './roofs/structureRoofs';
+import { dimensionRoofColumns } from './roofs/structuralSizing';
 
 /**
  * Whole-arena roofs, by family. A style missing here is built stand by stand on separate stands, or
@@ -94,6 +95,7 @@ export function generateRoofGroup(
     !isContinuousBowlShape(doc.shape) || !covered || covered.length >= 4 ? built : clipRoofToSides(doc, built, covered);
   const forecourt = buildForecourtCanopy(doc, roof, maxAnisotropy);
   if (forecourt) roof.add(forecourt);
+  dimensionRoofColumns(roof);
   addColumnDownpipes(roof);
   calibrateRoofTextures(roof);
   return roof;

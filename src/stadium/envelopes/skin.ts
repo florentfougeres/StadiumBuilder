@@ -4,7 +4,9 @@ import {
   createRailSampler,
   FACADE_WALL_OFFSET,
   type FacadeRailSample,
+  instancedBoxes,
   lobbyHeight,
+  loftAlongRail,
   railStations,
   verticals,
 } from './rail';
@@ -110,6 +112,159 @@ export function skinSilhouette(mats: StadiumMaterialsConfig): ((h: number, vf: n
 }
 
 
+/** Claddings that are a solid wall, so the floors behind it show as openings punched through it. */
+const WALLED_FACADES = new Set<FacadeMaterialId>([
+  'architectural_concrete',
+  'weathered_corten',
+  'heritage_brick',
+  'limestone_travertine',
+  'terracotta_baguettes',
+  'gold_anodized_panels',
+  'white_composite_panels',
+  'black_zinc_cladding',
+  'ceramic_tile_mosaic',
+  'corrugated_steel_sheet',
+  'precast_concrete_scales',
+]);
+
+/**
+ * What each storey of a walled facade is, from the ground up: offices and stores behind punched
+ * windows, the hospitality level behind a ribbon of glazing, plant rooms behind louvres at the top.
+ */
+export function storeyUses(storeys: number): ('windows' | 'ribbon' | 'louvres')[] {
+  return Array.from({ length: storeys }, (_, k) => {
+    if (storeys >= 3 && k === storeys - 1) return 'louvres';
+    if (storeys === 2 ? k === 1 : storeys >= 3 && k === Math.floor((storeys - 1) / 2)) return 'ribbon';
+    return 'windows';
+  });
+}
+
+/**
+ * Openings of a walled facade, bay by bay between its pilasters, so the building behind the stand
+ * reads floor by floor: a string course at every slab, and per storey the openings of its use
+ * (`storeyUses`). Each opening is a dark pane set in a projecting frame with a sill.
+ */
+export function storeyFenestration(params: {
+  rail: FacadeRailSample[];
+  closed: boolean;
+  /** Spacing (m) of the pilasters the openings sit between. */
+  baySpacing: number;
+  facade: FacadeMaterialId;
+  /** A relief pattern covers the wall: no openings. */
+  relief?: boolean;
+  structureMat: THREE.Material;
+  concreteMat: THREE.Material;
+  night: boolean;
+}): THREE.Group | null {
+  const { rail, closed, baySpacing, structureMat, concreteMat, night } = params;
+  if (!WALLED_FACADES.has(params.facade) || params.relief) return null;
+  const sampler = createRailSampler(rail, closed);
+  if (!sampler) return null;
+  const { totalLen, sampleAtArc } = sampler;
+  // Same bays as the pilasters (`railStations`): one opening group between two of them.
+  const count = Math.max(2, Math.round(totalLen / baySpacing));
+  const step = totalLen / count;
+  const firstFloor = (pt: FacadeRailSample) => pt.yBottom + lobbyHeight(pt) + 0.9;
+  const storeysAt = (pt: FacadeRailSample) => Math.max(0, Math.floor((pt.yTop - 1 - firstFloor(pt)) / STOREY_HEIGHT));
+
+  const panes: THREE.Matrix4[] = [];
+  const litPanes: THREE.Matrix4[] = [];
+  const frames: THREE.Matrix4[] = [];
+  const blades: THREE.Matrix4[] = [];
+  const dummy = new THREE.Object3D();
+  const box = (pt: FacadeRailSample, out: number, y: number, w: number, h: number, d: number) => {
+    dummy.position.set(pt.x + pt.nx * out, y, pt.z + pt.nz * out);
+    dummy.rotation.set(0, Math.atan2(pt.nx, pt.nz), 0);
+    dummy.scale.set(w, h, d);
+    dummy.updateMatrix();
+    return dummy.matrix.clone();
+  };
+  const wall = FACADE_WALL_OFFSET;
+  /** One framed opening `w × h` centred at arc `s`, its sill at `y`. */
+  const opening = (s: number, y: number, w: number, h: number, list: THREE.Matrix4[]) => {
+    const pt = sampleAtArc(s);
+    // Under a raking top (a gable), the opening must clear the wall's edge at both jambs.
+    if (y + h > Math.min(sampleAtArc(s - w / 2).yTop, sampleAtArc(s + w / 2).yTop) - 0.7) return;
+    list.push(box(pt, wall + 0.03, y + h / 2, w, h, 0.06));
+    frames.push(
+      box(pt, wall + 0.1, y + h + 0.06, w + 0.24, 0.12, 0.2),
+      box(pt, wall + 0.14, y - 0.07, w + 0.34, 0.14, 0.3),
+      box(sampleAtArc(s - w / 2 - 0.06), wall + 0.1, y + h / 2, 0.12, h, 0.2),
+      box(sampleAtArc(s + w / 2 + 0.06), wall + 0.1, y + h / 2, 0.12, h, 0.2)
+    );
+  };
+
+  // One use per floor along the whole elevation, read from its tallest part; where the wall
+  // stops lower (a gable, a dipping crest) it simply has fewer floors.
+  const maxStoreys = Math.max(...rail.map(storeysAt));
+  const uses = storeyUses(maxStoreys);
+  const bays = closed ? count : count - 1;
+  const clear = baySpacing - 2.2;
+  for (let i = 0; i < bays; i++) {
+    const mid = (i + (closed ? 0.5 : 1)) * step;
+    const pt = sampleAtArc(mid);
+    uses.slice(0, storeysAt(pt)).forEach((use, k) => {
+      const floor = firstFloor(pt) + k * STOREY_HEIGHT;
+      if (use === 'windows') {
+        const w = clear / 2 - 0.5;
+        for (const side of [-1, 1]) opening(mid + side * (w / 2 + 0.4), floor + 1.15, w, 1.9, panes);
+      } else if (use === 'ribbon') {
+        // Floor-to-ceiling glazing in panes of a mullion module, so it follows a curved wall.
+        const n = Math.max(2, Math.round(clear / 1.6));
+        const w = clear / n - 0.12;
+        for (let j = 0; j < n; j++) opening(mid + ((j + 0.5) / n - 0.5) * clear, floor + 0.55, w, 3.1, litPanes);
+      } else {
+        const lpt = sampleAtArc(mid);
+        if (floor + 3.2 > Math.min(sampleAtArc(mid - clear / 2).yTop, sampleAtArc(mid + clear / 2).yTop) - 0.5) return;
+        frames.push(box(lpt, wall + 0.08, floor + 2.1, clear + 0.2, 2.1, 0.12));
+        for (let b = 0; b < 7; b++) blades.push(box(lpt, wall + 0.2, floor + 1.2 + b * 0.3, clear, 0.05, 0.22));
+      }
+    });
+  }
+  if (panes.length + litPanes.length + blades.length === 0) return null;
+
+  const group = new THREE.Group();
+  group.name = 'FacadeFenestration';
+  const glass = new THREE.MeshPhysicalMaterial({ color: 0x24323f, roughness: 0.08, metalness: 0.55, clearcoat: 1 });
+  // The hospitality level is lit from within once the daylight goes.
+  const litGlass = glass.clone();
+  if (night) {
+    litGlass.emissive = new THREE.Color(0xfde2a4);
+    litGlass.emissiveIntensity = 0.7;
+  }
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0x5b6269, roughness: 0.5, metalness: 0.7 });
+  for (const [name, list, mat] of [
+    ['FacadeWindowPanes', panes, glass],
+    ['FacadeRibbonPanes', litPanes, litGlass],
+    ['FacadeWindowFrames', frames, structureMat],
+    ['FacadeLouvreBlades', blades, bladeMat],
+  ] as const) {
+    const inst = instancedBoxes(name, list, mat);
+    if (inst) group.add(inst);
+  }
+  // String course at every slab the wall is tall enough to hold.
+  for (let k = 0; k <= maxStoreys; k++) {
+    const course = loftAlongRail(rail, closed, (pt) => {
+      const y = firstFloor(pt) + k * STOREY_HEIGHT;
+      // Folded flat into the wall where this part of the facade stops lower.
+      const on = k <= storeysAt(pt) && y < pt.yTop - 0.6;
+      const proud = on ? 0.16 : 0;
+      const yy = on ? y : pt.yBottom + 0.5;
+      return [
+        [wall, yy - 0.16],
+        [wall + proud, yy - 0.16],
+        [wall + proud, yy + 0.16],
+        [wall, yy + 0.16],
+      ];
+    }, concreteMat);
+    if (course) {
+      course.name = 'FacadeStringCourse';
+      group.add(course);
+    }
+  }
+  return group;
+}
+
 /**
  * Finish of a plain upright skin: the curtain-wall grid when glazed, otherwise pilasters, piers or
  * bands, so a long wall never reads as a blank strip.
@@ -144,6 +299,19 @@ function plainSkinFinish(ctx: EnvelopeStandContext): void {
     return;
   }
   const piers = skinAccent === 'piers';
+  add(
+    storeyFenestration({
+      rail,
+      closed,
+      baySpacing: piers ? 9 : 7.5,
+      facade: mats.facade,
+      // A relief pattern over the wall is its own elevation.
+      relief: (mats.facadePattern ?? 'none') !== 'none' && (ctx.doc.concourse?.width ?? 0) <= 0.5,
+      structureMat,
+      concreteMat: ctx.concreteMat,
+      night: ctx.night,
+    })
+  );
   add(
     verticals(
       railStations(rail, closed, piers ? 9 : 7.5),
