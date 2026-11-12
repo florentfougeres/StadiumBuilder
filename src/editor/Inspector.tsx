@@ -80,7 +80,6 @@ import { OFFERED_SHAPES, shapeDefinition } from '../stadium/shapeCatalog';
 import { ResolvedSeatTierStyle, resolveSeatTierStyle, SeatStyleScope, seatStyleAt } from '../stadium/seatPattern';
 import {
   computeStandSightlines,
-  DEFAULT_TIER_OVERHANG_M,
   MAX_RAKE_DEG,
   requestedTierOverhangs,
   resolveStandTiers,
@@ -1647,11 +1646,8 @@ const StandsPanel: React.FC = () => {
   const off = !stand.enabled;
   const resolvedTiers = useMemo(() => resolveStandTiers(stand), [stand]);
   const askedOverhangs = useMemo(() => requestedTierOverhangs(stand), [stand]);
-  /** Upper tiers set back from the overhang asked for, so their rows keep a view of the touchline. */
-  const heldBack = resolvedTiers.filter((t) => t.tierIndex > 0 && t.overhang < (askedOverhangs[t.tierIndex] ?? 0) - 0.05);
   const vomSpec = useMemo(() => resolveStandVomitories(stand), [stand]);
   const crossAisles = useMemo(() => resolveCrossAisles(stand), [stand]);
-  const tierOverhang = stand.tierOverhang ?? DEFAULT_TIER_OVERHANG_M;
   const hasAsymmetricTiers = Boolean(stand.tierConfigs && stand.tierConfigs.length > 0);
   const separateStands = !isContinuousBowlShape(doc.shape);
 
@@ -2056,30 +2052,24 @@ const StandsPanel: React.FC = () => {
             title="Étage par étage"
             summary={`${resolvedTiers.length} étages${hasAsymmetricTiers ? ' · réglés un par un' : ''}`}
           >
-            <SliderField
-              label="Avancée en encorbellement"
-              hint="Avance les étages supérieurs au-dessus des derniers rangs de l’étage inférieur ; la dalle remonte pour garder 2,4 m au-dessus des rangs abrités"
-              min={0}
-              max={7.5}
-              step={0.25}
-              disabled={off}
-              value={tierOverhang}
-              defaultValue={ms((s) => s.tierOverhang ?? DEFAULT_TIER_OVERHANG_M)}
-              display={tierOverhang > 0 ? `+${fr1(tierOverhang)} m` : 'Aligné'}
-              onChange={(v) => updateStand(target, { tierOverhang: v })}
-            />
-            {heldBack.length > 0 && (
-              <p className="text-2xs text-ink-muted" role="note">
-                {heldBack
-                  .map((t) =>
-                    t.overhang < 0
-                      ? `Étage ${t.tierIndex + 1} reculé de ${fr1(-t.overhang)} m`
-                      : `Étage ${t.tierIndex + 1} avancé de ${fr1(t.overhang)} m seulement`
-                  )
-                  .join(' · ')}{' '}
-                pour que ses rangs voient la ligne de touche (valeur C ≥ 60 mm).
-              </p>
-            )}
+            {resolvedTiers.slice(1).map((t) => {
+              const n = t.tierIndex + 1;
+              const asked = askedOverhangs[t.tierIndex] ?? t.overhang;
+              return (
+                <SliderField
+                  key={t.tierIndex}
+                  label={`Encorbellement : étage ${n} sur étage ${n - 1}`}
+                  hint={`Avance l’étage ${n} au-dessus des derniers rangs de l’étage ${n - 1} ; la dalle remonte pour garder 2,4 m au-dessus des rangs abrités`}
+                  min={0}
+                  max={7.5}
+                  step={0.25}
+                  disabled={off}
+                  value={asked}
+                  display={asked > 0 ? `+${fr1(asked)} m` : 'Aligné'}
+                  onChange={(v) => updateStandTier(target, t.tierIndex, { overhang: v })}
+                />
+              );
+            })}
             <TierTable
               tiers={resolvedTiers}
               asked={askedOverhangs}

@@ -1334,12 +1334,18 @@ describe('cantilevered upper tiers', () => {
     expect(tiers[1].overhang).toBe(1.15);
   });
 
-  it('sets an upper tier back until its rows see the touchline (C ≥ 60 mm)', () => {
-    const stand = { ...base.stands.south, tiers: 2 as const, rows: 40, tierOverhang: 5 };
-    const tiers = resolveStandTiers(stand);
-    expect(tiers[1].overhang).toBeLessThan(5);
-    const upper = computeStandSightlines(stand, 0).points.filter((p) => p.tier === 2).slice(1);
-    for (const p of upper) expect(p.cValueMm).toBeGreaterThanOrEqual(60);
+  it('keeps the overhang asked for each balcony, one value per break', () => {
+    const tierConfigs = (o1: number, o2: number) => [
+      { rows: 18, slopeAngleDeg: 25 },
+      { rows: 18, slopeAngleDeg: 30, overhang: o1 },
+      { rows: 18, slopeAngleDeg: 34, overhang: o2 },
+    ];
+    for (const [o1, o2] of [[0, 0], [3, 0], [0, 3], [3, 6], [7.5, 7.5]]) {
+      const stand = { ...base.stands.south, tiers: 3 as const, rows: 54, tierConfigs: tierConfigs(o1, o2) };
+      expect(resolveStandTiers(stand).map((t) => t.overhang)).toEqual([0, o1, o2]);
+      const projections = computeStandSection(stand).breaks.map((b) => +(b.fromD - b.frontD).toFixed(2));
+      expect(projections).toEqual([o1, o2]);
+    }
   });
 
   it('reports an evacuation time that falls as vomitories are added', () => {
