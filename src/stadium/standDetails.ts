@@ -262,9 +262,11 @@ function buildAisleStairs(sw: StandSweep, frame: SweepFrame, treads: Tread[], ma
   const nosings = new BoxBatch();
   const width = Math.max(0.8, sw.aisleWidth * 0.9);
   for (const tr of treads) {
-    const line = frame.line(tr.seg, 0.5);
     for (let k = 0; k < sw.aisleCount; k++) {
-      const at = line.at(((k + 0.5) / sw.aisleCount) * line.total);
+      // The same slice position on every tread: a radial line, as the seats' aisles are.
+      const u = ((k + 0.5) / sw.aisleCount) * sw.activeSegments;
+      const s = Math.min(sw.activeSegments - 1, Math.floor(u));
+      const at = { s, f: u - s };
       if (frame.hole(at, tr.seg)) continue;
       const depth = depthOf(sw, at, tr.seg);
       if (depth < 0.3) continue;

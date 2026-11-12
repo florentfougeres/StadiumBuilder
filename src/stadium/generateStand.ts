@@ -1636,10 +1636,16 @@ function buildSweepSeatInstances(opts: {
       segLens.push(len);
       total += len;
     }
-    const aisleAt = Array.from(
-      { length: Math.max(0, aisleCount) },
-      (_, k) => ((k + 0.5) / aisleCount) * total
-    );
+    // Aisles sit at the same slice position on every row, so each one is a radial line: a share
+    // of every row's own length would drift apart where the rows are not offsets of one another
+    // (bends, tiers of different depth).
+    const aisleAt = Array.from({ length: Math.max(0, aisleCount) }, (_, k) => {
+      const u = ((k + 0.5) / aisleCount) * activeSegments;
+      const s = Math.min(activeSegments - 1, Math.floor(u));
+      let before = 0;
+      for (let i = 0; i < s; i++) before += segLens[i];
+      return before + (u - s) * segLens[s];
+    });
 
     let run = 0;
     let carry = pitch * 0.5;
