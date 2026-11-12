@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { getWheelMode, setWheelMode, type WheelMode } from './wheelMode';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
@@ -128,6 +129,43 @@ function detectSoftwareGl(): boolean {
     return false;
   }
 }
+
+const WHEEL_MODES: [WheelMode, string, string][] = [
+  ['auto', 'Auto', 'Reconnaît la souris et le trackpad (se trompe sur certains Mac)'],
+  ['zoom', 'Zoom', 'La molette zoome toujours (souris)'],
+  ['pan', 'Déplacement', 'Le défilement déplace la vue au sol (trackpad)'],
+];
+
+/** Forces what the wheel does when the automatic mouse / trackpad guess is wrong. */
+const WheelModeSetting: React.FC = () => {
+  const [mode, setMode] = React.useState<WheelMode>(getWheelMode);
+  return (
+    <div className="mt-3">
+      <p className="text-2xs font-medium uppercase tracking-wide text-ink-faint mb-1">Défilement / molette</p>
+      <div role="radiogroup" aria-label="Défilement et molette" className="flex gap-1">
+        {WHEEL_MODES.map(([value, label, hint]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={mode === value}
+            title={hint}
+            onClick={() => {
+              setWheelMode(value);
+              setMode(value);
+            }}
+            className={`flex-1 rounded border px-2 py-1 text-2xs ${
+              mode === value ? 'border-accent bg-accent-strong text-ink' : 'border-line text-ink-muted hover:text-ink'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1 text-2xs text-ink-faint">{WHEEL_MODES.find(([v]) => v === mode)?.[2]}</p>
+    </div>
+  );
+};
 
 const NAV_HELP_POINTER: [string, string][] = [
   ['Glisser', 'tourner autour du point visé'],
@@ -878,7 +916,11 @@ export const Viewport: React.FC = () => {
      */
     let trackpadUntil = 0;
     const isTrackpadScroll = (e: WheelEvent, now: number): boolean => {
-      if (e.ctrlKey || e.deltaMode !== 0) return false;
+      if (e.ctrlKey) return false;
+      const forced = getWheelMode();
+      if (forced === 'zoom') return false;
+      if (forced === 'pan') return true;
+      if (e.deltaMode !== 0) return false;
       const legacy = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY;
       const trackpad = now < trackpadUntil || e.deltaX !== 0 || (legacy !== undefined && legacy !== 0 && legacy === -3 * e.deltaY);
       if (trackpad) trackpadUntil = now + 250;
@@ -1538,6 +1580,7 @@ export const Viewport: React.FC = () => {
                 </React.Fragment>
               ))}
             </dl>
+            <WheelModeSetting />
             <p className="text-2xs font-medium uppercase tracking-wide text-ink-faint mt-3 mb-2">Clavier</p>
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
               {NAV_HELP_KEYS.map(([keys, action]) => (
