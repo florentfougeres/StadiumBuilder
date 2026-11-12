@@ -44,7 +44,7 @@ import {
 } from '../stadium/schema';
 import { isIntegralShell, isMovableRoof } from '../stadium/roofCatalog';
 import { paintSeatStyle, SeatStyleScope, stripSeatStyles } from '../stadium/seatPattern';
-import { MAX_RAKE_DEG, resolveStandTiers } from '../stadium/sightlines';
+import { MAX_RAKE_DEG, MIN_TIER_OVERHANG_M, resolveStandTiers } from '../stadium/sightlines';
 import { defaultHaloHeight } from '../stadium/buildStadiumScene';
 import {
   deleteProjectFromDb,
@@ -537,7 +537,7 @@ function applyStandTierPatch(
     Math.max(15, Math.min(MAX_RAKE_DEG, target.slopeAngleDeg)).toFixed(1)
   );
   if (target.overhang !== undefined) {
-    target.overhang = Number(Math.max(0, Math.min(8, target.overhang)).toFixed(2));
+    target.overhang = Number(Math.max(MIN_TIER_OVERHANG_M, Math.min(8, target.overhang)).toFixed(2));
   }
   configs[tierIndex] = target;
 

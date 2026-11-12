@@ -1340,12 +1340,22 @@ describe('cantilevered upper tiers', () => {
       { rows: 18, slopeAngleDeg: 30, overhang: o1 },
       { rows: 18, slopeAngleDeg: 34, overhang: o2 },
     ];
-    for (const [o1, o2] of [[0, 0], [3, 0], [0, 3], [3, 6], [7.5, 7.5]]) {
+    for (const [o1, o2] of [[0, 0], [3, 0], [0, 3], [3, 6], [7.5, 7.5], [-3, 2], [-5, -5]]) {
       const stand = { ...base.stands.south, tiers: 3 as const, rows: 54, tierConfigs: tierConfigs(o1, o2) };
       expect(resolveStandTiers(stand).map((t) => t.overhang)).toEqual([0, o1, o2]);
       const projections = computeStandSection(stand).breaks.map((b) => +(b.fromD - b.frontD).toFixed(2));
       expect(projections).toEqual([o1, o2]);
     }
+  });
+
+  it('sets a balcony back behind the tier below with a negative overhang, down to -5 m', () => {
+    const cfg = (o: number) => [{ rows: 20, slopeAngleDeg: 28 }, { rows: 20, slopeAngleDeg: 30, overhang: o }];
+    const stand = (o: number) => ({ ...base.stands.south, tiers: 2 as const, rows: 40, tierConfigs: cfg(o) });
+    expect(resolveStandTiers(stand(-5))[1].overhang).toBe(-5);
+    expect(resolveStandTiers(stand(-9))[1].overhang).toBe(-5);
+    const brk = computeStandSection(stand(-4)).breaks[0];
+    expect(brk.shelteredRows).toBe(0);
+    expect(brk.frontD - brk.fromD).toBeCloseTo(4, 5);
   });
 
   it('reports an evacuation time that falls as vomitories are added', () => {

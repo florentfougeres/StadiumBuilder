@@ -30,6 +30,8 @@ export interface ResolvedTierSpec {
 
 /** Projection of an upper tier over the rows below, as stands were drawn before it became a setting. */
 export const DEFAULT_TIER_OVERHANG_M = 1.15;
+/** Furthest a balcony may be set back behind the tier below (negative overhang, m). */
+export const MIN_TIER_OVERHANG_M = -5;
 /** Clear height kept between an upper tier's soffit and the treads of the rows it shelters (m). */
 export const OVERHANG_HEADROOM_M = 2.4;
 
@@ -187,7 +189,7 @@ function resolveTierShapes(stand: StandConfig): Omit<ResolvedTierSpec, 'vipStore
           t === 0
             ? 0
             : Math.max(
-                0,
+                MIN_TIER_OVERHANG_M,
                 Math.min(
                   8.5,
                   cfg.overhang !== undefined ? cfg.overhang : fallbackOverhang

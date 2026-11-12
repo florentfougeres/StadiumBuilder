@@ -82,6 +82,7 @@ import {
   computeStandSightlines,
   MAX_RAKE_DEG,
   requestedTierOverhangs,
+  MIN_TIER_OVERHANG_M,
   resolveStandTiers,
   verticalBoxStandPatch,
 } from '../stadium/sightlines';
@@ -1578,7 +1579,7 @@ const TierTable: React.FC<{
               {t.tierIndex > 0 ? (
                 <CellNumber
                   label={`Avancée, étage ${n}`}
-                  min={0}
+                  min={MIN_TIER_OVERHANG_M}
                   max={7.5}
                   step={0.25}
                   disabled={disabled}
@@ -2059,13 +2060,13 @@ const StandsPanel: React.FC = () => {
                 <SliderField
                   key={t.tierIndex}
                   label={`Encorbellement : étage ${n} sur étage ${n - 1}`}
-                  hint={`Avance l’étage ${n} au-dessus des derniers rangs de l’étage ${n - 1} ; la dalle remonte pour garder 2,4 m au-dessus des rangs abrités`}
-                  min={0}
+                  hint={`Avance l’étage ${n} au-dessus des derniers rangs de l’étage ${n - 1} (valeur négative : balcon reculé, sans surplomb) ; la dalle remonte pour garder 2,4 m au-dessus des rangs abrités`}
+                  min={MIN_TIER_OVERHANG_M}
                   max={7.5}
                   step={0.25}
                   disabled={off}
                   value={asked}
-                  display={asked > 0 ? `+${fr1(asked)} m` : 'Aligné'}
+                  display={asked > 0 ? `+${fr1(asked)} m` : asked < 0 ? `Reculé de ${fr1(-asked)} m` : 'Aligné'}
                   onChange={(v) => updateStandTier(target, t.tierIndex, { overhang: v })}
                 />
               );
